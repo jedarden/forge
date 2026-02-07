@@ -1,12 +1,14 @@
 # FORGE Testing Framework
 
-Automated tests for FORGE launchers and integrations.
+Automated tests for ALL FORGE integration surfaces.
 
 ---
 
-## Launcher Test Harness
+## Test Harnesses
 
-### Quick Start
+### 1. Launcher Test Harness
+
+Tests worker launcher scripts for protocol compliance.
 
 ```bash
 # Test a launcher
@@ -14,6 +16,56 @@ Automated tests for FORGE launchers and integrations.
 
 # Test the example passing launcher
 ./launcher-test-harness.py ./example-launcher-passing.sh
+```
+
+### 2. Backend Test Harness
+
+Tests headless CLI backend for chat interface.
+
+```bash
+# Test a backend
+./backend-test-harness.py claude-code chat --headless
+
+# Test custom backend
+./backend-test-harness.py python my-backend.py
+```
+
+### 3. Worker Config Validator
+
+Validates worker configuration YAML files.
+
+```bash
+# Validate a worker config
+./worker-config-validator.py ~/.forge/workers/claude-code-sonnet.yaml
+
+# Validate all configs
+for config in ~/.forge/workers/*.yaml; do
+  ./worker-config-validator.py "$config"
+done
+```
+
+### 4. Log Format Validator
+
+Validates worker log files for correct format.
+
+```bash
+# Validate log format
+./log-format-validator.py ~/.forge/logs/sonnet-alpha.log
+
+# Show sample entries
+./log-format-validator.py ~/.forge/logs/sonnet-alpha.log --show-samples
+```
+
+### 5. Status File Validator
+
+Validates worker status JSON files.
+
+```bash
+# Validate status file
+./status-file-validator.py ~/.forge/status/sonnet-alpha.json
+
+# Show contents
+./status-file-validator.py ~/.forge/status/sonnet-alpha.json --show
 ```
 
 ### Expected Output
@@ -36,22 +88,57 @@ Results: 5 passed, 0 failed
 
 ---
 
-## Test Coverage
+## Test Coverage by Integration Surface
 
-The test harness validates:
-
+### Launcher Testing
 1. **Argument Parsing** - Accepts required args, rejects invalid
 2. **Output Format** - Returns valid JSON with required fields
 3. **Status File Creation** - Creates `~/.forge/status/<worker-id>.json`
 4. **Log File Creation** - Creates `~/.forge/logs/<worker-id>.log`
 5. **Process Spawning** - Actually spawns a running process/tmux session
 
+### Backend Testing
+1. **Input Handling** - Accepts JSON on stdin
+2. **Output Format** - Returns valid JSON with tool_calls
+3. **Tool Call Generation** - Generates appropriate tool calls
+4. **Context Awareness** - Uses provided context
+5. **Error Handling** - Handles malformed input gracefully
+6. **Performance** - Responds within timeout (<30s)
+
+### Worker Config Validation
+1. **YAML Syntax** - Valid YAML format
+2. **Required Fields** - Has name, launcher, model, tier
+3. **Tier Values** - Valid tier (premium/standard/budget/free)
+4. **Cost Information** - Correct cost_per_million_tokens format
+5. **Subscription Data** - Valid subscription configuration
+6. **Environment Vars** - No hardcoded secrets
+7. **File Paths** - Contains ${worker_id} placeholders
+
+### Log Format Validation
+1. **Format Detection** - Detects JSON lines or key-value
+2. **Required Fields** - Has timestamp, level, worker_id
+3. **Timestamp Format** - Valid ISO 8601 timestamps
+4. **Log Levels** - Valid levels (debug/info/warning/error)
+5. **Message/Event** - Has message or event field
+
+### Status File Validation
+1. **JSON Syntax** - Valid JSON format
+2. **Required Fields** - Has worker_id, status, model, workspace
+3. **Status Values** - Valid status (active/idle/failed/stopped)
+4. **Timestamps** - Valid ISO 8601 format
+5. **Field Types** - Correct types (strings, integers)
+6. **Consistency** - Logically consistent (e.g., stopped has stopped_at)
+
 ---
 
 ## Files
 
-- `launcher-test-harness.py` - Main test runner
-- `example-launcher-passing.sh` - Reference implementation that passes all tests
+- `launcher-test-harness.py` - Launcher protocol testing
+- `backend-test-harness.py` - Chat backend testing
+- `worker-config-validator.py` - Worker config validation
+- `log-format-validator.py` - Log format validation
+- `status-file-validator.py` - Status file validation
+- `example-launcher-passing.sh` - Reference launcher implementation
 - `README.md` - This file
 
 ---
