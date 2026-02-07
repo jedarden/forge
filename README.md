@@ -33,7 +33,8 @@ FORGE is a terminal-based control panel that intelligently manages multiple AI c
 - Real-time worker status and health metrics
 - Task queue visualization with bead integration
 - Live activity logs and performance metrics
-- Conversational CLI interface for interactive control
+- **Conversational interface as primary control** - just ask in natural language
+- Optional hotkeys for power users (W for workers, T for tasks, etc.)
 - Responsive layouts for multiple terminal sizes (199×38, 199×55, and more)
 
 ### 🔄 Self-Updating Binary
@@ -83,13 +84,22 @@ pip install llmforge
 # Launch the control panel
 forge dashboard
 
-# Spawn workers
+# Primary interface: Natural language chat (press :)
+forge> :
+> Show me all workers
+> Spawn 3 sonnet workers
+> What did I spend today?
+> Help with cost optimization
+
+# Optional: Use hotkeys for speed
+# W - Workers view
+# T - Tasks view
+# C - Costs view
+# S - Spawn worker
+
+# Traditional CLI also available
 forge spawn --model=sonnet --count=3
-
-# Check status
 forge status
-
-# Optimize cost routing
 forge optimize
 ```
 

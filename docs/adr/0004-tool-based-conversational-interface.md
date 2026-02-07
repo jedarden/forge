@@ -23,7 +23,9 @@ Users need to control FORGE (switch views, spawn workers, filter tasks, etc.) wi
 
 ## Decision
 
-Use **tool-based conversational interface** where natural language commands are translated to structured tool calls by a headless LLM, which FORGE then executes.
+Use **tool-based conversational interface as primary control method** where natural language commands are translated to structured tool calls by a headless LLM, which FORGE then executes.
+
+**Hotkeys remain available as optional shortcuts** for power users, but discovery and primary interaction happens through natural language chat.
 
 **Architecture**:
 ```
@@ -386,9 +388,10 @@ FORGE: Shows confirmation dialog
 
 ### Neutral
 
-- **Hybrid approach**: Hotkeys can still exist for power users
+- **Hybrid approach**: Hotkeys coexist as optional shortcuts (e.g., `Ctrl+W` for workers view)
 - **Model selection**: Can use cheap/fast models (Haiku) for control
-- **Fallback**: If LLM fails, graceful degradation to menu navigation
+- **Fallback**: If LLM fails, graceful degradation to hotkeys or menu navigation
+- **Learning curve**: Users naturally discover hotkeys through tool execution ("Press W to return to workers view")
 
 ---
 
@@ -397,7 +400,7 @@ FORGE: Shows confirmation dialog
 ### Option 1: Hotkeys Only
 - **Pros**: Fast, no LLM needed, deterministic
 - **Cons**: Poor discoverability, memorization burden
-- **Verdict**: Rejected - too user-hostile
+- **Verdict**: Rejected as primary interface, but kept as optional shortcuts
 
 ### Option 2: Menu-Driven UI
 - **Pros**: Discoverable, no LLM needed
@@ -517,8 +520,41 @@ Monitoring:
 
 ---
 
+## Hotkey Integration
+
+Hotkeys remain available as **optional shortcuts**, not replacements:
+
+**Design Principles**:
+1. **Chat is primary**: All features accessible via natural language
+2. **Hotkeys are shortcuts**: Optional, for speed, not discovery
+3. **Teach through use**: Show hotkey hints after tool execution
+4. **User choice**: Power users can use hotkeys, new users can ignore them
+5. **No hidden features**: Nothing is locked behind hotkeys
+
+**Example Flow**:
+```
+User: "show workers"         [First time - uses chat]
+FORGE: Executes switch_view("workers")
+       Shows: "Worker view (Press W to return here)"
+
+[Later]
+User: W                      [Now knows the shortcut]
+FORGE: Instant switch to workers view
+```
+
+**Hotkey Mapping**:
+- Each tool can have an optional hotkey binding
+- Hotkeys trigger the same tool calls as chat
+- Configuration: `~/.forge/config.yaml`
+
+See [HOTKEYS.md](../HOTKEYS.md) for complete reference.
+
+---
+
 ## References
 
+- [Tool Catalog](../TOOL_CATALOG.md) - Complete tool reference
+- [Hotkeys Reference](../HOTKEYS.md) - Optional keyboard shortcuts
 - [Conversational Interface Design](../notes/conversational-interface.md)
 - [Dashboard Design](../notes/dashboard-design.md)
 - ADR 0002: Use TUI for Control Panel Interface
