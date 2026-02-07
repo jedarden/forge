@@ -1,0 +1,432 @@
+# Control Panel Cost Management Configuration
+# Deploy this configuration to enable intelligent cost optimization
+
+version: "1.0"
+name: "pool-optimizer-cost-manager"
+
+# Monthly budget settings
+budget:
+  monthly_total: 100.00        # Total monthly budget in USD
+  subscription_fixed: 40.00    # Fixed subscription costs
+  api_variable: 60.00          # Variable API costs budget
+  emergency_reserve: 20.00     # Emergency reserve for critical tasks
+
+  # Budget allocation by time period
+  daily_budget: 3.33           # Auto-calculated from monthly
+  weekly_budget: 25.00         # Auto-calculated from monthly
+
+  # Budget alerts
+  alerts:
+    daily_threshold: 0.80      # Alert if >80% daily budget used
+    weekly_threshold: 0.85     # Alert if >85% weekly budget used
+    monthly_threshold: 0.90    # Alert if >90% monthly budget used
+
+# Subscription services
+subscriptions:
+  claude_pro:
+    enabled: true
+    monthly_cost: 20.00
+    provider: "anthropic"
+    models: ["claude-3-opus", "claude-3.5-sonnet", "claude-3-haiku"]
+    estimated_quota_tokens: 10_000_000
+    context_window: 200000
+    billing_day: 15            # Day of month quota resets
+    priority: 1                # Higher priority = use first
+
+  cursor_pro:
+    enabled: true
+    monthly_cost: 20.00
+    provider: "cursor"
+    models: ["claude-3.5-sonnet", "gpt-4"]
+    estimated_quota_tokens: 5_000_000  # ~500 requests @ 10k tokens each
+    estimated_requests: 500
+    context_window: 200000
+    billing_day: 15
+    priority: 2
+
+  chatgpt_plus:
+    enabled: false             # Set to true to enable
+    monthly_cost: 20.00
+    provider: "openai"
+    models: ["gpt-4", "gpt-4-turbo"]
+    estimated_quota_tokens: 5_000_000
+    context_window: 128000
+    billing_day: 15
+    priority: 3
+
+# API services (pay-per-token)
+api_services:
+  deepseek:
+    enabled: true
+    provider: "deepseek"
+    models:
+      - name: "deepseek-v3"
+        input_cost: 0.14       # $ per million tokens
+        output_cost: 0.28
+        context_window: 64000
+        quality_score: 65
+        best_for: ["batch_processing", "low_value_tasks", "documentation"]
+
+  anthropic:
+    enabled: true
+    provider: "anthropic"
+    models:
+      - name: "claude-3-haiku"
+        input_cost: 0.25
+        output_cost: 1.25
+        context_window: 200000
+        quality_score: 70
+        best_for: ["fast_tasks", "simple_queries"]
+
+      - name: "claude-3.5-sonnet"
+        input_cost: 3.00
+        output_cost: 15.00
+        context_window: 200000
+        quality_score: 90
+        best_for: ["coding", "analysis", "balanced_tasks"]
+
+      - name: "claude-3-opus"
+        input_cost: 15.00
+        output_cost: 75.00
+        context_window: 200000
+        quality_score: 98
+        best_for: ["critical_tasks", "complex_reasoning"]
+
+  openai:
+    enabled: true
+    provider: "openai"
+    models:
+      - name: "gpt-3.5-turbo"
+        input_cost: 0.50
+        output_cost: 1.50
+        context_window: 16000
+        quality_score: 68
+        best_for: ["fast_cheap_tasks"]
+
+      - name: "gpt-4o"
+        input_cost: 2.50
+        output_cost: 10.00
+        context_window: 128000
+        quality_score: 88
+        best_for: ["multimodal", "balanced_quality"]
+
+      - name: "gpt-4-turbo"
+        input_cost: 10.00
+        output_cost: 30.00
+        context_window: 128000
+        quality_score: 93
+        best_for: ["high_quality_tasks"]
+
+  google:
+    enabled: false
+    provider: "google"
+    models:
+      - name: "gemini-1.5-flash"
+        input_cost: 0.075
+        output_cost: 0.30
+        context_window: 1000000
+        quality_score: 65
+        best_for: ["fast_cheap_tasks", "long_context"]
+
+      - name: "gemini-1.5-pro"
+        input_cost: 1.25
+        output_cost: 5.00
+        context_window: 1000000
+        quality_score: 85
+        best_for: ["long_context", "multimodal"]
+
+# Task value scoring weights
+task_scoring:
+  weights:
+    business_impact: 0.30      # Revenue/cost impact
+    time_sensitivity: 0.25     # Deadline urgency
+    complexity: 0.20           # Task difficulty
+    quality_requirement: 0.15  # Precision needed
+    visibility: 0.10           # Stakeholder visibility
+
+  # Dollar value mapping (task score -> estimated business value)
+  value_mapping:
+    low:                       # Score 0-30
+      min_score: 0
+      max_score: 30
+      dollar_value: 5
+
+    medium:                    # Score 30-50
+      min_score: 30
+      max_score: 50
+      dollar_value: 25
+
+    high:                      # Score 50-75
+      min_score: 50
+      max_score: 75
+      dollar_value: 100
+
+    critical:                  # Score 75-100
+      min_score: 75
+      max_score: 100
+      dollar_value: 500
+
+# Model selection strategy
+model_selection:
+  # Tier definitions
+  tiers:
+    ultra_budget:
+      quality_threshold: 60
+      avg_cost_per_mtok: 0.50
+      value_range: [0, 30]
+      preferred_models: ["deepseek-v3", "gemini-1.5-flash", "claude-3-haiku"]
+
+    budget:
+      quality_threshold: 70
+      avg_cost_per_mtok: 2.00
+      value_range: [30, 50]
+      preferred_models: ["gpt-3.5-turbo", "claude-3-haiku"]
+
+    balanced:
+      quality_threshold: 85
+      avg_cost_per_mtok: 10.00
+      value_range: [50, 75]
+      preferred_models: ["gpt-4o", "claude-3.5-sonnet", "gemini-1.5-pro"]
+
+    premium:
+      quality_threshold: 95
+      avg_cost_per_mtok: 40.00
+      value_range: [75, 100]
+      preferred_models: ["gpt-4-turbo", "claude-3-opus"]
+
+  # Decision thresholds
+  min_roi: 2.0                 # Require at least 2x return on investment
+  min_success_probability: 0.70
+  quality_gap_excellent: 20    # Model quality exceeds requirement by 20+ points
+  quality_gap_good: 10         # Model quality exceeds requirement by 10+ points
+
+# Quota optimization (use-or-lose strategy)
+quota_optimization:
+  enabled: true
+
+  # Utilization targets by time period
+  targets:
+    week_1:
+      days_range: [22, 30]
+      target_utilization: [20, 40]  # Target 20-40% utilization
+      strategy: "normal"
+
+    week_2:
+      days_range: [15, 21]
+      target_utilization: [40, 60]
+      strategy: "normal"
+
+    week_3:
+      days_range: [8, 14]
+      target_utilization: [60, 80]
+      strategy: "acceleration"
+
+    week_4:
+      days_range: [0, 7]
+      target_utilization: [80, 100]
+      strategy: "aggressive"
+
+  # Urgency calculation
+  urgency_thresholds:
+    emergency: 0.80           # Immediate action required
+    high: 0.50                # Begin acceleration
+    medium: 0.30              # Monitor closely
+    low: 0.0                  # On track
+
+  # Acceleration strategies
+  acceleration:
+    enabled: true
+    min_quota_remaining: 1_000_000  # Only accelerate if >1M tokens remain
+
+    # Tasks to auto-generate when accelerating
+    suggested_tasks:
+      - type: "documentation"
+        priority: "low"
+        description: "Generate comprehensive codebase documentation"
+      - type: "tests"
+        priority: "low"
+        description: "Create extensive test suites with edge cases"
+      - type: "security"
+        priority: "medium"
+        description: "Perform security audit on components"
+      - type: "refactoring"
+        priority: "low"
+        description: "Analyze code for optimization opportunities"
+      - type: "code_review"
+        priority: "medium"
+        description: "Review recent code changes"
+
+# Monitoring and alerts
+monitoring:
+  enabled: true
+
+  # Metrics to track
+  metrics:
+    - name: "tokens_consumed"
+      aggregation: "sum"
+      period: "daily"
+    - name: "cost_per_task"
+      aggregation: "avg"
+      period: "daily"
+    - name: "subscription_utilization"
+      aggregation: "latest"
+      period: "hourly"
+    - name: "api_cost"
+      aggregation: "sum"
+      period: "daily"
+    - name: "task_success_rate"
+      aggregation: "avg"
+      period: "daily"
+
+  # Alert conditions
+  alerts:
+    quota_depletion:
+      enabled: true
+      condition: "utilization > 0.80 and time_remaining > 0.30"
+      severity: "warning"
+      action: "switch_to_api"
+
+    under_utilization:
+      enabled: true
+      condition: "utilization < 0.40 and days_left < 5"
+      severity: "info"
+      action: "accelerate_usage"
+
+    budget_overrun:
+      enabled: true
+      condition: "spent > 0.90 and days_left > 7"
+      severity: "critical"
+      action: "throttle_api"
+
+    quality_degradation:
+      enabled: true
+      condition: "success_rate < 0.85"
+      severity: "warning"
+      action: "upgrade_models"
+
+  # Dashboard settings
+  dashboard:
+    refresh_interval: 300      # Refresh every 5 minutes
+    retention_days: 90         # Keep 90 days of history
+
+# Optimization strategies
+optimization:
+  # Primary strategy: hybrid (subscriptions + API)
+  strategy: "hybrid"
+
+  # Route tasks based on value score
+  routing:
+    subscription_first: true   # Try subscriptions before API
+    check_urgency: true        # Consider quota urgency
+    respect_quality: true      # Ensure quality requirements met
+
+  # Fallback behavior
+  fallback:
+    on_quota_exhausted: "api"
+    on_budget_exhausted: "queue"
+    on_quality_insufficient: "upgrade_tier"
+
+  # Continuous improvement
+  learning:
+    enabled: true
+    adjust_weights: true       # Auto-adjust scoring weights
+    update_thresholds: true    # Update decision thresholds
+    optimize_timing: true      # Optimize acceleration timing
+    review_period: "monthly"
+
+# Logging and data collection
+logging:
+  enabled: true
+  level: "info"                # debug, info, warning, error, critical
+  format: "json"
+
+  # Log all task executions
+  log_executions: true
+  include_fields:
+    - task_id
+    - task_type
+    - task_value_score
+    - model_used
+    - service_type
+    - tokens_input
+    - tokens_output
+    - cost_usd
+    - success
+    - quality_rating
+    - execution_time_ms
+
+  # Storage
+  storage:
+    type: "sqlite"
+    path: "./optimizer_data.db"
+    backup_enabled: true
+    backup_frequency: "daily"
+
+# Reporting
+reporting:
+  enabled: true
+
+  # Daily report
+  daily_report:
+    enabled: true
+    time: "09:00"              # Time to generate report
+    include:
+      - budget_status
+      - subscription_utilization
+      - api_costs
+      - task_summary
+      - cost_savings
+
+  # Weekly report
+  weekly_report:
+    enabled: true
+    day: "monday"
+    time: "09:00"
+    include:
+      - weekly_trends
+      - optimization_opportunities
+      - model_performance
+      - cost_analysis
+
+  # Monthly report
+  monthly_report:
+    enabled: true
+    day: 1
+    time: "09:00"
+    include:
+      - monthly_summary
+      - year_over_year_comparison
+      - optimization_recommendations
+      - budget_forecast_next_month
+
+# Integration settings
+integrations:
+  # Slack notifications
+  slack:
+    enabled: false
+    webhook_url: ""
+    notify_on:
+      - budget_alerts
+      - quota_alerts
+      - daily_report
+
+  # Email notifications
+  email:
+    enabled: false
+    smtp_host: ""
+    smtp_port: 587
+    from_address: ""
+    to_addresses: []
+    notify_on:
+      - critical_alerts
+      - weekly_report
+      - monthly_report
+
+  # Webhook for custom integrations
+  webhook:
+    enabled: false
+    url: ""
+    events:
+      - task_completed
+      - budget_threshold_reached
+      - quota_exhausted

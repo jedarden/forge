@@ -1,0 +1,42 @@
+# Orchestrator Comparison Matrix
+
+Category,Claude Code,Aider,Cursor,Continue.dev,Goose,OpenCode,KiloCode
+CLI Native,Yes,Yes,No (GUI),No (IDE),Yes,Unknown,Unknown
+Multi-Model Support,Limited,Excellent,Good,Excellent,Good,Unknown,Unknown
+Concurrent Agents,Yes,No,Tabs,No,No,Unknown,Unknown
+Git Integration,Excellent,Excellent,Good,Good,Good,Unknown,Unknown
+Orchestration Strength,Strong,Weak,Weak,Weak,Moderate,Unknown,Unknown
+Open Source,No,Yes,No,Yes,Yes,Unknown,Unknown
+Pricing Model,API usage,API usage,Subscription,Free,API usage,Unknown,Unknown
+Extensibility,MCP/Skills,Moderate,Limited,High,High,Unknown,Unknown
+Task Decomposition,Built-in,Manual,Manual,Manual,Manual,Unknown,Unknown
+File Operations,Excellent,Excellent,Good,Good,Good,Unknown,Unknown
+Web Search,Built-in,No,No,No,Limited,Unknown,Unknown
+Jupyter Support,Yes,No,Via Extension,Via Extension,No,Unknown,Unknown
+Autonomous Execution,Yes,Limited,No,No,Limited,Unknown,Unknown
+Session Management,Tmux Integration,Basic,IDE-based,IDE-based,Session-based,Unknown,Unknown
+Model API Support,Anthropic + Proxy,Universal,OpenAI + Anthropic,Universal,OpenAI + Anthropic,Unknown,Unknown
+
+# Best Use Case by Orchestrator
+Orchestrator,Primary Use Case,Secondary Use Case,Not Recommended For
+Claude Code,Complex multi-agent workflows,Research and analysis,Simple one-off edits
+Aider,Quick code changes,Multi-model cost optimization,Complex orchestration
+Cursor,Interactive development,Real-time code completion,Headless automation
+Continue.dev,Custom IDE workflows,Local model deployment,Standalone orchestration
+Goose,Developer automation,Custom tool integration,Large-scale orchestration
+OpenCode,Unknown,Unknown,Unknown
+KiloCode,Unknown,Unknown,Unknown
+
+# Orchestrator Scoring (1-10 scale)
+Feature,Claude Code,Aider,Cursor,Continue.dev,Goose
+Orchestration Power,10,4,3,3,6
+Multi-Model Support,5,10,7,10,7
+Git Integration,9,10,7,7,8
+CLI Capabilities,10,9,2,2,8
+Extensibility,9,6,4,9,9
+Autonomous Execution,10,5,3,3,6
+Cost Efficiency,7,9,6,10,8
+Learning Curve,7,8,4,6,7
+Documentation,8,9,8,7,6
+Community Size,7,9,9,8,5
+Overall Score,82,79,53,65,70

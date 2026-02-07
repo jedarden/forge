@@ -1,0 +1,66 @@
+Service,Type,Model,Input Cost ($/MTok),Output Cost ($/MTok),Blended Cost ($/MTok),Context Window,1M Tokens,10M Tokens,100M Tokens,1B Tokens,Break-Even (MTok),Best Use Case
+Claude Pro,Subscription,Sonnet/Opus/Haiku,N/A,N/A,2.00,200k,$20.00,$20.00,N/A,N/A,1.67,Interactive high-quality work
+ChatGPT Plus,Subscription,GPT-4/GPT-4 Turbo,N/A,N/A,4.00,128k,$20.00,$20.00,N/A,N/A,2.50,Conversational tasks
+Cursor Pro,Subscription,Various,N/A,N/A,4.00,Various,$20.00,$20.00,N/A,N/A,1.67,IDE-integrated coding
+Claude 3.5 Sonnet,API,Sonnet,$3.00,$15.00,$12.00,200k,$12.00,$120.00,"$1,200.00","$12,000.00",N/A,Balanced quality/cost coding
+Claude 3 Opus,API,Opus,$15.00,$75.00,$60.00,200k,$60.00,$600.00,"$6,000.00","$60,000.00",N/A,Highest quality reasoning
+Claude 3 Haiku,API,Haiku,$0.25,$1.25,$1.00,200k,$1.00,$10.00,$100.00,"$1,000.00",N/A,Fast simple queries
+Claude 3.5 Haiku,API,Haiku 3.5,$1.00,$5.00,$4.00,200k,$4.00,$40.00,$400.00,"$4,000.00",N/A,Better than Haiku
+GPT-4o,API,GPT-4o,$2.50,$10.00,$8.00,128k,$8.00,$80.00,$800.00,"$8,000.00",N/A,Multimodal balanced
+GPT-4 Turbo,API,GPT-4 Turbo,$10.00,$30.00,$25.00,128k,$25.00,$250.00,"$2,500.00","$25,000.00",N/A,High quality complex
+GPT-4,API,GPT-4 (legacy),$30.00,$60.00,$52.50,8-32k,$52.50,$525.00,"$5,250.00","$52,500.00",N/A,Legacy highest quality
+GPT-3.5 Turbo,API,GPT-3.5,$0.50,$1.50,$1.25,16k,$1.25,$12.50,$125.00,"$1,250.00",N/A,Fast cheap tasks
+DeepSeek V3,API,DeepSeek,$0.14,$0.28,$0.245,64k,$0.25,$2.45,$24.50,$245.00,N/A,Ultra-cheap coding
+Gemini 1.5 Pro,API,Gemini Pro,$1.25,$5.00,$4.00,1M,$4.00,$40.00,$400.00,"$4,000.00",N/A,1M context multimodal
+Gemini 1.5 Flash,API,Gemini Flash,$0.075,$0.30,$0.24,1M,$0.24,$2.40,$24.00,$240.00,N/A,Fast cheap Google
+Mistral Large,API,Mistral Large,$2.00,$6.00,$5.00,128k,$5.00,$50.00,$500.00,"$5,000.00",N/A,Open weights available
+Mistral Small,API,Mistral Small,$0.20,$0.60,$0.50,32k,$0.50,$5.00,$50.00,$500.00,N/A,Fast inference
+
+Usage Scenario,Optimal Configuration,Monthly Cost,Effective Tokens,Avg Cost/MTok,Cost Savings vs Pure API,Notes
+Low Volume (1-5M),Claude Pro + DeepSeek overflow,$21.23,5M,$4.25,75%,Subscription handles primary use
+Medium Volume (10-30M),Claude Pro + Cursor Pro + DeepSeek,$45-65,25M,$1.80-2.60,80%,Hybrid approach optimal
+High Volume (100M+),DeepSeek API primary + Haiku overflow,$24.50-150,100M,$0.25-1.50,98%,Pure API more economical
+Mixed Quality Needs,All subscriptions + tiered API,$80-150,40M,$2.00-3.75,70%,Route by task value
+Cost-Optimized,DeepSeek only,$2.45-245,10-1000M,$0.245,98%,Accept quality tradeoffs
+Quality-Optimized,Claude Pro + Opus API,$120-500,20M,$6.00-25.00,N/A,Maximum quality priority
+
+Task Value Range,Recommended Model,Avg Cost/MTok,Expected Success Rate,ROI Threshold,Use Case Examples
+0-30 (Low),DeepSeek / Gemini Flash,$0.24-0.50,70%,5x,Documentation generation bulk tasks simple queries
+30-50 (Medium),Haiku / GPT-3.5 Turbo,$1.00-2.00,75%,4x,Code refactoring test generation basic analysis
+50-75 (High),Sonnet / GPT-4o,$8.00-12.00,90%,3x,Complex coding feature implementation architecture design
+75-100 (Critical),Opus / GPT-4 Turbo,$40.00-60.00,95%,2x,Mission-critical production debugging high-stakes decisions
+
+Quota Acceleration Phase,Days Remaining,Target Utilization,Urgency Score,Strategy
+Normal (Week 1-2),22-30,20-40%,0.0-0.2,Standard allocation - quality tasks only
+Monitoring (Week 3),15-21,60-70%,0.3-0.5,Begin routing medium-value tasks to subscription
+Acceleration (Week 4),8-14,80-90%,0.6-0.8,Aggressive routing - include low-priority work
+Emergency (Final 3 days),0-7,95-100%,0.9-1.0,Use ANY remaining quota - batch generate value-adds
+
+Budget Scenario,Monthly Budget,Subscription Cost,API Budget,Expected Volume,Risk Level
+Minimal,$50,$40,$10,15M tokens,High - limited overflow capacity
+Conservative,$100,$40,$60,30M tokens,Medium - adequate headroom
+Balanced,$200,$40,$160,60M tokens,Low - substantial flexibility
+Aggressive,$500,$40,$460,150M tokens,Very Low - high capacity
+Enterprise,$1000+,$40,$960+,300M+ tokens,Minimal - unlimited scale
+
+ROI Analysis,Subscription Scenario,API-Only Scenario,Hybrid Scenario,Cost Savings,Utilization Efficiency
+10M tokens/month,$20 (Claude Pro),$120 (Sonnet),$22 (Claude Pro + DeepSeek),$98 (82%),$100 (83%)
+20M tokens/month,$40 (2 subscriptions),$240 (Sonnet),$45 (Subs + DeepSeek),$195 (81%),$197.50 (82%)
+50M tokens/month,N/A (exceeds limits),$600 (Sonnet),$125 (DeepSeek + Haiku),$475 (79%),N/A
+100M tokens/month,N/A (exceeds limits),"$1,200 (Sonnet)",$24.50-150 (DeepSeek),"$1,050-1,175 (88-98%)",N/A
+
+Break-Even Analysis,Service,Monthly Cost,Tokens to Break Even vs Sonnet,Tokens to Break Even vs GPT-4o,Tokens to Break Even vs Opus
+Claude Pro,$20,1.67M tokens,2.5M tokens,0.33M tokens
+ChatGPT Plus,$20,2.5M tokens,2.5M tokens,0.33M tokens
+Cursor Pro,$20,1.67M tokens,2.5M tokens,0.33M tokens
+DeepSeek (if had subscription cost),$20 hypothetical,81.6M tokens,122M tokens,13.6M tokens
+
+Cost Projection,Jan 2026,Feb 2026,Mar 2026,Q1 Total,Avg Monthly,Optimization Opportunities
+Subscriptions,$40.00,$40.00,$40.00,$120.00,$40.00,Maximize utilization before reset
+API - DeepSeek,$12.30,$8.45,$15.20,$35.95,$11.98,Route all low-value tasks here
+API - Haiku,$5.60,$3.20,$8.10,$16.90,$5.63,Use for simple overflow only
+API - Sonnet,$18.50,$22.10,$12.40,$53.00,$17.67,Reserve for complex tasks only
+API - Opus,$0.00,$45.00,$0.00,$45.00,$15.00,Emergency/critical only
+Total Monthly,$76.40,$118.75,$75.70,$270.85,$90.28,Target: $80-100/month
+Tokens Consumed,28M,35M,26M,89M,29.67M,
+Effective Cost/MTok,$2.73,$3.39,$2.91,$3.04,$3.04,Target: $2-3/MTok blended
