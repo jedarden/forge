@@ -68,6 +68,14 @@ def _get_cost_tracker():
     from forge.cost_tracker import get_cost_tracker
     return get_cost_tracker()
 
+
+# Import log parser for cost tracking (lazy import)
+def _get_log_monitor():
+    """Lazy import of log monitor"""
+    from forge.log_parser import LogMonitor
+    return LogMonitor
+
+
 # =============================================================================
 # Data Models
 # =============================================================================
@@ -634,6 +642,10 @@ class ForgeApp(App):
     _cost_tracker: "CostTracker | None" = None
     _cost_refresh_interval: float = 30.0  # Refresh cost data every 30 seconds
 
+    # Log monitor for cost tracking
+    _log_monitor: Any | None = None
+    _log_dir: Path = Path.home() / ".forge" / "logs"
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         # Initialize storage
@@ -646,6 +658,10 @@ class ForgeApp(App):
 
         # Initialize cost tracker
         self._initialize_cost_tracker()
+
+        # Initialize log monitor (lazy, starts in on_mount)
+        self._log_monitor = None
+
         # Initialize view state
         self._current_view = ViewMode.OVERVIEW
         self._split_left = None
@@ -1009,26 +1025,87 @@ class ForgeApp(App):
             # Switch to costs view
             self.action_switch_view("costs")
 
-            # Apply period filter (would update costs panel)
-            cost_data = [
-                {
-                    "model": c.model,
-                    "cost": c.cost,
-                    "tokens": c.tokens,
-                    "requests": c.requests,
-                }
-                for c in self._costs_store
-            ]
+            # Get cost data from cost tracker if available
+            if self._cost_tracker is not None:
+                # Determine time period
+                if period in ("today", "24h", "last_24h"):
+                    summary = self._cost_tracker.get_costs_last_24h()
+                elif period == "week":
+                    from datetime import timedelta
+                    start = datetime.now() - timedelta(days=7)
+                    summary = self._cost_tracker.get_costs_period(start, datetime.now())
+                elif period == "month":
+                    from datetime import timedelta
+                    start = datetime.now() - timedelta(days=30)
+                    summary = self._cost_tracker.get_costs_period(start, datetime.now())
+                else:
+                    summary = self._cost_tracker.get_costs_today()
 
-            return create_success_result(
-                "show_costs",
-                f"Showing costs for {period}",
-                {
-                    "period": period,
-                    "breakdown": breakdown,
-                    "costs": cost_data
-                }
-            )
+                # Build cost data based on breakdown
+                if breakdown == "by_model":
+                    cost_data = [
+                        {
+                            "model": model,
+                            "cost": data["cost"],
+                            "tokens": data["tokens"],
+                            "requests": data["requests"],
+                            "avg_cost_per_request": data["avg_cost_per_request"],
+                        }
+                        for model, data in summary.by_model.items()
+                    ]
+                elif breakdown == "by_worker":
+                    cost_data = [
+                        {
+                            "worker_id": worker_id,
+                            "cost": data["cost"],
+                            "tokens": data["tokens"],
+                            "requests": data["requests"],
+                            "models": data["models"],
+                        }
+                        for worker_id, data in summary.by_worker.items()
+                    ]
+                else:
+                    cost_data = [
+                        {
+                            "period": f"{summary.period_start.strftime('%Y-%m-%d %H:%M')} - {summary.period_end.strftime('%Y-%m-%d %H:%M')}",
+                            "total_cost": summary.total_cost,
+                            "total_requests": summary.total_requests,
+                            "total_tokens": summary.total_tokens,
+                        }
+                    ]
+
+                return create_success_result(
+                    "show_costs",
+                    f"Showing costs for {period}" + (f" by {breakdown}" if breakdown else ""),
+                    {
+                        "period": period,
+                        "breakdown": breakdown,
+                        "costs": cost_data,
+                        "total_cost": summary.total_cost,
+                        "total_requests": summary.total_requests,
+                    }
+                )
+            else:
+                # Fallback to stored cost data
+                cost_data = [
+                    {
+                        "model": c.model,
+                        "cost": c.cost,
+                        "tokens": c.tokens,
+                        "requests": c.requests,
+                    }
+                    for c in self._costs_store
+                ]
+
+                return create_success_result(
+                    "show_costs",
+                    f"Showing costs for {period}",
+                    {
+                        "period": period,
+                        "breakdown": breakdown,
+                        "costs": cost_data
+                    }
+                )
         except Exception as e:
             return create_error_result("show_costs", f"Failed to show costs: {e}")
 
@@ -1051,19 +1128,42 @@ class ForgeApp(App):
     def _tool_forecast_costs(self, days: int = 30) -> ToolCallResult:
         """Tool callback for forecast_costs - forecasts future costs"""
         try:
-            # Calculate forecast based on current usage
-            daily_avg = sum(c.cost for c in self._costs_store) / max(len(self._costs_store), 1)
-            forecast = daily_avg * days
+            # Get historical data from cost tracker
+            if self._cost_tracker is not None:
+                from datetime import timedelta
+                start = datetime.now() - timedelta(days=7)  # Use last 7 days for forecast
+                summary = self._cost_tracker.get_costs_period(start, datetime.now())
 
-            return create_success_result(
-                "forecast_costs",
-                f"Forecasted cost for {days} days: ${forecast:.2f}",
-                {
-                    "days": days,
-                    "forecast": forecast,
-                    "daily_average": daily_avg
-                }
-            )
+                # Calculate daily average from historical data
+                days_in_period = (summary.period_end - summary.period_start).days or 1
+                daily_avg = summary.total_cost / days_in_period
+                forecast = daily_avg * days
+
+                return create_success_result(
+                    "forecast_costs",
+                    f"Forecasted cost for {days} days: ${forecast:.2f}",
+                    {
+                        "days": days,
+                        "forecast": forecast,
+                        "daily_average": daily_avg,
+                        "historical_days": days_in_period,
+                        "historical_total": summary.total_cost,
+                    }
+                )
+            else:
+                # Fallback to stored cost data
+                daily_avg = sum(c.cost for c in self._costs_store) / max(len(self._costs_store), 1)
+                forecast = daily_avg * days
+
+                return create_success_result(
+                    "forecast_costs",
+                    f"Forecasted cost for {days} days: ${forecast:.2f}",
+                    {
+                        "days": days,
+                        "forecast": forecast,
+                        "daily_average": daily_avg
+                    }
+                )
         except Exception as e:
             return create_error_result("forecast_costs", f"Failed to forecast costs: {e}")
 
@@ -2207,6 +2307,9 @@ class ForgeApp(App):
         # Start status file watcher
         self._start_status_watcher()
 
+        # Start log monitor for cost tracking
+        self._start_log_monitor()
+
         # Start cost data refresh
         self.set_interval(self._cost_refresh_interval, self._refresh_cost_data)
 
@@ -2295,6 +2398,63 @@ class ForgeApp(App):
                 "✗"
             )
             self.logs.append(log_entry)
+
+    def _start_log_monitor(self) -> None:
+        """Start the log monitor for parsing api_call_completed events"""
+        async def start_monitor() -> None:
+            """Async task to start the log monitor"""
+            try:
+                LogMonitor = _get_log_monitor()
+
+                # Create callback for handling parsed log entries
+                def on_log_entry(entry: Any) -> None:
+                    """Handle parsed log entries"""
+                    # Check if this is an api_call_completed event
+                    if hasattr(entry, 'event') and entry.event == "api_call_completed":
+                        # Send to cost tracker
+                        if self._cost_tracker is not None:
+                            # Convert ParsedLogEntry to dict
+                            log_dict = entry.to_dict() if hasattr(entry, 'to_dict') else {
+                                "timestamp": entry.timestamp,
+                                "worker_id": entry.worker_id,
+                                "event": entry.event,
+                                "level": entry.level if hasattr(entry, 'level') else "info",
+                                "message": entry.message if hasattr(entry, 'message') else "",
+                            }
+                            # Add model and token data from extra fields
+                            if hasattr(entry, 'extra'):
+                                log_dict.update(entry.extra)
+
+                            # Add event type explicitly
+                            log_dict["event"] = "api_call_completed"
+
+                            self._cost_tracker.add_event_from_log(log_dict)
+
+                # Ensure log directory exists
+                self._log_dir.mkdir(parents=True, exist_ok=True)
+
+                # Create and start log monitor
+                self._log_monitor = LogMonitor(
+                    log_dir=str(self._log_dir),
+                    callback=on_log_entry,
+                    pattern="*.log",
+                )
+
+                await self._log_monitor.start()
+
+                # Log successful start
+                now = datetime.now()
+                log_entry = LogEntry(now, "INFO", f"Log monitor started: {self._log_dir}", "📊")
+                self.logs.append(log_entry)
+
+            except Exception as e:
+                # Log error but continue without log monitor
+                now = datetime.now()
+                log_entry = LogEntry(now, "WARN", f"Log monitor failed to start: {e}", "⚠")
+                self.logs.append(log_entry)
+
+        # Start monitor in background
+        asyncio.create_task(start_monitor())
 
     def _handle_command(self, command: str) -> None:
         """Handle chat command submission"""
