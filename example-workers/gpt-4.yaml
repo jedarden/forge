@@ -1,0 +1,60 @@
+# GPT-4 Turbo Worker Configuration
+# OpenAI's flagship model for diverse tasks
+
+# Worker metadata
+name: "gpt-4-turbo"
+description: "GPT-4 Turbo model - OpenAI's flagship for diverse tasks"
+version: "1.0.0"
+author: "OpenAI"
+
+# Launcher configuration
+launcher: "openai-cli"
+model: "gpt-4-turbo"
+
+# Cost/tier information (for routing)
+tier: "premium"
+cost_per_million_tokens:
+  input: 10.0
+  output: 30.0
+
+# Subscription information
+subscription:
+  enabled: false
+  monthly_cost: 20
+  quota_type: "tokens"
+  quota_limit: null
+
+# Environment variables
+environment:
+  OPENAI_API_KEY: "${OPENAI_API_KEY}"
+  OPENAI_MODEL: "gpt-4-turbo"
+
+# Spawn arguments (passed to launcher)
+spawn_args:
+  - "--tmux"
+  - "--session=${session_name}"
+  - "--workspace=${workspace}"
+  - "--model=${model}"
+
+# File paths
+log_path: "~/.forge/logs/${worker_id}.log"
+status_path: "~/.forge/status/${worker_id}.json"
+
+# Health check (optional)
+health_check:
+  enabled: true
+  interval_seconds: 60
+  timeout_seconds: 10
+  command: "tmux has-session -t ${session_name}"
+
+# Capabilities (for task routing)
+capabilities:
+  - "code_generation"
+  - "code_review"
+  - "debugging"
+  - "refactoring"
+  - "documentation"
+  - "data_analysis"
+max_context_tokens: 128000
+supports_tools: true
+supports_vision: true

@@ -1,0 +1,57 @@
+# Qwen 2.5 Coder Worker Configuration
+# Free open-source model for basic coding tasks
+
+# Worker metadata
+name: "qwen-coder"
+description: "Qwen 2.5 Coder - free open-source model for basic coding"
+version: "1.0.0"
+author: "Alibaba Cloud"
+
+# Launcher configuration
+launcher: "ollama"
+model: "qwen2.5-coder"
+
+# Cost/tier information (for routing)
+tier: "free"
+cost_per_million_tokens:
+  input: 0.0
+  output: 0.0
+
+# Subscription information
+subscription:
+  enabled: false
+  monthly_cost: 0
+  quota_type: "unlimited"
+  quota_limit: null
+
+# Environment variables
+environment:
+  OLLAMA_HOST: "${OLLAMA_HOST:-http://localhost:11434}"
+  OLLAMA_MODEL: "qwen2.5-coder"
+
+# Spawn arguments (passed to launcher)
+spawn_args:
+  - "--tmux"
+  - "--session=${session_name}"
+  - "--workspace=${workspace}"
+  - "--model=${model}"
+
+# File paths
+log_path: "~/.forge/logs/${worker_id}.log"
+status_path: "~/.forge/status/${worker_id}.json"
+
+# Health check (optional)
+health_check:
+  enabled: true
+  interval_seconds: 60
+  timeout_seconds: 10
+  command: "tmux has-session -t ${session_name}"
+
+# Capabilities (for task routing)
+capabilities:
+  - "basic_code_generation"
+  - "code_completion"
+  - "formatting"
+max_context_tokens: 32768
+supports_tools: false
+supports_vision: false

@@ -1,0 +1,59 @@
+# Claude Haiku Worker Configuration
+# Fast, budget-friendly model for quick tasks
+
+# Worker metadata
+name: "claude-haiku"
+description: "Claude Haiku model - fast and budget-friendly for quick tasks"
+version: "1.0.0"
+author: "Anthropic"
+
+# Launcher configuration
+launcher: "claude-code"
+model: "haiku"
+
+# Cost/tier information (for routing)
+tier: "budget"
+cost_per_million_tokens:
+  input: 0.25
+  output: 1.25
+
+# Subscription information
+subscription:
+  enabled: false
+  monthly_cost: 0
+  quota_type: "tokens"
+  quota_limit: null
+
+# Environment variables
+environment:
+  ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+  CLAUDE_CONFIG_DIR: "~/.config/claude-code"
+  CLAUDE_MODEL: "haiku"
+
+# Spawn arguments (passed to launcher)
+spawn_args:
+  - "--tmux"
+  - "--session=${session_name}"
+  - "--workspace=${workspace}"
+  - "--model=${model}"
+
+# File paths
+log_path: "~/.forge/logs/${worker_id}.log"
+status_path: "~/.forge/status/${worker_id}.json"
+
+# Health check (optional)
+health_check:
+  enabled: true
+  interval_seconds: 60
+  timeout_seconds: 10
+  command: "tmux has-session -t ${session_name}"
+
+# Capabilities (for task routing)
+capabilities:
+  - "quick_tasks"
+  - "formatting"
+  - "simple_code_generation"
+  - "summarization"
+max_context_tokens: 200000
+supports_tools: true
+supports_vision: true

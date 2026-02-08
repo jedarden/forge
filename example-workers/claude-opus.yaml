@@ -1,0 +1,62 @@
+# Claude Opus 4.6 Worker Configuration
+# Top-tier model for complex reasoning tasks
+
+# Worker metadata
+name: "claude-opus"
+description: "Claude Opus 4.6 model - highest quality for complex reasoning"
+version: "1.0.0"
+author: "Anthropic"
+
+# Launcher configuration
+launcher: "claude-code"
+model: "opus"
+
+# Cost/tier information (for routing)
+tier: "premium"
+cost_per_million_tokens:
+  input: 15.0
+  output: 75.0
+
+# Subscription information
+subscription:
+  enabled: true
+  monthly_cost: 20
+  quota_type: "unlimited"
+  quota_limit: null
+
+# Environment variables
+environment:
+  ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+  CLAUDE_CONFIG_DIR: "~/.config/claude-code"
+  CLAUDE_MODEL: "opus"
+
+# Spawn arguments (passed to launcher)
+spawn_args:
+  - "--tmux"
+  - "--session=${session_name}"
+  - "--workspace=${workspace}"
+  - "--model=${model}"
+
+# File paths
+log_path: "~/.forge/logs/${worker_id}.log"
+status_path: "~/.forge/status/${worker_id}.json"
+
+# Health check (optional)
+health_check:
+  enabled: true
+  interval_seconds: 60
+  timeout_seconds: 10
+  command: "tmux has-session -t ${session_name}"
+
+# Capabilities (for task routing)
+capabilities:
+  - "complex_reasoning"
+  - "code_generation"
+  - "code_review"
+  - "debugging"
+  - "refactoring"
+  - "architecture_design"
+  - "documentation"
+max_context_tokens: 200000
+supports_tools: true
+supports_vision: true
