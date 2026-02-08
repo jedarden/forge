@@ -677,6 +677,129 @@ class StatusWatcher:
 
 
 # =============================================================================
+# Health-Aware Status Watcher (Integrated Health Monitoring)
+# =============================================================================
+
+
+class HealthAwareStatusWatcher(StatusWatcher):
+    """
+    Status watcher with integrated health monitoring.
+
+    Extends StatusWatcher to run periodic health checks every 10 seconds.
+    Marks workers as failed when health checks fail per ADR 0014.
+
+    Health checks performed:
+    - PID existence (process liveness)
+    - Log activity (recent activity within 5 minutes)
+    - Status file validation
+    - Tmux session aliveness (if applicable)
+    """
+
+    def __init__(
+        self,
+        status_dir: Path | str,
+        callback: Callable[[StatusFileEvent], None],
+        parser: StatusFileParser | None = None,
+        poll_interval: float = 5.0,
+        log_dir: Path | str = "~/.forge/logs",
+        health_check_interval: int = 10,
+        on_worker_unhealthy: Callable[[str, Any], None] | None = None,
+    ):
+        """
+        Initialize the health-aware status watcher.
+
+        Args:
+            status_dir: Directory containing status files
+            callback: Function to call for each status file event
+            parser: Status file parser (creates default if None)
+            poll_interval: Seconds between polls for fallback (default 5.0 per ADR 0008)
+            log_dir: Directory containing log files (for health checks)
+            health_check_interval: Seconds between health checks (default 10)
+            on_worker_unhealthy: Callback(worker_id, health_status) when worker is unhealthy
+        """
+        super().__init__(status_dir, callback, parser, poll_interval)
+
+        self.log_dir = Path(log_dir).expanduser()
+        self.health_check_interval = health_check_interval
+        self.on_worker_unhealthy = on_worker_unhealthy
+
+        # Health monitoring loop (created on start)
+        self._health_monitoring_loop: Any | None = None
+
+    async def start(self) -> str:
+        """
+        Start watching status files with health monitoring.
+
+        Returns:
+            Watcher type being used ("inotify" or "polling")
+        """
+        # Start base status watcher
+        watcher_type = await super().start()
+
+        # Import health monitor here to avoid circular imports
+        from forge.health_monitor import (
+            WorkerHealthMonitor,
+            HealthMonitoringLoop,
+        )
+
+        # Create health monitor
+        health_monitor = WorkerHealthMonitor(
+            status_dir=self.status_dir,
+            log_dir=self.log_dir,
+        )
+
+        # Create and start health monitoring loop
+        self._health_monitoring_loop = HealthMonitoringLoop(
+            health_monitor=health_monitor,
+            status_dir=self.status_dir,
+            on_worker_unhealthy=self._on_worker_unhealthy,
+        )
+
+        await self._health_monitoring_loop.start(self.health_check_interval)
+
+        return watcher_type
+
+    async def stop(self) -> None:
+        """Stop watching status files and health monitoring"""
+        # Stop health monitoring loop first
+        if self._health_monitoring_loop and self._health_monitoring_loop.is_running:
+            await self._health_monitoring_loop.stop()
+            self._health_monitoring_loop = None
+
+        # Stop base status watcher
+        await super().stop()
+
+    def _on_worker_unhealthy(self, worker_id: str, health_status: Any) -> None:
+        """
+        Internal callback when worker is marked as unhealthy.
+
+        Triggers a status file event to update the UI.
+
+        Args:
+            worker_id: Worker identifier
+            health_status: WorkerHealthStatus object
+        """
+        # Re-parse the updated status file
+        status_file = self.status_dir / f"{worker_id}.json"
+        status = self.parser.parse(status_file)
+
+        # Create status file event to trigger UI update
+        event = StatusFileEvent(
+            worker_id=worker_id,
+            event_type=StatusFileEvent.EventType.MODIFIED,
+            path=status_file,
+            status=status,
+        )
+
+        # Update cache via callback
+        self.callback(event)
+
+        # Notify user callback if provided
+        if self.on_worker_unhealthy:
+            self.on_worker_unhealthy(worker_id, health_status)
+
+
+# =============================================================================
 # Worker Status Cache
 # =============================================================================
 

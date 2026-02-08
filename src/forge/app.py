@@ -140,6 +140,14 @@ class Worker:
     cost: float = 0.0
     last_heartbeat: datetime | None = None
     error: str | None = None  # Error message if status file is corrupted
+    health_error: str | None = None  # Health check error (from health_monitor)
+    health_guidance: list[str] = None  # User guidance per ADR 0014
+    health_score: float = 1.0  # Health score 0.0-1.0
+
+    def __post_init__(self):
+        """Initialize default values for mutable fields"""
+        if self.health_guidance is None:
+            self.health_guidance = []
 
     @classmethod
     def from_status_file(cls, status_file: WorkerStatusFile) -> "Worker":
@@ -159,6 +167,11 @@ class Worker:
             WorkerStatus.UNHEALTHY if status_file.error else WorkerStatus.IDLE
         )
 
+        # Extract health error and guidance from raw_data
+        health_error = status_file.raw_data.get("health_error") if status_file.raw_data else None
+        health_guidance = status_file.raw_data.get("health_guidance", []) if status_file.raw_data else []
+        health_score = status_file.raw_data.get("health_score", 1.0) if status_file.raw_data else 1.0
+
         return cls(
             session_id=status_file.worker_id,
             model=status_file.model,
@@ -167,6 +180,9 @@ class Worker:
             current_task=status_file.current_task,
             uptime_seconds=0,  # Calculate from started_at if needed
             error=status_file.error,
+            health_error=health_error,
+            health_guidance=health_guidance,
+            health_score=health_score,
         )
 
 
@@ -237,7 +253,7 @@ class LogEntry:
 
 
 class WorkersPanel(Static):
-    """Worker pool status panel"""
+    """Worker pool status panel with health error display per ADR 0014"""
 
     DEFAULT_CSS = """
     WorkersPanel {
@@ -250,6 +266,17 @@ class WorkersPanel(Static):
         text-style: bold;
         padding: 0 1;
     }
+
+    WorkersPanel > Static.error {
+        color: $error;
+        text-style: bold;
+        padding: 0 1;
+    }
+
+    WorkersPanel > Static.guidance {
+        color: $warning;
+        padding: 0 2;
+    }
     """
 
     workers: reactive[list[Worker]] = reactive([])
@@ -260,6 +287,7 @@ class WorkersPanel(Static):
         super().__init__(**kwargs)
         self._table: DataTable[Worker] | None = None
         self._status_cache = WorkerStatusCache()
+        self._error_display_workers: set[str] = set()  # Track workers with displayed errors
 
     def compose(self: ComposeResult) -> ComposeResult:
         yield Label("👷 WORKER POOL")
@@ -305,7 +333,7 @@ class WorkersPanel(Static):
         self.idle_count = sum(1 for w in workers if w.status == WorkerStatus.IDLE)
 
     def _update_display(self, workers: list[Worker]) -> None:
-        """Update the display with worker data"""
+        """Update the display with worker data including health errors per ADR 0014"""
         # Build display text
         active = sum(1 for w in workers if w.status == WorkerStatus.ACTIVE)
         idle = sum(1 for w in workers if w.status == WorkerStatus.IDLE)
@@ -337,12 +365,93 @@ class WorkersPanel(Static):
                     f"{worker.uptime_seconds // 60}m",
                 )
 
+        # Show health errors per ADR 0014
+        self._show_health_errors(workers)
+
+    def _show_health_errors(self, workers: list[Worker]) -> None:
+        """
+        Display health errors with actionable guidance per ADR 0014.
+
+        Shows error indicators for unhealthy workers with:
+        - Primary error message
+        - Actionable guidance steps
+        - No automatic recovery (user decides)
+        """
+        # Get unhealthy workers with health errors
+        unhealthy_workers = [
+            w for w in workers
+            if w.status == WorkerStatus.UNHEALTHY and (w.error or w.health_error)
+        ]
+
+        # Clear error display for recovered workers
+        current_unhealthy_ids = {w.session_id for w in unhealthy_workers}
+        recovered = self._error_display_workers - current_unhealthy_ids
+        if recovered:
+            self._error_display_workers = current_unhealthy_ids
+            # Re-mount to clear old error displays
+            self._refresh_display()
+            return
+
+        # Show new errors
+        for worker in unhealthy_workers:
+            if worker.session_id in self._error_display_workers:
+                continue  # Already displayed
+
+            self._error_display_workers.add(worker.session_id)
+
+            # Use health_error if available (from health monitor), otherwise use error
+            error_message = worker.health_error or worker.error
+
+            # Build error display with guidance
+            error_widget = self._build_error_widget(worker, error_message)
+            if error_widget:
+                # Display error in the panel
+                self.mount(error_widget, before=self._table if self._table else None)
+
+    def _build_error_widget(self, worker: Worker, error_message: str) -> Static | None:
+        """
+        Build error display widget per ADR 0014.
+
+        Args:
+            worker: Worker with error
+            error_message: Error message to display
+
+        Returns:
+            Static widget with error and guidance, or None if no error
+        """
+        if not error_message:
+            return None
+
+        # Build error text with guidance
+        error_lines = [
+            f"⚠️  {worker.session_id}: {error_message}",
+        ]
+
+        # Add guidance if available
+        if worker.health_guidance:
+            error_lines.append("")
+            error_lines.append("Suggested actions:")
+            for guidance in worker.health_guidance[:3]:  # Show max 3 guidance items
+                error_lines.append(f"  • {guidance}")
+
+        return Static(
+            "\n".join(error_lines),
+            classes="error" if not worker.health_guidance else None
+        )
+
+    def _refresh_display(self) -> None:
+        """Refresh the display to clear old error messages"""
+        # Remove all children and rebuild
+        for child in self.children:
+            if isinstance(child, Static) and "error" in getattr(child, 'classes', []):
+                child.remove()
+
     def _get_status_symbol(self, status: WorkerStatus) -> str:
         """Get status symbol for display"""
         symbols = {
             WorkerStatus.ACTIVE: "●EXEC",
             WorkerStatus.IDLE: "○IDLE",
-            WorkerStatus.UNHEALTHY: "✗DEAD",
+            WorkerStatus.UNHEALTHY: "⚠️ ERR",
             WorkerStatus.SPAWNING: "⟳SPAWN",
             WorkerStatus.TERMINATING: "⦻STOP",
             WorkerStatus.FAILED: "✗FAIL",
