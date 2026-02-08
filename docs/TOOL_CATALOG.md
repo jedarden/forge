@@ -32,6 +32,10 @@ You don't need to know the exact tool names - the LLM translates your intent int
 - [Data Export](#data-export) - Export logs, metrics, screenshots
 - [Configuration](#configuration) - Settings, layouts, preferences
 - [Help & Discovery](#help--discovery) - Documentation, search, help
+- [Notification](#notification) - Display notifications and prompts
+- [System](#system) - System status, health checks, worker control
+- [Workspace](#workspace) - Workspace management and switching
+- [Analytics](#analytics) - Performance analytics and trends
 
 ---
 
