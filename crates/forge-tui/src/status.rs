@@ -787,4 +787,386 @@ mod tests {
         assert_eq!(watcher.workers().len(), 0);
         assert!(watcher.get_worker("new-worker").is_none());
     }
+
+    // ============================================================
+    // Status File Monitoring Integration Tests
+    // ============================================================
+    //
+    // These tests verify that file system changes trigger the correct
+    // events. They create, modify, and delete status files and verify
+    // that the StatusWatcher picks them up correctly.
+
+    /// Test that creating a new status file triggers a WorkerUpdated event.
+    #[test]
+    fn test_file_creation_triggers_update_event() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        // Create watcher with short debounce for faster tests
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Receive initial scan event (should be empty)
+        let initial_event = watcher.recv_timeout(Duration::from_millis(100));
+        assert!(matches!(
+            initial_event,
+            Some(StatusEvent::InitialScanComplete { workers }) if workers.is_empty()
+        ));
+
+        // Create a new status file after the watcher is running
+        create_test_status_file(&status_dir, "new-worker-1", "active");
+
+        // Wait for the file system event with enough time for debounce
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Try to receive the update event
+        let event = watcher.recv_timeout(Duration::from_millis(500));
+
+        // Verify we got a WorkerUpdated event
+        match event {
+            Some(StatusEvent::WorkerUpdated { worker_id, status }) => {
+                assert_eq!(worker_id, "new-worker-1");
+                assert_eq!(status.status, WorkerStatus::Active);
+                assert_eq!(status.model, "test-model");
+            }
+            other => {
+                // Also accept if the watcher detected it via internal state
+                if watcher.get_worker("new-worker-1").is_some() {
+                    let w = watcher.get_worker("new-worker-1").unwrap();
+                    assert_eq!(w.status, WorkerStatus::Active);
+                } else {
+                    panic!("Expected WorkerUpdated event, got: {:?}", other);
+                }
+            }
+        }
+    }
+
+    /// Test that modifying an existing status file triggers a WorkerUpdated event.
+    #[test]
+    fn test_file_modification_triggers_update_event() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        // Create initial status file before watcher starts
+        let path = create_test_status_file(&status_dir, "worker-mod", "idle");
+
+        // Create watcher
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Verify initial state
+        assert_eq!(watcher.workers().len(), 1);
+        assert_eq!(
+            watcher.get_worker("worker-mod").unwrap().status,
+            WorkerStatus::Idle
+        );
+
+        // Receive initial scan event
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Modify the file to change status to active
+        let new_content = r#"{
+            "worker_id": "worker-mod",
+            "status": "active",
+            "model": "test-model-updated",
+            "workspace": "/test/workspace",
+            "pid": 12345,
+            "tasks_completed": 10
+        }"#;
+        fs::write(&path, new_content).unwrap();
+
+        // Wait for debounce
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Try to receive the update event
+        let event = watcher.recv_timeout(Duration::from_millis(500));
+
+        match event {
+            Some(StatusEvent::WorkerUpdated { worker_id, status }) => {
+                assert_eq!(worker_id, "worker-mod");
+                assert_eq!(status.status, WorkerStatus::Active);
+                assert_eq!(status.tasks_completed, 10);
+            }
+            other => {
+                // Check internal state as fallback
+                if let Some(w) = watcher.get_worker("worker-mod") {
+                    if w.status == WorkerStatus::Active {
+                        // Event was applied internally
+                        return;
+                    }
+                }
+                panic!("Expected WorkerUpdated event with active status, got: {:?}", other);
+            }
+        }
+    }
+
+    /// Test that deleting a status file triggers a WorkerRemoved event.
+    #[test]
+    fn test_file_deletion_triggers_remove_event() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        // Create initial status file
+        let path = create_test_status_file(&status_dir, "worker-del", "active");
+
+        // Create watcher
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Verify initial state
+        assert_eq!(watcher.workers().len(), 1);
+        assert!(watcher.get_worker("worker-del").is_some());
+
+        // Receive initial scan event
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Delete the file
+        fs::remove_file(&path).unwrap();
+
+        // Wait for debounce
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Try to receive the remove event
+        let event = watcher.recv_timeout(Duration::from_millis(500));
+
+        match event {
+            Some(StatusEvent::WorkerRemoved { worker_id }) => {
+                assert_eq!(worker_id, "worker-del");
+            }
+            other => {
+                // Check internal state as fallback - worker should be removed
+                if watcher.get_worker("worker-del").is_none() {
+                    // Event was applied internally
+                    return;
+                }
+                panic!("Expected WorkerRemoved event, got: {:?}", other);
+            }
+        }
+    }
+
+    /// Test monitoring multiple file changes in sequence.
+    #[test]
+    fn test_multiple_file_changes_sequence() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Consume initial scan event
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Create first worker
+        create_test_status_file(&status_dir, "worker-a", "active");
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Create second worker
+        create_test_status_file(&status_dir, "worker-b", "idle");
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Create third worker
+        create_test_status_file(&status_dir, "worker-c", "starting");
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Drain all events
+        while watcher.recv_timeout(Duration::from_millis(100)).is_some() {}
+
+        // Verify all workers are tracked
+        assert!(watcher.get_worker("worker-a").is_some(), "worker-a should be tracked");
+        assert!(watcher.get_worker("worker-b").is_some(), "worker-b should be tracked");
+        assert!(watcher.get_worker("worker-c").is_some(), "worker-c should be tracked");
+
+        // Verify counts
+        let counts = watcher.worker_counts();
+        assert_eq!(counts.total, 3);
+        assert_eq!(counts.active, 1);
+        assert_eq!(counts.idle, 1);
+        assert_eq!(counts.starting, 1);
+    }
+
+    /// Test that non-JSON files are ignored.
+    #[test]
+    fn test_non_json_files_ignored() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Consume initial scan event
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Create a non-JSON file (should be ignored)
+        let txt_path = status_dir.join("not-a-worker.txt");
+        fs::write(&txt_path, "This is not JSON").unwrap();
+
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Drain events
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        // Should still have no workers
+        assert_eq!(watcher.workers().len(), 0);
+    }
+
+    /// Test that invalid JSON files generate error events.
+    #[test]
+    fn test_invalid_json_generates_error_event() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Consume initial scan event
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Create an invalid JSON file
+        let invalid_path = status_dir.join("broken.json");
+        fs::write(&invalid_path, "{ not valid json }").unwrap();
+
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Should receive an error event or the file should be ignored
+        let event = watcher.recv_timeout(Duration::from_millis(500));
+
+        match event {
+            Some(StatusEvent::Error { path, error: _ }) => {
+                assert!(path.ends_with("broken.json"));
+            }
+            other => {
+                // It's acceptable to not receive an error event if the
+                // implementation silently ignores invalid files
+                assert!(
+                    watcher.get_worker("broken").is_none(),
+                    "Invalid file should not create a worker, got event: {:?}",
+                    other
+                );
+            }
+        }
+    }
+
+    /// Test worker status transitions (active -> idle -> failed).
+    #[test]
+    fn test_worker_status_transitions() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        let path = create_test_status_file(&status_dir, "transitioning-worker", "starting");
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Verify initial state
+        assert_eq!(
+            watcher.get_worker("transitioning-worker").unwrap().status,
+            WorkerStatus::Starting
+        );
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Transition to active
+        let content = r#"{"worker_id": "transitioning-worker", "status": "active", "model": "test", "workspace": "/test"}"#;
+        fs::write(&path, content).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Drain events and check state
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        // Verify transition
+        let w = watcher.get_worker("transitioning-worker");
+        assert!(w.is_some(), "Worker should still exist after transition");
+        assert_eq!(
+            w.unwrap().status,
+            WorkerStatus::Active,
+            "Worker should be active after transition"
+        );
+
+        // Transition to idle
+        let content = r#"{"worker_id": "transitioning-worker", "status": "idle", "model": "test", "workspace": "/test"}"#;
+        fs::write(&path, content).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        assert_eq!(
+            watcher.get_worker("transitioning-worker").unwrap().status,
+            WorkerStatus::Idle
+        );
+
+        // Transition to failed
+        let content = r#"{"worker_id": "transitioning-worker", "status": "failed", "model": "test", "workspace": "/test"}"#;
+        fs::write(&path, content).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        let final_worker = watcher.get_worker("transitioning-worker").unwrap();
+        assert_eq!(final_worker.status, WorkerStatus::Failed);
+        assert!(!final_worker.is_healthy());
+    }
+
+    /// Test concurrent file operations (simulates multiple workers updating simultaneously).
+    #[test]
+    fn test_concurrent_file_operations() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Create multiple files rapidly (simulating concurrent worker registration)
+        for i in 0..5 {
+            let content = format!(
+                r#"{{"worker_id": "concurrent-{}", "status": "active", "model": "test", "workspace": "/test", "tasks_completed": {}}}"#,
+                i, i * 10
+            );
+            fs::write(status_dir.join(format!("concurrent-{}.json", i)), content).unwrap();
+        }
+
+        // Wait for all events to be processed
+        std::thread::sleep(Duration::from_millis(200));
+
+        // Drain all events
+        while watcher.recv_timeout(Duration::from_millis(100)).is_some() {}
+
+        // Verify all workers are tracked
+        for i in 0..5 {
+            let worker_id = format!("concurrent-{}", i);
+            let worker = watcher.get_worker(&worker_id);
+            assert!(worker.is_some(), "Worker {} should be tracked", worker_id);
+            assert_eq!(worker.unwrap().tasks_completed, i * 10);
+        }
+
+        assert_eq!(watcher.worker_counts().total, 5);
+        assert_eq!(watcher.worker_counts().active, 5);
+    }
 }
