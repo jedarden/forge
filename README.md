@@ -78,11 +78,14 @@ FORGE operates as a **federated orchestration system**:
 ## Quick Start
 
 ```bash
-# Installation (coming soon)
+# Installation
 pip install llmforge
 
+# Initialize FORGE
+forge init
+
 # Launch the control panel
-forge dashboard
+forge
 
 # Primary interface: Natural language chat (press :)
 forge> :
@@ -102,6 +105,8 @@ forge spawn --model=sonnet --count=3
 forge status
 forge optimize
 ```
+
+**📖 [User Guide](docs/USER_GUIDE.md)** - Complete documentation for installation, configuration, and usage
 
 ---
 
@@ -187,7 +192,13 @@ MIT License - see [LICENSE](LICENSE) for details
 
 ---
 
-## Research & Documentation
+## Documentation
+
+- **[User Guide](docs/USER_GUIDE.md)** - Complete installation, configuration, and usage guide
+- **[Integration Guide](docs/INTEGRATION_GUIDE.md)** - Integrate external tools with FORGE
+- **[Tool Catalog](docs/TOOL_CATALOG.md)** - Reference for all 45+ tools
+- **[Hotkeys Reference](docs/HOTKEYS.md)** - Keyboard shortcuts
+- **[ADRs](docs/adr/)** - Architecture Decision Records
 
 Comprehensive research documentation available in [`research/control-panel/`](./research/):
 
