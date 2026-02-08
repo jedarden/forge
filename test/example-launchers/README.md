@@ -9,6 +9,7 @@ This directory contains example launcher scripts that demonstrate the FORGE laun
 | `claude-code-launcher.sh` | ✅ PASS | Reference implementation for Claude Code | - |
 | `aider-launcher.sh` | ✅ PASS | Example for Aider AI pair programming tool | - |
 | `continue-launcher.sh` | ✅ PASS | Example for Continue VS Code extension | - |
+| `bead-worker-launcher.sh` | ✅ PASS | **Bead-aware launcher** with `--bead-ref` support | - |
 | `failing-missing-arguments.sh` | ❌ FAIL | Doesn't validate required arguments | Test 1 |
 | `failing-invalid-json.sh` | ❌ FAIL | Outputs invalid JSON | Test 2 |
 | `failing-wrong-status.sh` | ❌ FAIL | Uses wrong status value | Test 2 |
@@ -38,6 +39,33 @@ launcher \
 **Optional Arguments:**
 - `--config` - Path to worker configuration file
 
+### Bead-Aware Protocol Extension
+
+Bead-aware launchers additionally support:
+
+```bash
+launcher \
+  --model=<model> \
+  --workspace=<path> \
+  --session-name=<name> \
+  --bead-ref=<bead-id> \
+  [--config=<path>]
+```
+
+**Bead-Aware Parameter:**
+- `--bead-ref` - Bead ID from br CLI (e.g., "fg-1qo", "bd-abc")
+  - When present: launcher fetches bead data and constructs task prompt
+  - When absent: launcher operates in standard mode (no task assigned)
+
+**Bead-aware launchers:**
+- Fetch bead data using `br show <bead-id>`
+- Construct task prompt with bead context (title, description, priority)
+- Update bead status to `in_progress` on spawn
+- Include `bead_ref` field in output JSON and status file
+- Close bead with `br close <bead-id>` when worker completes
+
+See `bead-worker-launcher.sh` for a complete reference implementation.
+
 ### 2. stdout Output (JSON ONLY)
 
 The launcher must output valid JSON on stdout with these fields:
@@ -52,6 +80,8 @@ The launcher must output valid JSON on stdout with these fields:
 }
 ```
 
+**Standard Output (no bead assigned):**
+
 **Required Fields:**
 - `worker_id` (string) - Worker identifier
 - `pid` (integer) - Process ID of spawned worker
@@ -60,6 +90,22 @@ The launcher must output valid JSON on stdout with these fields:
 **Optional Fields:**
 - `launcher` (string) - Launcher name for logging
 - `timestamp` (string) - ISO-8601 timestamp
+
+**Bead-Aware Output (when --bead-ref is provided):**
+
+```json
+{
+  "worker_id": "<session-name>",
+  "pid": <integer>,
+  "status": "spawned",
+  "launcher": "<launcher-name>",
+  "bead_ref": "<bead-id>",
+  "timestamp": "<ISO-8601-timestamp>"
+}
+```
+
+**Bead-Aware Additional Field:**
+- `bead_ref` (string) - Bead ID assigned to this worker
 
 **Important:**
 - No extra output before or after the JSON
@@ -80,6 +126,26 @@ Create `~/.forge/status/<worker-id>.json`:
   "started_at": "<ISO-8601>",
   "last_activity": "<ISO-8601>",
   "current_task": null,
+  "tasks_completed": 0
+}
+```
+
+**Bead-Aware Status File (when --bead-ref is provided):**
+
+```json
+{
+  "worker_id": "<worker-id>",
+  "status": "active",
+  "model": "<model>",
+  "workspace": "<workspace-path>",
+  "pid": <integer>,
+  "started_at": "<ISO-8601>",
+  "last_activity": "<ISO-8601>",
+  "current_task": {
+    "bead_id": "<bead-id>",
+    "bead_title": "<bead-title>",
+    "priority": <0-4>
+  },
   "tasks_completed": 0
 }
 ```
@@ -132,6 +198,29 @@ The launcher must spawn an actual running process:
 
 # Test Continue launcher
 ./test/launcher-test-harness.py test/example-launchers/continue-launcher.sh
+
+# Test Bead-Aware launcher (standard mode - no bead)
+./test/launcher-test-harness.py test/example-launchers/bead-worker-launcher.sh
+```
+
+### Test Bead-Aware Launcher
+
+```bash
+# Test with a real bead (requires br CLI and valid bead ID)
+./test/example-launchers/bead-worker-launcher.sh \
+  --model=sonnet \
+  --workspace=/home/coder/forge \
+  --session-name=test-bead-launch \
+  --bead-ref=fg-1qo
+
+# Verify bead status was updated to in_progress
+br show fg-1qo
+
+# Verify status file contains bead_ref
+cat ~/.forge/status/test-bead-launch.json | jq '.current_task'
+
+# Test without bead ref (standard mode - should pass test harness)
+./test/launcher-test-harness.py test/example-launchers/bead-worker-launcher.sh
 ```
 
 Expected output:
@@ -242,5 +331,7 @@ The `launcher-test-harness.py` runs 5 tests:
 
 - [FORGE Integration Guide](../../docs/INTEGRATION_GUIDE.md) - Complete integration documentation
 - [Launcher Testing Guide](../../docs/LAUNCHER_TESTING.md) - Detailed testing documentation
+- [Bead-Aware Launcher Protocol](../../docs/BEAD_LAUNCHER_PROTOCOL.md) - Bead allocation protocol specification
 - [test/launcher-test-harness.py](../launcher-test-harness.py) - Test harness source code
 - [src/forge/launcher.py](../../src/forge/launcher.py) - Python WorkerLauncher implementation
+- [Bead-Aware Launcher Reference](bead-worker-launcher.sh) - Complete bead-aware launcher implementation

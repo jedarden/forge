@@ -109,8 +109,8 @@ impl WorkerLauncher {
             });
         }
 
-        // Create worker handle
-        let handle = WorkerHandle::new(
+        // Create worker handle with optional bead assignment
+        let mut handle = WorkerHandle::new(
             worker_id.clone(),
             launcher_output.pid,
             launcher_output.session.clone(),
@@ -123,6 +123,14 @@ impl WorkerLauncher {
             config.tier,
             config.workspace.clone(),
         );
+
+        // Add bead assignment if present in launcher output or config
+        if let Some(ref bead_id) = launcher_output.bead_id {
+            let bead_title = launcher_output.bead_title.clone().unwrap_or_else(|| bead_id.clone());
+            handle = handle.with_bead(bead_id.clone(), bead_title);
+        } else if let Some(ref bead_id) = config.bead_id {
+            handle = handle.with_bead(bead_id.clone(), bead_id.clone());
+        }
 
         // Store the handle
         {
@@ -170,8 +178,16 @@ impl WorkerLauncher {
     ) -> Result<String> {
         let mut cmd = Command::new(&config.launcher_path);
 
-        // Pass session name as argument
-        cmd.arg(session_name);
+        // Pass standard arguments
+        cmd.arg(format!("--model={}", config.model))
+            .arg(format!("--workspace={}", config.workspace.display()))
+            .arg(format!("--session-name={}", session_name));
+
+        // Pass bead-ref if we have a bead assignment (bead-aware launcher protocol)
+        if let Some(ref bead_id) = config.bead_id {
+            cmd.arg(format!("--bead-ref={}", bead_id));
+            debug!("Launching bead-aware worker for bead: {}", bead_id);
+        }
 
         // Set working directory
         cmd.current_dir(&config.workspace);
@@ -187,9 +203,8 @@ impl WorkerLauncher {
         }
 
         debug!(
-            "Executing launcher: {} {}",
-            config.launcher_path.display(),
-            session_name
+            "Executing launcher: {}",
+            config.launcher_path.display()
         );
 
         // Execute with timeout
@@ -274,6 +289,8 @@ impl WorkerLauncher {
                     model: String::new(),
                     message: None,
                     error: None,
+                    bead_id: None,
+                    bead_title: None,
                 })
             }
         }

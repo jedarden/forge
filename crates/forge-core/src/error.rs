@@ -57,6 +57,10 @@ pub enum ForgeError {
     #[error("File not found: {path}")]
     FileNotFound { path: PathBuf },
 
+    /// Workspace directory not found
+    #[error("Workspace not found: {path}")]
+    WorkspaceNotFound { path: PathBuf },
+
     /// Permission denied
     #[error("Permission denied: {path}")]
     PermissionDenied { path: PathBuf },
@@ -295,6 +299,13 @@ impl ForgeError {
             context: context.into(),
             message: source.to_string(),
             source: Some(source),
+        }
+    }
+
+    /// Create a generic parse error
+    pub fn parse(message: impl Into<String>) -> Self {
+        Self::Internal {
+            message: format!("Parse error: {}", message.into()),
         }
     }
 

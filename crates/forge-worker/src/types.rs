@@ -4,7 +4,7 @@
 //! including worker handles, launcher output, and process information.
 
 use chrono::{DateTime, Utc};
-use forge_core::types::{WorkerId, WorkerStatus, WorkerTier};
+use forge_core::types::{BeadId, WorkerId, WorkerStatus, WorkerTier};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -31,6 +31,10 @@ pub struct WorkerHandle {
     pub started_at: DateTime<Utc>,
     /// Working directory for the worker
     pub workspace: PathBuf,
+    /// Optional bead ID if this worker is assigned to a specific bead
+    pub bead_id: Option<BeadId>,
+    /// Optional bead title for display
+    pub bead_title: Option<String>,
 }
 
 impl WorkerHandle {
@@ -54,12 +58,26 @@ impl WorkerHandle {
             status: WorkerStatus::Starting,
             started_at: Utc::now(),
             workspace: workspace.into(),
+            bead_id: None,
+            bead_title: None,
         }
+    }
+
+    /// Set the bead assignment for this worker.
+    pub fn with_bead(mut self, bead_id: impl Into<BeadId>, bead_title: impl Into<String>) -> Self {
+        self.bead_id = Some(bead_id.into());
+        self.bead_title = Some(bead_title.into());
+        self
     }
 
     /// Check if the worker is still running.
     pub fn is_running(&self) -> bool {
         self.status.is_healthy()
+    }
+
+    /// Check if this worker is assigned to a bead.
+    pub fn has_bead(&self) -> bool {
+        self.bead_id.is_some()
     }
 
     /// Get the session name for tmux commands.
@@ -86,6 +104,12 @@ pub struct LauncherOutput {
     /// Optional error if launch failed
     #[serde(default)]
     pub error: Option<String>,
+    /// Optional bead ID if this worker is assigned to a bead
+    #[serde(default)]
+    pub bead_id: Option<String>,
+    /// Optional bead title for display
+    #[serde(default)]
+    pub bead_title: Option<String>,
 }
 
 impl LauncherOutput {
@@ -112,6 +136,8 @@ pub struct LaunchConfig {
     pub env: Vec<(String, String)>,
     /// Timeout for launcher in seconds
     pub timeout_secs: u64,
+    /// Optional bead ID to assign this worker to
+    pub bead_id: Option<BeadId>,
 }
 
 impl LaunchConfig {
@@ -130,6 +156,7 @@ impl LaunchConfig {
             tier: WorkerTier::Standard,
             env: Vec::new(),
             timeout_secs: 30,
+            bead_id: None,
         }
     }
 
@@ -149,6 +176,17 @@ impl LaunchConfig {
     pub fn with_timeout(mut self, timeout_secs: u64) -> Self {
         self.timeout_secs = timeout_secs;
         self
+    }
+
+    /// Set the bead assignment.
+    pub fn with_bead(mut self, bead_id: impl Into<BeadId>) -> Self {
+        self.bead_id = Some(bead_id.into());
+        self
+    }
+
+    /// Check if this launch config has a bead assignment.
+    pub fn has_bead(&self) -> bool {
+        self.bead_id.is_some()
     }
 }
 
@@ -202,6 +240,8 @@ mod tests {
             model: "sonnet".into(),
             message: Some("Started successfully".into()),
             error: None,
+            bead_id: None,
+            bead_title: None,
         };
 
         assert!(output.is_success());
@@ -215,6 +255,8 @@ mod tests {
             model: String::new(),
             message: None,
             error: Some("Failed to start".into()),
+            bead_id: None,
+            bead_title: None,
         };
 
         assert!(!output.is_success());
