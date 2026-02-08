@@ -62,6 +62,12 @@ from forge.tools import (
     get_default_tools_path,
 )
 
+# Import cost tracker module (lazy import to avoid circular dependency)
+def _get_cost_tracker():
+    """Lazy import of cost tracker"""
+    from forge.cost_tracker import get_cost_tracker
+    return get_cost_tracker()
+
 # =============================================================================
 # Data Models
 # =============================================================================
@@ -624,6 +630,10 @@ class ForgeApp(App):
     _status_watcher: StatusWatcher | None = None
     _status_dir: Path = Path.home() / ".forge" / "status"
 
+    # Cost tracker
+    _cost_tracker: "CostTracker | None" = None
+    _cost_refresh_interval: float = 30.0  # Refresh cost data every 30 seconds
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         # Initialize storage
@@ -633,6 +643,9 @@ class ForgeApp(App):
         self._costs_store = []
         self._metrics_store = None
         self._logs_store = []
+
+        # Initialize cost tracker
+        self._initialize_cost_tracker()
         # Initialize view state
         self._current_view = ViewMode.OVERVIEW
         self._split_left = None
@@ -2031,6 +2044,54 @@ class ForgeApp(App):
         if self._logs_panel:
             self._logs_panel.logs = value
 
+    def _initialize_cost_tracker(self) -> None:
+        """Initialize the cost tracker for API call cost tracking"""
+        try:
+            self._cost_tracker = _get_cost_tracker()
+        except Exception as e:
+            # Cost tracker initialization failed - continue without it
+            print(f"Warning: Could not initialize cost tracker: {e}")
+            self._cost_tracker = None
+
+    def _load_cost_data(self) -> None:
+        """Load cost data from the cost tracker"""
+        if self._cost_tracker is None:
+            # Use sample data if cost tracker is not available
+            now = datetime.now()
+            self._costs_store = [
+                CostEntry("Sonnet 4.5", 24, 347000, 4.17),
+                CostEntry("GLM-4.7", 89, 124000, 0.00),
+            ]
+            return
+
+        try:
+            # Get today's cost summary
+            summary = self._cost_tracker.get_costs_today()
+
+            # Convert to CostEntry format
+            self._costs_store = []
+            for model, data in summary.by_model.items():
+                self._costs_store.append(
+                    CostEntry(
+                        model=model,
+                        requests=data["requests"],
+                        tokens=data["tokens"],
+                        cost=data["cost"],
+                    )
+                )
+
+            # If no data, show placeholder
+            if not self._costs_store:
+                self._costs_store = [
+                    CostEntry("No data today", 0, 0, 0.0),
+                ]
+        except Exception as e:
+            # Fall back to sample data on error
+            now = datetime.now()
+            self._costs_store = [
+                CostEntry("Error loading", 0, 0, 0.0),
+            ]
+
     def _initialize_sample_data(self) -> None:
         """Initialize with sample data for testing"""
         now = datetime.now()
@@ -2055,11 +2116,8 @@ class ForgeApp(App):
             Subscription("GLM-4.7 Pro", "GLM-4.7", 430, 1000, now, 50.0),
         ]
 
-        # Sample costs
-        self.costs = [
-            CostEntry("Sonnet 4.5", 24, 347000, 4.17),
-            CostEntry("GLM-4.7", 89, 124000, 0.00),
-        ]
+        # Load cost data from cost tracker
+        self._load_cost_data()
 
         # Sample metrics
         self.metrics = MetricData(
@@ -2148,6 +2206,15 @@ class ForgeApp(App):
 
         # Start status file watcher
         self._start_status_watcher()
+
+        # Start cost data refresh
+        self.set_interval(self._cost_refresh_interval, self._refresh_cost_data)
+
+    def _refresh_cost_data(self) -> None:
+        """Periodically refresh cost data from the cost tracker"""
+        self._load_cost_data()
+        if self._costs_panel is not None:
+            self._costs_panel.costs = self._costs_store
 
     def _update_all_panels(self) -> None:
         """Update all panels with current data"""
