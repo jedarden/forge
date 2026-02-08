@@ -11,6 +11,9 @@
 //! # With verbose logging
 //! forge -v
 //!
+//! # With debug mode (verbose tracing to ~/.forge/logs/forge.log in JSON format)
+//! forge --debug
+//!
 //! # With custom log directory
 //! forge --log-dir /path/to/logs/
 //!
@@ -38,6 +41,10 @@ struct Cli {
     /// Enable verbose logging (increases log level)
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
+
+    /// Enable debug mode with verbose tracing output to ~/.forge/logs/forge.log
+    #[arg(long)]
+    debug: bool,
 
     /// Directory for log files (defaults to ~/.forge/logs/)
     #[arg(long)]
@@ -120,8 +127,8 @@ fn restore_terminal() -> std::io::Result<()> {
 /// Set up logging based on CLI arguments.
 fn setup_logging(cli: &Cli) -> forge_core::Result<LogGuard> {
     // Initialize logging with the specified log directory
-    // verbose flag increases log level
-    let debug = cli.verbose > 0;
+    // Either --debug or -v/--verbose enables debug logging
+    let debug = cli.debug || cli.verbose > 0;
     init_logging(cli.log_dir.clone(), debug)
 }
 
