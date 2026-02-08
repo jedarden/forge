@@ -298,7 +298,7 @@ class WorkersPanel(Static):
     }
     """
 
-    workers: reactive[list[Worker]] = reactive([])
+    worker_list: reactive[list[Worker]] = reactive([])
     active_count: reactive[int] = reactive(0)
     idle_count: reactive[int] = reactive(0)
 
@@ -314,9 +314,10 @@ class WorkersPanel(Static):
     def on_mount(self) -> None:
         """Initialize the worker table on mount"""
         # Initial setup
-        self.update_workers(self.workers)
+        self._update_counts(self.worker_list)
+        self._update_display(self.worker_list)
 
-    def watch_workers(self, old_workers: list[Worker], new_workers: list[Worker]) -> None:
+    def watch_worker_list(self, old_workers: list[Worker], new_workers: list[Worker]) -> None:
         """React to worker list changes"""
         self._update_counts(new_workers)
         self._update_display(new_workers)
@@ -343,8 +344,8 @@ class WorkersPanel(Static):
             worker = Worker.from_status_file(status_file)
             new_workers.append(worker)
 
-        # Update reactive workers list
-        self.workers = new_workers
+        # Update reactive worker list
+        self.worker_list = new_workers
 
     def _update_counts(self, workers: list[Worker]) -> None:
         """Update worker counts"""
@@ -2584,16 +2585,16 @@ class ForgeApp(App):
             return create_error_result("analyze_bottlenecks", f"Failed to analyze bottlenecks: {e}")
 
     @property
-    def workers(self) -> list[Worker]:
+    def forge_workers(self) -> list[Worker]:
         """Get workers list"""
         return self._workers_store
 
-    @workers.setter
-    def workers(self, value: list[Worker]) -> None:
+    @forge_workers.setter
+    def forge_workers(self, value: list[Worker]) -> None:
         """Set workers list and trigger update"""
         self._workers_store = value
         if self._workers_panel:
-            self._workers_panel.workers = value
+            self._workers_panel.worker_list = value
 
     @property
     def tasks(self) -> list[Task]:
@@ -2933,7 +2934,7 @@ class ForgeApp(App):
     def _update_all_panels(self) -> None:
         """Update all panels with current data"""
         if self._workers_panel is not None:
-            self._workers_panel.workers = self._workers_store
+            self._workers_panel.worker_list = self._workers_store
         if self._tasks_panel is not None:
             self._tasks_panel.tasks = self._tasks_store
         if self._costs_panel is not None:
