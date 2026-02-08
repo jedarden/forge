@@ -624,6 +624,460 @@ Press any key to close this help.";
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
+
+    /// Helper to create a test terminal with specified dimensions
+    fn test_terminal(width: u16, height: u16) -> Terminal<TestBackend> {
+        let backend = TestBackend::new(width, height);
+        Terminal::new(backend).unwrap()
+    }
+
+    /// Helper to render app and get the buffer
+    fn render_app(app: &App, width: u16, height: u16) -> Buffer {
+        let mut terminal = test_terminal(width, height);
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    /// Check if a buffer contains a specific string
+    fn buffer_contains(buffer: &Buffer, text: &str) -> bool {
+        let content = buffer_to_string(buffer);
+        content.contains(text)
+    }
+
+    /// Convert buffer to string for debugging/searching
+    fn buffer_to_string(buffer: &Buffer) -> String {
+        let area = buffer.area;
+        let mut result = String::new();
+        for y in 0..area.height {
+            for x in 0..area.width {
+                result.push(buffer[(x, y)].symbol().chars().next().unwrap_or(' '));
+            }
+            result.push('\n');
+        }
+        result
+    }
+
+    // ============================================================
+    // Dashboard Panel Rendering Tests
+    // ============================================================
+
+    #[test]
+    fn test_overview_renders_worker_pool_panel() {
+        let app = App::new();
+        let buffer = render_app(&app, 100, 30);
+
+        // Check Worker Pool panel title appears
+        assert!(
+            buffer_contains(&buffer, "Worker Pool"),
+            "Overview should render Worker Pool panel"
+        );
+    }
+
+    #[test]
+    fn test_overview_renders_subscriptions_panel() {
+        let app = App::new();
+        let buffer = render_app(&app, 100, 30);
+
+        assert!(
+            buffer_contains(&buffer, "Subscriptions"),
+            "Overview should render Subscriptions panel"
+        );
+    }
+
+    #[test]
+    fn test_overview_renders_task_queue_panel() {
+        let app = App::new();
+        let buffer = render_app(&app, 100, 30);
+
+        assert!(
+            buffer_contains(&buffer, "Task Queue"),
+            "Overview should render Task Queue panel"
+        );
+    }
+
+    #[test]
+    fn test_overview_renders_activity_log_panel() {
+        let app = App::new();
+        let buffer = render_app(&app, 100, 30);
+
+        assert!(
+            buffer_contains(&buffer, "Activity Log"),
+            "Overview should render Activity Log panel"
+        );
+    }
+
+    #[test]
+    fn test_costs_view_renders_cost_analytics_panel() {
+        let mut app = App::new();
+        app.switch_view(View::Costs);
+        let buffer = render_app(&app, 100, 30);
+
+        assert!(
+            buffer_contains(&buffer, "Cost Analytics"),
+            "Costs view should render Cost Analytics panel"
+        );
+    }
+
+    #[test]
+    fn test_metrics_view_renders_performance_panel() {
+        let mut app = App::new();
+        app.switch_view(View::Metrics);
+        let buffer = render_app(&app, 100, 30);
+
+        assert!(
+            buffer_contains(&buffer, "Performance Metrics"),
+            "Metrics view should render Performance Metrics panel"
+        );
+    }
+
+    #[test]
+    fn test_all_six_panel_types_render() {
+        // Test that all 6 FocusPanel types have corresponding views that render
+        let mut app = App::new();
+
+        // 1. Worker Pool (Overview - switch to Workers first, then back to Overview)
+        // The app starts in Overview, so switch_view(Overview) won't change focus
+        app.switch_view(View::Workers);
+        app.switch_view(View::Overview);
+        assert_eq!(app.focus_panel(), FocusPanel::WorkerPool);
+        let buffer = render_app(&app, 100, 30);
+        assert!(buffer_contains(&buffer, "Worker Pool"));
+
+        // 2. Subscriptions (part of Overview)
+        assert!(buffer_contains(&buffer, "Subscriptions"));
+
+        // 3. Task Queue (Tasks view)
+        app.switch_view(View::Tasks);
+        assert_eq!(app.focus_panel(), FocusPanel::TaskQueue);
+        let buffer = render_app(&app, 100, 30);
+        assert!(buffer_contains(&buffer, "Task Queue"));
+
+        // 4. Activity Log (Logs view)
+        app.switch_view(View::Logs);
+        assert_eq!(app.focus_panel(), FocusPanel::ActivityLog);
+        let buffer = render_app(&app, 100, 30);
+        assert!(buffer_contains(&buffer, "Activity Log"));
+
+        // 5. Cost Breakdown (Costs view)
+        app.switch_view(View::Costs);
+        assert_eq!(app.focus_panel(), FocusPanel::CostBreakdown);
+        let buffer = render_app(&app, 100, 30);
+        assert!(buffer_contains(&buffer, "Cost Analytics"));
+
+        // 6. Metrics Charts (Metrics view)
+        app.switch_view(View::Metrics);
+        assert_eq!(app.focus_panel(), FocusPanel::MetricsCharts);
+        let buffer = render_app(&app, 100, 30);
+        assert!(buffer_contains(&buffer, "Performance Metrics"));
+    }
+
+    // ============================================================
+    // Border Rendering Tests
+    // ============================================================
+
+    #[test]
+    fn test_panels_render_with_borders() {
+        let app = App::new();
+        let buffer = render_app(&app, 100, 30);
+
+        // Unicode box drawing characters used by ratatui
+        // Check for corner characters that indicate borders
+        let content = buffer_to_string(&buffer);
+
+        // Should contain horizontal box-drawing characters (─)
+        assert!(
+            content.contains('─') || content.contains('-'),
+            "Panels should render with horizontal border lines"
+        );
+
+        // Should contain vertical box-drawing characters (│)
+        assert!(
+            content.contains('│') || content.contains('|'),
+            "Panels should render with vertical border lines"
+        );
+    }
+
+    #[test]
+    fn test_header_renders_with_borders() {
+        let app = App::new();
+        let buffer = render_app(&app, 100, 30);
+
+        assert!(
+            buffer_contains(&buffer, "FORGE Dashboard"),
+            "Header should contain FORGE Dashboard title"
+        );
+    }
+
+    #[test]
+    fn test_footer_renders_hotkey_hints() {
+        let app = App::new();
+        let buffer = render_app(&app, 100, 30);
+
+        assert!(
+            buffer_contains(&buffer, "[o]"),
+            "Footer should show Overview hotkey"
+        );
+        assert!(
+            buffer_contains(&buffer, "[w]"),
+            "Footer should show Workers hotkey"
+        );
+        assert!(
+            buffer_contains(&buffer, "[q]"),
+            "Footer should show Quit hotkey"
+        );
+    }
+
+    // ============================================================
+    // Layout Adaptation Tests
+    // ============================================================
+
+    #[test]
+    fn test_layout_adapts_to_small_terminal() {
+        let app = App::new();
+
+        // Very small terminal
+        let buffer = render_app(&app, 40, 15);
+
+        // Should still render without panic
+        assert!(buffer.area.width == 40);
+        assert!(buffer.area.height == 15);
+
+        // Should still show some content
+        let content = buffer_to_string(&buffer);
+        assert!(!content.trim().is_empty(), "Should render content even in small terminal");
+    }
+
+    #[test]
+    fn test_layout_adapts_to_large_terminal() {
+        let app = App::new();
+
+        // Large terminal
+        let buffer = render_app(&app, 200, 60);
+
+        assert!(buffer.area.width == 200);
+        assert!(buffer.area.height == 60);
+
+        // All panels should still be visible
+        assert!(buffer_contains(&buffer, "Worker Pool"));
+        assert!(buffer_contains(&buffer, "Subscriptions"));
+    }
+
+    #[test]
+    fn test_layout_adapts_to_wide_terminal() {
+        let app = App::new();
+
+        // Wide but short terminal
+        let buffer = render_app(&app, 200, 20);
+
+        assert!(buffer.area.width == 200);
+        assert!(buffer.area.height == 20);
+
+        // Should render header and some content
+        assert!(buffer_contains(&buffer, "FORGE Dashboard"));
+    }
+
+    #[test]
+    fn test_layout_adapts_to_tall_terminal() {
+        let app = App::new();
+
+        // Narrow but tall terminal
+        let buffer = render_app(&app, 60, 50);
+
+        assert!(buffer.area.width == 60);
+        assert!(buffer.area.height == 50);
+
+        // Should render content
+        assert!(buffer_contains(&buffer, "FORGE Dashboard"));
+    }
+
+    #[test]
+    fn test_minimum_viable_terminal_size() {
+        let app = App::new();
+
+        // Minimum size that should still render something
+        let buffer = render_app(&app, 20, 10);
+
+        // Should not panic and should produce some output
+        assert!(buffer.area.width == 20);
+        assert!(buffer.area.height == 10);
+    }
+
+    // ============================================================
+    // Panel Content Tests
+    // ============================================================
+
+    #[test]
+    fn test_worker_pool_shows_worker_counts() {
+        let app = App::new();
+        let buffer = render_app(&app, 100, 30);
+
+        // Worker pool should show worker statistics
+        assert!(
+            buffer_contains(&buffer, "active") || buffer_contains(&buffer, "idle") || buffer_contains(&buffer, "Total"),
+            "Worker Pool should display worker counts"
+        );
+    }
+
+    #[test]
+    fn test_task_queue_shows_priority_indicators() {
+        let mut app = App::new();
+        app.switch_view(View::Tasks);
+        let buffer = render_app(&app, 100, 30);
+
+        // Task queue should show priority markers
+        assert!(
+            buffer_contains(&buffer, "P0") || buffer_contains(&buffer, "P1") || buffer_contains(&buffer, "Ready"),
+            "Task Queue should display priority indicators"
+        );
+    }
+
+    #[test]
+    fn test_costs_view_shows_dollar_amounts() {
+        let mut app = App::new();
+        app.switch_view(View::Costs);
+        let buffer = render_app(&app, 100, 30);
+
+        assert!(
+            buffer_contains(&buffer, "$"),
+            "Costs view should display dollar amounts"
+        );
+    }
+
+    #[test]
+    fn test_logs_view_shows_timestamps() {
+        let mut app = App::new();
+        app.switch_view(View::Logs);
+        let buffer = render_app(&app, 100, 30);
+
+        // Logs should have timestamp-like patterns
+        assert!(
+            buffer_contains(&buffer, ":") && (buffer_contains(&buffer, "INFO") || buffer_contains(&buffer, "WARN") || buffer_contains(&buffer, "ERROR")),
+            "Logs view should display log entries with timestamps"
+        );
+    }
+
+    // ============================================================
+    // View-Specific Rendering Tests
+    // ============================================================
+
+    #[test]
+    fn test_workers_view_renders_table() {
+        let mut app = App::new();
+        app.switch_view(View::Workers);
+        let buffer = render_app(&app, 100, 30);
+
+        assert!(
+            buffer_contains(&buffer, "Worker Pool Management"),
+            "Workers view should show management panel"
+        );
+        assert!(
+            buffer_contains(&buffer, "Worker ID") || buffer_contains(&buffer, "Model") || buffer_contains(&buffer, "Status"),
+            "Workers view should show table headers"
+        );
+    }
+
+    #[test]
+    fn test_chat_view_renders_input_field() {
+        let mut app = App::new();
+        app.switch_view(View::Chat);
+        let buffer = render_app(&app, 100, 30);
+
+        assert!(
+            buffer_contains(&buffer, "Chat") || buffer_contains(&buffer, "Input"),
+            "Chat view should show chat interface"
+        );
+    }
+
+    // ============================================================
+    // Help Overlay Tests
+    // ============================================================
+
+    #[test]
+    fn test_help_overlay_renders() {
+        let mut app = App::new();
+        app.handle_app_event(AppEvent::ShowHelp);
+        let buffer = render_app(&app, 100, 40);
+
+        assert!(app.show_help(), "Help should be visible");
+        assert!(
+            buffer_contains(&buffer, "Help") || buffer_contains(&buffer, "Hotkey"),
+            "Help overlay should render"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_shows_navigation_keys() {
+        let mut app = App::new();
+        app.handle_app_event(AppEvent::ShowHelp);
+        let buffer = render_app(&app, 100, 40);
+
+        // Help should show view navigation keys
+        let content = buffer_to_string(&buffer);
+        assert!(
+            content.contains("Tab") || content.contains("Esc") || content.contains("Navigation"),
+            "Help overlay should show navigation keys"
+        );
+    }
+
+    // ============================================================
+    // Focus Highlighting Tests
+    // ============================================================
+
+    #[test]
+    fn test_focused_panel_is_highlighted() {
+        let mut app = App::new();
+
+        // Initial focus is None (no highlight)
+        assert_eq!(app.focus_panel(), FocusPanel::None);
+        assert!(!app.focus_panel().is_highlighted());
+
+        // After switching view, focus is set and highlighted
+        app.switch_view(View::Workers);
+        assert_eq!(app.focus_panel(), FocusPanel::WorkerPool);
+        assert!(app.focus_panel().is_highlighted());
+    }
+
+    #[test]
+    fn test_focus_changes_with_view() {
+        let mut app = App::new();
+
+        // Initial state has no focus
+        assert_eq!(app.focus_panel(), FocusPanel::None);
+
+        // After switching views, each view sets appropriate focus
+        // Note: switch_view only sets focus when view actually changes,
+        // so we need to switch to a different view first for Overview
+        app.switch_view(View::Workers);
+        assert_eq!(app.focus_panel(), FocusPanel::WorkerPool);
+
+        // Now test each view has correct focus when switched to
+        let view_focus_pairs = [
+            (View::Tasks, FocusPanel::TaskQueue),
+            (View::Costs, FocusPanel::CostBreakdown),
+            (View::Metrics, FocusPanel::MetricsCharts),
+            (View::Logs, FocusPanel::ActivityLog),
+            (View::Chat, FocusPanel::ChatInput),
+            (View::Overview, FocusPanel::WorkerPool),
+            (View::Workers, FocusPanel::WorkerPool),
+        ];
+
+        for (view, expected_focus) in view_focus_pairs {
+            app.switch_view(view);
+            assert_eq!(
+                app.focus_panel(),
+                expected_focus,
+                "View {:?} should have focus {:?}",
+                view,
+                expected_focus
+            );
+        }
+    }
+
+    // ============================================================
+    // Original Tests
+    // ============================================================
 
     #[test]
     fn test_app_creation() {
