@@ -13,3 +13,13 @@ forge-core = { path = "../forge-core" }
 ratatui.workspace = true
 crossterm.workspace = true
 chrono.workspace = true
+tokio.workspace = true
+notify.workspace = true
+notify-debouncer-full.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

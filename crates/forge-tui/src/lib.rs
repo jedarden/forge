@@ -26,8 +26,10 @@
 
 pub mod app;
 pub mod event;
+pub mod status;
 pub mod view;
 pub mod widget;
 
 pub use app::{App, AppResult};
+pub use status::{StatusEvent, StatusWatcher, StatusWatcherConfig, WorkerStatusFile};
 pub use view::View;

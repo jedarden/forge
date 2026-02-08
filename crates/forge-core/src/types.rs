@@ -13,12 +13,13 @@ pub type WorkerId = String;
 pub type BeadId = String;
 
 /// Worker status as reported in status files.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkerStatus {
     /// Worker is running and processing tasks
     Active,
     /// Worker is running but idle (no current task)
+    #[default]
     Idle,
     /// Worker process has failed or crashed
     Failed,
