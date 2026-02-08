@@ -217,126 +217,52 @@ This document identifies areas where the FORGE design is incomplete or under-spe
 
 ### 6. Multi-Workspace Support
 
-**Status**: **MENTIONED BUT NOT DESIGNED**
+**Status**: ✅ **OUT OF SCOPE**
 
-**What's missing**:
+**Decision**: One workspace per FORGE instance
+- Each server has one workspace (can contain multiple repos)
+- No workspace switching needed
+- No cross-workspace aggregation needed
+- Multiple workspaces = multiple FORGE instances (different directories)
 
-#### 6a. Workspace Discovery
-- How does FORGE find workspaces?
-  - User manually registers?
-  - Auto-discover git repos in ~/projects?
-  - Workspace list in config?
+**Rationale**: Simpler architecture, matches single-user model
 
-#### 6b. Workspace Switching
-- How to switch between workspaces in TUI?
-  - Dedicated workspace picker view?
-  - Command: `:switch workspace <path>`?
-  - Hotkey cycle?
-
-#### 6c. Per-Workspace Workers
-- Are workers bound to workspaces?
-  - One worker can work on multiple workspaces?
-  - Workers are workspace-scoped?
-  - Workers can be reassigned?
-
-#### 6d. Cross-Workspace Metrics
-- How to view costs across all workspaces?
-  - Aggregate view?
-  - Filter by workspace?
-  - Per-workspace breakdown?
-
-**Impact**: Limited to single-workspace usage
-
-**Next Steps**:
-- [ ] Create ADR 0011: Multi-Workspace Architecture
-- [ ] Design workspace discovery
-- [ ] Implement workspace switching UI
-- [ ] Define worker-workspace relationships
+**Impact**: ✅ **RESOLVED** - No multi-workspace feature needed for MVP
 
 ---
 
 ### 7. Metrics Aggregation & Storage
 
-**Status**: **LOG FORMAT DEFINED, AGGREGATION NOT**
+**Status**: ✅ **DECIDED**
 
-**What's missing**:
+**Decisions**:
+- **Storage**: SQLite database (per ADR 0006)
+- **Format**: Flat files where possible, SQLite for aggregations
+- **Aggregation**: Batch processing every 10s (per ADR 0008)
+- **Retention**: 30 days in SQLite, configurable
 
-#### 7a. Metrics Database
-- Where are aggregated metrics stored?
-  - SQLite database?
-  - In-memory only (lost on restart)?
-  - Time-series database?
+**Implementation**: Covered by bead fg-3of (Implement SQLite metrics storage)
 
-#### 7b. Aggregation Logic
-- How are logs parsed into metrics?
-  - Real-time as logs arrive?
-  - Batch processing every minute?
-  - On-demand when view is opened?
-
-#### 7c. Data Retention
-- How long to keep metrics?
-  - Last 24 hours in memory?
-  - 30 days in database?
-  - Configurable retention?
-
-#### 7d. Performance Calculations
-- How are throughput, latency, success rate calculated?
-  - Sliding window (last 1 hour)?
-  - Per-worker aggregations?
-  - Percentiles (p50, p95, p99)?
-
-**Impact**: Cannot show historical trends or analytics
-
-**Next Steps**:
-- [ ] Create ADR 0012: Metrics Storage & Aggregation
-- [ ] Design database schema
-- [ ] Implement log parser
-- [ ] Define retention policy
+**Impact**: ✅ **RESOLVED** - SQLite is sufficient for metrics
 
 ---
 
 ### 8. Binary Updates & Versioning
 
-**Status**: **RESEARCH DONE, IMPLEMENTATION NOT**
+**Status**: ✅ **REFERENCE IMPLEMENTATION EXISTS**
 
-**What's documented**:
-- Binary atomic updates research (docs/notes/binary-atomic-updates.md)
-- Hot-reload strategy (docs/notes/hot-reload-and-updates.md)
-
-**What's missing**:
-
-#### 8a. Version Checking
-- How does FORGE check for updates?
-  - Poll GitHub releases API?
-  - Check manifest on server?
-  - User-initiated only?
-
-#### 8b. Update Manifest Format
-- What's in the manifest?
-  - Version number, changelog?
-  - Binary URLs per platform?
-  - SHA256 checksums?
-  - Migration notes?
-
-#### 8c. State Migration
-- How to migrate state between versions?
-  - Backward-compatible formats?
-  - Migration scripts?
-  - User confirmation required?
-
-#### 8d. Rollback
-- How to rollback failed update?
-  - Keep previous binary?
-  - Automatic rollback on crash?
-  - Manual rollback command?
-
-**Impact**: Cannot self-update without this
+**Decision**: Use ccdash (claude-code dashboard) self-update as reference
+- ccdash has working, stable self-update functionality
+- Follow same pattern for FORGE
 
 **Next Steps**:
-- [ ] Create ADR 0013: Binary Update Mechanism
-- [ ] Implement version checking
-- [ ] Design update manifest
-- [ ] Build rollback system
+- [ ] Study ccdash update mechanism
+- [ ] Adapt for FORGE (single binary, atomic rename)
+- [ ] Document in ADR 0013 (optional, can copy ccdash approach)
+
+**Implementation**: Covered by bead fg-1yr (Implement PyInstaller packaging)
+
+**Impact**: ✅ **RESOLVED** - Reference implementation available
 
 ---
 
@@ -392,41 +318,16 @@ This document identifies areas where the FORGE design is incomplete or under-spe
 
 ### 10. Remote Worker Support
 
-**Status**: **NOT DESIGNED**
+**Status**: ✅ **OUT OF SCOPE FOR MVP**
 
-**What's missing**:
+**Decision**: Workers run on same server as FORGE
+- All workers local (same machine)
+- Keep code flexible for future remote workers
+- No remote worker design needed for MVP
 
-#### 10a. SSH Workers
-- Can workers run on remote machines?
-  - SSH to remote and spawn?
-  - Forward logs via SSH?
-  - How to monitor remote processes?
+**Future consideration**: Add remote workers post-MVP if needed
 
-#### 10b. Container Workers
-- Can workers run in Docker/K8s?
-  - FORGE orchestrates containers?
-  - Container logs streamed to FORGE?
-  - Health checks via container API?
-
-#### 10c. Cloud Workers
-- Can workers run in cloud (AWS Lambda, Modal, etc.)?
-  - FORGE triggers cloud functions?
-  - Different cost tracking?
-  - Different spawning mechanism?
-
-#### 10d. Network Topology
-- How do remote workers communicate?
-  - Workers push logs to FORGE?
-  - FORGE pulls logs via API?
-  - Centralized log aggregation?
-
-**Impact**: Limited to local-only workers
-
-**Next Steps**:
-- [ ] Create ADR 0015: Remote Worker Architecture
-- [ ] Design SSH launcher
-- [ ] Design container launcher
-- [ ] Implement network log streaming
+**Impact**: ✅ **RESOLVED** - Local workers only, flexible architecture
 
 ---
 
@@ -434,62 +335,91 @@ This document identifies areas where the FORGE design is incomplete or under-spe
 
 ### 11. Configuration Management
 
-**What's missing**:
-- [ ] Config file schema validation
-- [ ] Config migration between versions
-- [ ] Per-workspace config overrides
-- [ ] Config file merging (global + workspace)
+**Status**: ✅ **DECIDED**
 
-**Impact**: Medium - can work around manually
+**Decisions**:
+- **Format**: Try YAML with schema linter
+  - If too cumbersome, fall back to JSON
+  - Schema validation is critical (validate before applying)
+- **Structure**: `~/.forge/config.yaml`
+  - No per-workspace overrides (single workspace per instance)
+  - No global + workspace merging needed
+- **Migration**: Handle in update process (version-specific migrations)
+
+**Implementation**: Covered by bead fg-1g1 (Implement configuration management)
+
+**Impact**: ✅ **RESOLVED** - YAML with linter, fallback to JSON
 
 ---
 
 ### 12. Observability
 
-**What's missing**:
-- [ ] FORGE's own logs (not just worker logs)
-- [ ] Performance profiling hooks
-- [ ] Debug mode
-- [ ] Telemetry (opt-in, privacy-preserving)
+**Status**: ✅ **DECIDED**
 
-**Impact**: Medium - harder to debug FORGE itself
+**Decisions**:
+- **FORGE's own logs**: Yes, separate from worker logs
+  - Enable worker to iterate on test FORGE instance in different terminal
+  - Log to `~/.forge/logs/forge.log`
+  - Structured logging (JSON lines format)
+- **Debug mode**: `forge --debug` flag for verbose logging
+- **Performance profiling**: Optional (add if needed during development)
+- **Telemetry**: No (privacy-first, no external data collection)
+
+**Next Steps**:
+- [ ] Add bead for FORGE logging implementation
+- [ ] Support `--debug` flag
+
+**Impact**: ✅ **RESOLVED** - FORGE logs to support development workflows
 
 ---
 
 ### 13. Extensibility
 
-**What's missing**:
-- [ ] Plugin system design
-- [ ] Custom tool definitions (user-defined tools)
-- [ ] Custom log parsers
-- [ ] Custom cost calculators
+**Status**: ✅ **OUT OF SCOPE FOR MVP**
 
-**Impact**: Low - can be added later
+**Decision**: Covered by integration surface documentation
+- Plugin system: Not needed for MVP
+- Custom tools: Not needed (30+ built-in tools sufficient)
+- Custom log parsers: Handled by launcher protocol compliance
+- Custom cost calculators: Not needed (standard model pricing)
+
+**Future consideration**: Add plugin system post-MVP if user demand exists
+
+**Impact**: ✅ **RESOLVED** - Integration surfaces provide extensibility
 
 ---
 
 ### 14. Documentation
 
-**What's missing**:
-- [ ] User guide (how to use FORGE)
-- [ ] Developer guide (how to contribute)
-- [ ] Troubleshooting guide (common issues)
-- [ ] Video tutorials
-- [ ] Architecture diagrams (visual)
+**Status**: ✅ **DECIDED**
 
-**Impact**: Low - can write as we build
+**Decisions**:
+- **User guide**: Not needed - chat interface should answer questions (self-documenting)
+- **Developer guide**: Yes - for contributors (bead fg-wrh)
+- **Troubleshooting**: Built into chat interface (LLM answers common questions)
+- **Video tutorials**: Not needed for MVP
+- **Architecture diagrams**: Nice to have, not critical
+
+**Philosophy**: Chat interface makes FORGE self-documenting. Users ask questions, get answers.
+
+**Impact**: ✅ **RESOLVED** - Minimal documentation, chat-driven help
 
 ---
 
 ### 15. Testing Infrastructure
 
-**What's missing**:
-- [ ] Unit tests for core logic
-- [ ] Integration tests (end-to-end)
-- [ ] Performance benchmarks
-- [ ] Load testing (1000s of logs)
+**Status**: ✅ **DECIDED**
 
-**Impact**: Low - test harnesses cover protocols
+**Decisions**:
+- **Extend existing test harnesses** to confirm functionality
+- **Unit tests**: Add for core logic (tool execution, parsing, etc.)
+- **Integration tests**: Yes - end-to-end flows (bead fg-2fs)
+- **Performance benchmarks**: Add if needed during development
+- **Load testing**: Optional (1000s of logs/sec scenarios)
+
+**Implementation**: Covered by bead fg-2fs (Add integration tests for all surfaces)
+
+**Impact**: ✅ **RESOLVED** - Extend test harnesses, add unit/integration tests
 
 ---
 
@@ -506,17 +436,17 @@ This document identifies areas where the FORGE design is incomplete or under-spe
 6. **Error Handling** (ADR 0014) - ✅ **COMPLETED**
 
 ### P2 - Nice to Have
-7. **Multi-Workspace** (ADR 0011) - Power user feature
-8. **Metrics Storage** (ADR 0012) - Analytics
-9. **Binary Updates** (ADR 0013) - Distribution
+7. ~~**Multi-Workspace** (ADR 0011)~~ - ✅ Out of scope (single workspace per instance)
+8. **Metrics Storage** (ADR 0012) - ✅ Decided (SQLite, flat files)
+9. **Binary Updates** (ADR 0013) - ✅ Reference exists (ccdash)
 
 ### P3 - Future
-10. **Remote Workers** (ADR 0015) - Advanced use cases
-11. Configuration Management
-12. Observability
-13. Extensibility
-14. Documentation
-15. Testing Infrastructure
+10. ~~**Remote Workers** (ADR 0015)~~ - ✅ Out of scope (local workers only, flexible architecture)
+11. **Configuration Management** - ✅ Decided (YAML with linter, fallback JSON)
+12. **Observability** - ✅ Decided (FORGE logs, --debug flag)
+13. ~~**Extensibility**~~ - ✅ Out of scope (integration surfaces sufficient)
+14. **Documentation** - ✅ Decided (chat-driven, minimal docs)
+15. **Testing Infrastructure** - ✅ Decided (extend harnesses, add unit/integration)
 
 ---
 
@@ -544,31 +474,25 @@ This document identifies areas where the FORGE design is incomplete or under-spe
 
 ---
 
-## Open Questions
+## ✅ Resolved Architectural Questions
 
 1. **Single binary or multiple binaries?**
-   - One `forge` binary that does everything?
-   - Separate `forge-dashboard`, `forge-launcher`, `forge-worker`?
+   - ✅ **One `forge` binary** - Everything integrates against single binary (like ccdash)
 
 2. **Client-server or standalone?**
-   - TUI talks to background daemon?
-   - TUI is the entire application?
+   - ✅ **Standalone application** - TUI is the entire application (no daemon, like ccdash)
 
 3. **Online or offline?**
-   - Requires internet for backend?
-   - Can work fully offline with local model?
+   - ✅ **Model agnostic** - Works with local or remote models, FORGE is indifferent
 
 4. **Single-user or multi-user?**
-   - Designed for solo developer?
-   - Team collaboration features?
+   - ✅ **Single-user** - Each user has their own FORGE instance (per-user isolation)
 
 5. **Open-source or commercial?**
-   - Fully open MIT/Apache-2.0?
-   - Open core with paid features?
-   - SaaS offering?
+   - ✅ **Open-source** - MIT or Apache-2.0 license
 
 ---
 
 **FORGE** - Federated Orchestration & Resource Generation Engine
 
-Design is **90% complete**. All P0 and P1 critical gaps resolved (ADRs 0006, 0007, 0008, 0010, 0014). Ready for MVP implementation.
+Design is **100% complete**. All gaps resolved. All architectural questions answered. Ready for implementation.
