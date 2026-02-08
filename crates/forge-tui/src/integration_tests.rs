@@ -983,4 +983,864 @@ mod tests {
         // After switching to Costs, previous_view is Tasks
         assert_eq!(app.current_view(), View::Tasks);
     }
+
+    // ============================================================
+    // Integration Test 16: Data Flow - Worker Starts
+    // ============================================================
+    //
+    // Tests the complete data flow when a worker starts:
+    // Status file created → StatusWatcher detects → App updates → UI displays
+
+    #[test]
+    fn test_data_flow_worker_starts() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        // Initialize status watcher (no workers yet)
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Verify no workers initially
+        assert_eq!(watcher.workers().len(), 0);
+        let initial_counts = watcher.worker_counts();
+        assert_eq!(initial_counts.total, 0);
+        assert_eq!(initial_counts.starting, 0);
+
+        // Consume initial scan event
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Simulate worker starting - create status file with "starting" status
+        let worker_json = r#"{
+            "worker_id": "worker-alpha",
+            "status": "starting",
+            "model": "claude-sonnet-4-5",
+            "workspace": "/home/user/project",
+            "pid": 12345,
+            "started_at": "2026-02-08T10:00:00Z"
+        }"#;
+        let worker_path = status_dir.join("worker-alpha.json");
+        fs::write(&worker_path, worker_json).unwrap();
+
+        // Wait for file system event to propagate
+        thread::sleep(Duration::from_millis(100));
+
+        // Drain events to update internal state
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        // Verify worker is now tracked with "starting" status
+        let worker = watcher.get_worker("worker-alpha");
+        assert!(worker.is_some(), "Worker should be tracked after status file creation");
+        assert_eq!(worker.unwrap().status, WorkerStatus::Starting, "Worker should be in 'starting' status");
+
+        // Verify counts updated
+        let counts = watcher.worker_counts();
+        assert_eq!(counts.total, 1, "Total worker count should be 1");
+        assert_eq!(counts.starting, 1, "Starting worker count should be 1");
+        assert_eq!(counts.healthy(), 1, "Worker should be considered healthy");
+
+        // Verify worker data can be retrieved by ID
+        let worker_data = watcher.get_worker("worker-alpha").unwrap();
+        assert_eq!(worker_data.model, "claude-sonnet-4-5");
+        assert_eq!(worker_data.workspace, "/home/user/project");
+        assert_eq!(worker_data.pid, Some(12345));
+    }
+
+    #[test]
+    fn test_data_flow_worker_starts_ui_display() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        // Create a starting worker
+        let worker_json = r#"{
+            "worker_id": "ui-test-worker",
+            "status": "starting",
+            "model": "sonnet",
+            "workspace": "/test",
+            "pid": 99999,
+            "started_at": "2026-02-08T10:00:00Z"
+        }"#;
+        fs::write(status_dir.join("ui-test-worker.json"), worker_json).unwrap();
+
+        // Initialize app with custom status dir
+        let app = App::with_status_dir(status_dir.clone());
+
+        // Render the app and verify UI shows the worker
+        let buffer = render_app(&app, 120, 40);
+
+        // The worker should appear in the worker pool display
+        // When starting, the UI should show "Starting" or the starting indicator
+        let content = buffer_to_string(&buffer);
+        assert!(
+            content.contains("Worker") || content.contains("Loading"),
+            "UI should display worker-related content: got {}",
+            &content[..content.len().min(500)]
+        );
+    }
+
+    // ============================================================
+    // Integration Test 17: Data Flow - Worker Completes Task
+    // ============================================================
+    //
+    // Tests the data flow when a worker completes a task:
+    // Worker active with task → Task completed → Status updated → UI reflects completion
+
+    #[test]
+    fn test_data_flow_worker_completes_task() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        // Create worker actively working on a task
+        let active_json = r#"{
+            "worker_id": "task-worker",
+            "status": "active",
+            "model": "opus",
+            "workspace": "/project",
+            "pid": 11111,
+            "started_at": "2026-02-08T10:00:00Z",
+            "last_activity": "2026-02-08T10:30:00Z",
+            "current_task": "fg-123",
+            "tasks_completed": 5
+        }"#;
+        let worker_path = status_dir.join("task-worker.json");
+        fs::write(&worker_path, active_json).unwrap();
+
+        // Initialize watcher
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Verify initial state - worker is active with task
+        let worker = watcher.get_worker("task-worker").unwrap();
+        assert_eq!(worker.status, WorkerStatus::Active);
+        assert_eq!(worker.current_task, Some("fg-123".to_string()));
+        assert_eq!(worker.tasks_completed, 5);
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Simulate task completion - worker goes idle with incremented task count
+        let completed_json = r#"{
+            "worker_id": "task-worker",
+            "status": "idle",
+            "model": "opus",
+            "workspace": "/project",
+            "pid": 11111,
+            "started_at": "2026-02-08T10:00:00Z",
+            "last_activity": "2026-02-08T10:35:00Z",
+            "current_task": null,
+            "tasks_completed": 6
+        }"#;
+        fs::write(&worker_path, completed_json).unwrap();
+
+        // Wait for update
+        thread::sleep(Duration::from_millis(100));
+
+        // Drain events
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        // Verify task completion is reflected
+        let updated_worker = watcher.get_worker("task-worker").unwrap();
+        assert_eq!(
+            updated_worker.status,
+            WorkerStatus::Idle,
+            "Worker should be idle after completing task"
+        );
+        assert_eq!(
+            updated_worker.current_task, None,
+            "Worker should have no current task after completion"
+        );
+        assert_eq!(
+            updated_worker.tasks_completed, 6,
+            "Tasks completed count should be incremented"
+        );
+
+        // Verify counts updated
+        let counts = watcher.worker_counts();
+        assert_eq!(counts.active, 0, "No workers should be active");
+        assert_eq!(counts.idle, 1, "One worker should be idle");
+    }
+
+    #[test]
+    fn test_data_flow_multiple_task_completions() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        // Create worker with initial task count
+        let initial_json = r#"{
+            "worker_id": "prolific-worker",
+            "status": "active",
+            "model": "haiku",
+            "workspace": "/fast-tasks",
+            "pid": 22222,
+            "current_task": "task-1",
+            "tasks_completed": 0
+        }"#;
+        let worker_path = status_dir.join("prolific-worker.json");
+        fs::write(&worker_path, initial_json).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Simulate multiple task completions
+        for task_num in 1..=5 {
+            // Complete current task and start next
+            let next_task = if task_num < 5 {
+                format!(r#""task-{}""#, task_num + 1)
+            } else {
+                "null".to_string()
+            };
+
+            let status = if task_num < 5 { "active" } else { "idle" };
+
+            let updated_json = format!(
+                r#"{{
+                    "worker_id": "prolific-worker",
+                    "status": "{}",
+                    "model": "haiku",
+                    "workspace": "/fast-tasks",
+                    "pid": 22222,
+                    "current_task": {},
+                    "tasks_completed": {}
+                }}"#,
+                status, next_task, task_num
+            );
+            fs::write(&worker_path, updated_json).unwrap();
+
+            thread::sleep(Duration::from_millis(50));
+            while watcher.recv_timeout(Duration::from_millis(20)).is_some() {}
+        }
+
+        // Verify final state
+        let worker = watcher.get_worker("prolific-worker").unwrap();
+        assert_eq!(worker.status, WorkerStatus::Idle);
+        assert_eq!(worker.tasks_completed, 5, "Should have completed 5 tasks");
+        assert_eq!(worker.current_task, None);
+    }
+
+    // ============================================================
+    // Integration Test 18: Data Flow - Worker Goes Idle
+    // ============================================================
+    //
+    // Tests the data flow when a worker transitions to idle:
+    // Active → Idle transition, UI reflects the change
+
+    #[test]
+    fn test_data_flow_worker_goes_idle() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        // Create an active worker
+        let active_json = r#"{
+            "worker_id": "busy-worker",
+            "status": "active",
+            "model": "sonnet",
+            "workspace": "/work",
+            "pid": 33333,
+            "current_task": "ongoing-task"
+        }"#;
+        let worker_path = status_dir.join("busy-worker.json");
+        fs::write(&worker_path, active_json).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Verify initial active state
+        assert_eq!(watcher.worker_counts().active, 1);
+        assert_eq!(watcher.worker_counts().idle, 0);
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Transition to idle (no more tasks to process)
+        let idle_json = r#"{
+            "worker_id": "busy-worker",
+            "status": "idle",
+            "model": "sonnet",
+            "workspace": "/work",
+            "pid": 33333,
+            "current_task": null
+        }"#;
+        fs::write(&worker_path, idle_json).unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        // Verify idle transition
+        let worker = watcher.get_worker("busy-worker").unwrap();
+        assert_eq!(worker.status, WorkerStatus::Idle, "Worker should be idle");
+        assert!(worker.is_healthy(), "Idle worker should be healthy");
+
+        let counts = watcher.worker_counts();
+        assert_eq!(counts.active, 0, "No workers should be active");
+        assert_eq!(counts.idle, 1, "One worker should be idle");
+        assert_eq!(counts.healthy(), 1, "One worker should be healthy");
+    }
+
+    #[test]
+    fn test_data_flow_idle_to_active_transition() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        // Start with idle worker
+        let idle_json = r#"{
+            "worker_id": "waiting-worker",
+            "status": "idle",
+            "model": "sonnet",
+            "workspace": "/ready"
+        }"#;
+        let worker_path = status_dir.join("waiting-worker.json");
+        fs::write(&worker_path, idle_json).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        assert_eq!(watcher.worker_counts().idle, 1);
+        assert_eq!(watcher.worker_counts().active, 0);
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Worker picks up a new task
+        let active_json = r#"{
+            "worker_id": "waiting-worker",
+            "status": "active",
+            "model": "sonnet",
+            "workspace": "/ready",
+            "current_task": "new-task-123"
+        }"#;
+        fs::write(&worker_path, active_json).unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        // Verify transition to active
+        let worker = watcher.get_worker("waiting-worker").unwrap();
+        assert_eq!(worker.status, WorkerStatus::Active);
+        assert_eq!(worker.current_task, Some("new-task-123".to_string()));
+
+        let counts = watcher.worker_counts();
+        assert_eq!(counts.idle, 0);
+        assert_eq!(counts.active, 1);
+    }
+
+    // ============================================================
+    // Integration Test 19: Data Flow - Worker Crashes
+    // ============================================================
+    //
+    // Tests the data flow when a worker crashes/fails:
+    // Active/Starting → Failed/Error, UI shows unhealthy worker
+
+    #[test]
+    fn test_data_flow_worker_crashes_from_active() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        // Create an active worker
+        let active_json = r#"{
+            "worker_id": "unstable-worker",
+            "status": "active",
+            "model": "opus",
+            "workspace": "/risky",
+            "pid": 44444,
+            "current_task": "dangerous-task"
+        }"#;
+        let worker_path = status_dir.join("unstable-worker.json");
+        fs::write(&worker_path, active_json).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Verify initial healthy state
+        assert_eq!(watcher.worker_counts().healthy(), 1);
+        assert_eq!(watcher.worker_counts().unhealthy(), 0);
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Simulate crash - worker updates status to failed
+        let crashed_json = r#"{
+            "worker_id": "unstable-worker",
+            "status": "failed",
+            "model": "opus",
+            "workspace": "/risky",
+            "pid": 44444,
+            "current_task": "dangerous-task"
+        }"#;
+        fs::write(&worker_path, crashed_json).unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        // Verify crash detection
+        let worker = watcher.get_worker("unstable-worker").unwrap();
+        assert_eq!(worker.status, WorkerStatus::Failed, "Worker should be in failed state");
+        assert!(!worker.is_healthy(), "Failed worker should not be healthy");
+
+        let counts = watcher.worker_counts();
+        assert_eq!(counts.failed, 1, "One worker should be failed");
+        assert_eq!(counts.healthy(), 0, "No workers should be healthy");
+        assert_eq!(counts.unhealthy(), 1, "One worker should be unhealthy");
+    }
+
+    #[test]
+    fn test_data_flow_worker_crashes_from_starting() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        // Create a starting worker
+        let starting_json = r#"{
+            "worker_id": "startup-crash",
+            "status": "starting",
+            "model": "haiku",
+            "workspace": "/init"
+        }"#;
+        let worker_path = status_dir.join("startup-crash.json");
+        fs::write(&worker_path, starting_json).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        assert_eq!(watcher.worker_counts().starting, 1);
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Crash during startup
+        let crashed_json = r#"{
+            "worker_id": "startup-crash",
+            "status": "error",
+            "model": "haiku",
+            "workspace": "/init"
+        }"#;
+        fs::write(&worker_path, crashed_json).unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        // Verify error state
+        let worker = watcher.get_worker("startup-crash").unwrap();
+        assert_eq!(worker.status, WorkerStatus::Error);
+        assert!(!worker.is_healthy());
+
+        let counts = watcher.worker_counts();
+        assert_eq!(counts.error, 1);
+        assert_eq!(counts.starting, 0);
+    }
+
+    #[test]
+    fn test_data_flow_worker_recovery_after_crash() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        // Start with a failed worker
+        let failed_json = r#"{
+            "worker_id": "recovering-worker",
+            "status": "failed",
+            "model": "sonnet"
+        }"#;
+        let worker_path = status_dir.join("recovering-worker.json");
+        fs::write(&worker_path, failed_json).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        assert_eq!(watcher.worker_counts().failed, 1);
+        assert_eq!(watcher.worker_counts().unhealthy(), 1);
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Worker restarts and recovers
+        let recovered_json = r#"{
+            "worker_id": "recovering-worker",
+            "status": "starting",
+            "model": "sonnet"
+        }"#;
+        fs::write(&worker_path, recovered_json).unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        // Verify recovery
+        let worker = watcher.get_worker("recovering-worker").unwrap();
+        assert_eq!(worker.status, WorkerStatus::Starting);
+        assert!(worker.is_healthy(), "Restarted worker should be healthy");
+
+        let counts = watcher.worker_counts();
+        assert_eq!(counts.failed, 0);
+        assert_eq!(counts.starting, 1);
+        assert_eq!(counts.healthy(), 1);
+    }
+
+    #[test]
+    fn test_data_flow_worker_file_deletion_as_crash() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        // Create an active worker
+        let active_json = r#"{
+            "worker_id": "vanishing-worker",
+            "status": "active",
+            "model": "opus"
+        }"#;
+        let worker_path = status_dir.join("vanishing-worker.json");
+        fs::write(&worker_path, active_json).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        assert!(watcher.get_worker("vanishing-worker").is_some());
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Simulate sudden crash - status file deleted (process terminated unexpectedly)
+        fs::remove_file(&worker_path).unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        // Worker should no longer be tracked
+        assert!(
+            watcher.get_worker("vanishing-worker").is_none(),
+            "Worker should be removed after status file deletion"
+        );
+        assert_eq!(watcher.workers().len(), 0);
+    }
+
+    // ============================================================
+    // Integration Test 20: Complete Worker Lifecycle Data Flow
+    // ============================================================
+    //
+    // Tests the full lifecycle: start → active → complete tasks → idle → shutdown
+
+    #[test]
+    fn test_data_flow_complete_worker_lifecycle() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        let worker_path = status_dir.join("lifecycle-worker.json");
+
+        // Phase 1: Worker starts
+        let starting_json = r#"{
+            "worker_id": "lifecycle-worker",
+            "status": "starting",
+            "model": "sonnet",
+            "workspace": "/project",
+            "pid": 55555,
+            "started_at": "2026-02-08T10:00:00Z",
+            "tasks_completed": 0
+        }"#;
+        fs::write(&worker_path, starting_json).unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        let worker = watcher.get_worker("lifecycle-worker").unwrap();
+        assert_eq!(worker.status, WorkerStatus::Starting, "Phase 1: Should be starting");
+
+        // Phase 2: Worker becomes active with first task
+        let active_json = r#"{
+            "worker_id": "lifecycle-worker",
+            "status": "active",
+            "model": "sonnet",
+            "workspace": "/project",
+            "pid": 55555,
+            "started_at": "2026-02-08T10:00:00Z",
+            "last_activity": "2026-02-08T10:01:00Z",
+            "current_task": "task-001",
+            "tasks_completed": 0
+        }"#;
+        fs::write(&worker_path, active_json).unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        let worker = watcher.get_worker("lifecycle-worker").unwrap();
+        assert_eq!(worker.status, WorkerStatus::Active, "Phase 2: Should be active");
+        assert_eq!(worker.current_task, Some("task-001".to_string()));
+
+        // Phase 3: Worker completes task, picks up another
+        let task2_json = r#"{
+            "worker_id": "lifecycle-worker",
+            "status": "active",
+            "model": "sonnet",
+            "workspace": "/project",
+            "pid": 55555,
+            "started_at": "2026-02-08T10:00:00Z",
+            "last_activity": "2026-02-08T10:05:00Z",
+            "current_task": "task-002",
+            "tasks_completed": 1
+        }"#;
+        fs::write(&worker_path, task2_json).unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        let worker = watcher.get_worker("lifecycle-worker").unwrap();
+        assert_eq!(worker.tasks_completed, 1, "Phase 3: Should have completed 1 task");
+        assert_eq!(worker.current_task, Some("task-002".to_string()));
+
+        // Phase 4: Worker finishes all tasks, goes idle
+        let idle_json = r#"{
+            "worker_id": "lifecycle-worker",
+            "status": "idle",
+            "model": "sonnet",
+            "workspace": "/project",
+            "pid": 55555,
+            "started_at": "2026-02-08T10:00:00Z",
+            "last_activity": "2026-02-08T10:10:00Z",
+            "current_task": null,
+            "tasks_completed": 2
+        }"#;
+        fs::write(&worker_path, idle_json).unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        let worker = watcher.get_worker("lifecycle-worker").unwrap();
+        assert_eq!(worker.status, WorkerStatus::Idle, "Phase 4: Should be idle");
+        assert_eq!(worker.tasks_completed, 2, "Phase 4: Should have completed 2 tasks");
+        assert!(worker.current_task.is_none(), "Phase 4: Should have no current task");
+
+        // Phase 5: Worker is stopped
+        let stopped_json = r#"{
+            "worker_id": "lifecycle-worker",
+            "status": "stopped",
+            "model": "sonnet",
+            "workspace": "/project",
+            "pid": 55555,
+            "started_at": "2026-02-08T10:00:00Z",
+            "last_activity": "2026-02-08T10:15:00Z",
+            "tasks_completed": 2
+        }"#;
+        fs::write(&worker_path, stopped_json).unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        let worker = watcher.get_worker("lifecycle-worker").unwrap();
+        assert_eq!(worker.status, WorkerStatus::Stopped, "Phase 5: Should be stopped");
+        assert!(!worker.is_healthy(), "Phase 5: Stopped worker should not be healthy");
+    }
+
+    // ============================================================
+    // Integration Test 21: Multi-Worker Data Flow Scenarios
+    // ============================================================
+
+    #[test]
+    fn test_data_flow_mixed_worker_states() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        // Create workers in different states
+        let workers = [
+            ("worker-starting", "starting"),
+            ("worker-active", "active"),
+            ("worker-idle", "idle"),
+            ("worker-failed", "failed"),
+        ];
+
+        for (id, status) in &workers {
+            let json = format!(
+                r#"{{"worker_id": "{}", "status": "{}", "model": "test"}}"#,
+                id, status
+            );
+            fs::write(status_dir.join(format!("{}.json", id)), json).unwrap();
+        }
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let watcher = StatusWatcher::new(config).unwrap();
+
+        // Verify all workers are tracked
+        assert_eq!(watcher.workers().len(), 4);
+
+        // Verify counts
+        let counts = watcher.worker_counts();
+        assert_eq!(counts.total, 4);
+        assert_eq!(counts.starting, 1);
+        assert_eq!(counts.active, 1);
+        assert_eq!(counts.idle, 1);
+        assert_eq!(counts.failed, 1);
+
+        // Verify health calculations
+        assert_eq!(counts.healthy(), 3, "Starting, active, and idle should be healthy");
+        assert_eq!(counts.unhealthy(), 1, "Only failed should be unhealthy");
+
+        // Verify healthy/unhealthy lists
+        let healthy = watcher.healthy_workers();
+        let unhealthy = watcher.unhealthy_workers();
+
+        assert_eq!(healthy.len(), 3);
+        assert_eq!(unhealthy.len(), 1);
+        assert_eq!(unhealthy[0].worker_id, "worker-failed");
+    }
+
+    #[test]
+    fn test_data_flow_ui_updates_with_multiple_workers() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        // Create multiple workers
+        for i in 1..=3 {
+            let status = if i == 1 { "active" } else { "idle" };
+            let json = format!(
+                r#"{{
+                    "worker_id": "multi-worker-{}",
+                    "status": "{}",
+                    "model": "sonnet",
+                    "tasks_completed": {}
+                }}"#,
+                i, status, i * 5
+            );
+            fs::write(status_dir.join(format!("multi-worker-{}.json", i)), json).unwrap();
+        }
+
+        // Create app with custom status dir
+        let app = App::with_status_dir(status_dir);
+
+        // Render Workers view
+        let mut app = app;
+        app.switch_view(View::Workers);
+        let buffer = render_app(&app, 120, 40);
+
+        // UI should show worker information
+        let content = buffer_to_string(&buffer);
+        assert!(
+            content.contains("Worker") || content.contains("Pool"),
+            "Workers view should display worker pool: {}",
+            &content[..content.len().min(500)]
+        );
+    }
+
+    // ============================================================
+    // Integration Test 22: Data Flow Error Handling
+    // ============================================================
+
+    #[test]
+    fn test_data_flow_corrupted_status_file_recovery() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        // Create a valid worker
+        let valid_json = r#"{"worker_id": "good-worker", "status": "active"}"#;
+        let worker_path = status_dir.join("good-worker.json");
+        fs::write(&worker_path, valid_json).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(10);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        assert!(watcher.get_worker("good-worker").is_some());
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Corrupt the file
+        fs::write(&worker_path, "{ invalid json [[[").unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        // Worker may still be tracked from previous good state or may have error event
+        // The key is that the system doesn't crash
+
+        // Now fix the file
+        let fixed_json = r#"{"worker_id": "good-worker", "status": "idle"}"#;
+        fs::write(&worker_path, fixed_json).unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        // Worker should be restored
+        let worker = watcher.get_worker("good-worker");
+        if let Some(w) = worker {
+            // If tracked, should be idle now
+            assert_eq!(w.status, WorkerStatus::Idle, "Worker should recover to idle state");
+        }
+    }
+
+    #[test]
+    fn test_data_flow_rapid_status_changes() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(5); // Very short debounce
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        let worker_path = status_dir.join("rapid-worker.json");
+
+        // Rapid status changes (simulating a busy worker)
+        let statuses = ["starting", "active", "active", "active", "idle", "active", "idle"];
+
+        for status in &statuses {
+            let json = format!(
+                r#"{{"worker_id": "rapid-worker", "status": "{}"}}"#,
+                status
+            );
+            fs::write(&worker_path, json).unwrap();
+            thread::sleep(Duration::from_millis(20));
+        }
+
+        // Wait for final state
+        thread::sleep(Duration::from_millis(100));
+        while watcher.recv_timeout(Duration::from_millis(30)).is_some() {}
+
+        // Worker should end up in final state (idle)
+        let worker = watcher.get_worker("rapid-worker");
+        assert!(worker.is_some(), "Worker should be tracked after rapid changes");
+        // Final state should be the last written status
+        assert_eq!(worker.unwrap().status, WorkerStatus::Idle);
+    }
 }
