@@ -41,194 +41,177 @@ This document identifies areas where the FORGE design is incomplete or under-spe
 
 ### 1. Implementation Technology Stack
 
-**Status**: **UNDECIDED**
+**Status**: ✅ **RESOLVED** (ADR 0006)
 
-**Missing decisions**:
-- **TUI Framework**: Textual (Python) vs Ratatui (Rust)?
-  - ADR 0002 defers this decision ("Start with Textual, migrate if needed")
-  - Need to make actual choice before implementation
+**Decisions made**:
+- **TUI Framework**: Textual 0.50+ (Python)
+- **Programming Language**: Python 3.11+
+- **State Storage**: SQLite for metrics/history, JSON for configs, in-memory for real-time
 
-- **Programming Language**: Python vs Rust?
-  - Python: Faster prototyping, Textual ecosystem
-  - Rust: Better performance, atomic binary updates, smaller binaries
+**Rationale**:
+- Python + Textual: 3-5x faster development than Rust, proven dashboard capabilities
+- Binary size trade-off accepted: 15-20MB (PyInstaller) vs 2-5MB (Rust) - still atomic-update friendly
+- Rich ecosystem: PyYAML, orjson, watchdog, libtmux built-in support
+- Dumb orchestrator pattern suits Python's expressiveness (glue code, not performance-critical)
 
-- **State Storage**: How to persist state?
-  - SQLite for metrics/history?
-  - JSON files?
-  - In-memory only?
+**Impact**: ✅ **UNBLOCKED** - Implementation can begin
 
-**Impact**: Cannot start implementation without this decision
-
-**Next Steps**:
-- [ ] Create ADR 0006: Technology Stack Selection
-- [ ] Benchmark Textual vs Ratatui for 199×55 dashboard
-- [ ] Decide Python vs Rust based on binary update requirements
-- [ ] Design state storage schema
+**References**: docs/adr/0006-technology-stack-selection.md
 
 ---
 
 ### 2. Bead Integration
 
-**Status**: **PARTIALLY SPECIFIED**
+**Status**: ✅ **RESOLVED** (ADR 0007)
 
-**What's missing**:
+**Decisions made**:
 
 #### 2a. Bead Backend Integration
-- How does FORGE interact with `br` CLI?
-  - Direct SQLite access to `.beads/*.db`?
-  - Shell out to `br` commands?
-  - Parse `.beads/*.jsonl` files?
+- **FORGE reads `.beads/*.jsonl` files directly** (read-only)
+- `br` CLI is write authority - all mutations via `br update`
+- No direct SQLite access (avoids locking conflicts)
 
 #### 2b. Task Assignment Algorithm
-- How are tasks assigned to workers?
-  - Manual assignment only?
-  - Automatic based on task value score?
-  - Queue-based with workers pulling?
-  - FORGE pushing to workers?
+- **FORGE suggests, workers decide**
+- Greedy assignment: match worker tier to bead priority (P0→Premium, P1→Standard, etc.)
+- Workers autonomous: can ignore suggestions, use `br ready` to pull tasks
+- No automatic assignment - user confirms via chat or manual `br update`
 
 #### 2c. Task Value Scoring Implementation
-- Who calculates the 0-100 score?
-  - FORGE parses bead description?
-  - Pre-scored in bead metadata?
-  - LLM backend scores tasks?
+- **FORGE calculates scores** using algorithm:
+  - Priority: 0-40 points (P0=40, P1=30, P2=20, P3=10, P4=5)
+  - Blockers: 0-30 points (10 points per blocked task, max 30)
+  - Age: 0-20 points (older tasks prioritized, max at 7 days)
+  - Labels: 0-10 points (critical/urgent/blocker tags)
+- Configurable weights in `~/.forge/config.yaml`
 
 #### 2d. Dependency Resolution
-- How are bead dependencies (`depends_on`, `blocks`) handled?
-  - FORGE enforces them?
-  - Workers check themselves?
-  - `br` handles it independently?
+- **`br` CLI enforces dependencies**
+- FORGE visualizes dependency graph, highlights blocked tasks
+- `br ready` shows only unblocked tasks
+- FORGE never overrides dependency rules
 
-**Impact**: Cannot display task queue or assign work without this
+**Impact**: ✅ **UNBLOCKED** - Task queue display and routing ready
 
-**Next Steps**:
-- [ ] Create ADR 0007: Bead Integration Strategy
-- [ ] Design task assignment algorithm
-- [ ] Specify task value scoring implementation
-- [ ] Document dependency handling
+**References**: docs/adr/0007-bead-integration-strategy.md
 
 ---
 
 ### 3. Real-Time Updates
 
-**Status**: **CONCEPTUAL ONLY**
+**Status**: ✅ **RESOLVED** (ADR 0008)
 
-**What's missing**:
+**Decisions made**:
 
 #### 3a. Worker Status Updates
-- How does FORGE know worker status changed?
-  - Poll status files every N seconds?
-  - File system watching (inotify/fswatch)?
-  - Workers send updates via IPC?
+- **Hybrid: inotify + fallback polling**
+- Primary: watchdog library monitors `~/.forge/status/*.json` (20-50ms latency)
+- Fallback: Poll every 5 seconds if inotify unavailable
+- Triggers: on_modified, on_created, on_deleted events
 
 #### 3b. Log Streaming
-- How are logs displayed in real-time?
-  - Tail log files continuously?
-  - Workers stream to FORGE via socket?
-  - Polling-based (refresh every N seconds)?
+- **Async tail with ring buffer**
+- 100ms polling interval per log file (aiofiles async I/O)
+- Ring buffer: deque(maxlen=1000) prevents unbounded growth
+- Batch updates: flush 10 entries at once to UI
+- Handles log rotation gracefully
 
 #### 3c. Cost Tracking Updates
-- How are costs updated in real-time?
-  - Parse logs for token usage events?
-  - Workers report costs via API?
-  - Batch calculation every minute?
+- **Event-driven from logs + periodic aggregation**
+- Parse log entries for `api_call_completed` events (real-time)
+- Batch insert to SQLite every 10 seconds
+- UI refresh every 10 seconds after flush
+- Background hourly rollups
 
 #### 3d. TUI Refresh Strategy
-- How often does the TUI redraw?
-  - Event-driven (update on change)?
-  - Fixed interval (e.g., 1 second)?
-  - Different refresh rates per panel?
+- **Reactive data binding (Textual framework)**
+- Reactive vars auto-trigger widget re-render on change
+- 60 FPS render cap (Textual batches updates)
+- Event-driven: no unnecessary redraws
+- Configurable: max FPS, auto-scroll, refresh intervals
 
-**Impact**: Dashboard will feel sluggish or outdated without this
+**Performance**: <10% CPU, <100MB memory, <200ms latency for most updates
 
-**Next Steps**:
-- [ ] Create ADR 0008: Real-Time Update Architecture
-- [ ] Choose polling interval vs event-driven
-- [ ] Design log streaming mechanism
-- [ ] Implement efficient file watching
+**Impact**: ✅ **UNBLOCKED** - Real-time dashboard ready
+
+**References**: docs/adr/0008-real-time-update-architecture.md
 
 ---
 
 ### 4. Worker Health Monitoring
 
-**Status**: **REQUIREMENTS ONLY**
+**Status**: **SIMPLIFIED BY ADR 0014**
 
-**What's missing**:
+**Decisions made** (via ADR 0014 Error Handling):
 
 #### 4a. Health Check Implementation
-- What constitutes "healthy"?
-  - Process exists (PID check)?
-  - Recent log activity (<5 min)?
-  - Responds to ping/heartbeat?
-  - Making progress on task?
+- **Process exists** (PID check via `ps` or `/proc/<pid>`)
+- **Recent log activity** (<5 min last_activity in status file)
+- **Status file present** and valid
+- **Tmux session alive** (check via `tmux list-sessions`)
 
 #### 4b. Failure Detection
-- How to detect worker failures?
-  - Process exit (PID gone)?
-  - No log activity for N minutes?
-  - Error events in logs?
-  - Tmux session died?
+- **Process exit** - PID no longer exists
+- **No log activity** - last_activity timestamp >5 min old
+- **Status file corrupted** - JSON parse error
+- **Tmux session died** - session not in `tmux ls`
 
 #### 4c. Auto-Recovery
-- What to do when worker fails?
-  - Restart automatically?
-  - Alert user?
-  - Reassign tasks?
-  - Exponential backoff on repeated failures?
+- ❌ **No automatic restart** (per ADR 0014)
+- ✅ **Mark worker as "failed" status** in UI
+- ✅ **Show error with guidance** ("Worker crashed: restart with...")
+- ✅ **User decides** when to restart or reassign tasks
 
 #### 4d. Health Check Intervals
-- How often to check health?
-  - Every 10 seconds? 60 seconds?
-  - Different intervals for active vs idle?
-  - Adaptive based on failure rate?
+- **Every 10 seconds** - background health check task
+- **On-demand** - when user views worker panel
+- **Event-driven** - when status file changes (inotify)
 
-**Impact**: Workers can fail silently without detection
+**Rationale**: Health monitoring is about **detection and visibility**, not automatic recovery. Show users what failed, let them decide how to fix it.
 
-**Next Steps**:
-- [ ] Create ADR 0009: Worker Health Monitoring
-- [ ] Define health criteria
-- [ ] Implement failure detection
-- [ ] Design auto-recovery strategy
+**Impact**: ✅ **RESOLVED** - No ADR 0009 needed, covered by ADR 0014
+
+**Status indicators**:
+```
+✅ active   - Process alive, recent logs
+💤 idle     - Process alive, no recent activity
+❌ failed   - Process dead or unresponsive
+⚠️ error    - Status file corrupted
+```
 
 ---
 
 ### 5. Security & Credentials
 
-**Status**: **UNADDRESSED**
+**Status**: ✅ **RESOLVED** (ADR 0010)
 
-**What's missing**:
+**Decisions made**:
 
 #### 5a. API Key Management
-- How are API keys stored?
-  - Environment variables only?
-  - Encrypted config file?
-  - System keychain (macOS Keychain, Linux Secret Service)?
-  - Prompt on first use?
+- **Environment variables only** - no storage, encryption, or keychain
+- Trust sandbox security boundary (container/SSH/devpod)
+- Mask credentials in UI (show sk-a...xyz9)
 
 #### 5b. Credential Injection
-- How do workers get API keys?
-  - FORGE passes via environment?
-  - Workers read from own config?
-  - Shared secrets file?
+- **Workers inherit FORGE's environment** via subprocess
+- No filtering, trust sandbox to provide correct environment
+- No shared secrets file on disk
 
 #### 5c. Multi-User Support
-- How do multiple users share FORGE?
-  - Separate `~/.forge/` per user?
-  - Shared workers, separate configs?
-  - User-scoped API keys?
+- **Per-user FORGE instances** in separate sandboxes
+- Unix file permissions prevent cross-user access
+- No user management within FORGE
 
 #### 5d. Audit Logging
-- Who did what, when?
-  - Log all tool calls?
-  - Log worker spawns?
-  - Log cost changes?
+- **Minimal structured logging to stderr**
+- Sandbox captures logs (delegate retention to sandbox)
+- Log worker spawns, tool calls (no PII filtering needed)
 
-**Impact**: Security vulnerabilities, credential leakage
+**Rationale**: FORGE runs in remote terminal environments (tmux/containers/devpods) where security is handled by the sandbox. No need for complex credential management.
 
-**Next Steps**:
-- [ ] Create ADR 0010: Security & Credential Management
-- [ ] Design keychain integration
-- [ ] Implement audit logging
-- [ ] Document multi-user patterns
+**Impact**: ✅ **UNBLOCKED** - Security via delegation to sandbox
+
+**References**: docs/adr/0010-security-and-credential-management.md
 
 ---
 
@@ -359,44 +342,51 @@ This document identifies areas where the FORGE design is incomplete or under-spe
 
 ### 9. Error Handling & Graceful Degradation
 
-**Status**: **SCATTERED, NOT SYSTEMATIC**
+**Status**: ✅ **RESOLVED** (ADR 0014)
 
-**What's missing**:
+**Decisions made**:
+
+#### Philosophy: No Fallback, Graceful Degradation Only
+- **Visibility first** - show all errors clearly in TUI
+- **No automatic retry** - user decides if/when to retry
+- **No silent failures** - every error surfaced to user
+- **Degrade gracefully** - broken component doesn't crash app
 
 #### 9a. Backend Failure
-- What happens when chat backend crashes?
-  - Fall back to hotkeys only?
-  - Show error message?
-  - Restart backend automatically?
-  - Disable chat until fixed?
+- **Degrade to hotkey-only mode**
+- Show error in chat panel with guidance
+- Don't restart automatically - user triggers restart
+- App keeps running without chat
 
 #### 9b. Launcher Failure
-- What happens when launcher fails to spawn worker?
-  - Retry N times?
-  - Alert user?
-  - Queue spawn for later?
-  - Suggest troubleshooting?
+- **Show detailed error dialog**
+- Include stdout/stderr, actionable guidance
+- Don't retry automatically - user fixes and retries manually
+- No spawn queue
 
 #### 9c. Log Parse Errors
-- What happens when log format is invalid?
-  - Skip malformed entries?
-  - Show warning?
-  - Fall back to raw text display?
-  - Alert about format issue?
+- **Skip malformed entries** - continue parsing
+- Show warning indicator: "⚠️ N entries skipped"
+- Display most recent parse error
+- Graceful degradation: most logs still visible
 
 #### 9d. File System Errors
-- What happens when status file is corrupted?
-  - Recreate from process inspection?
-  - Mark worker as unhealthy?
-  - Show error in UI?
+- **Fatal on startup** - fail fast with clear message
+- **Degrade at runtime** - mark worker as "error" status
+- Show error in worker panel with fix suggestions
+- User action required (delete corrupted file, restart worker)
 
-**Impact**: Poor user experience on errors
+**Error Display Patterns**:
+- Transient errors → notifications
+- Component errors → degrade component, show in panel
+- Fatal errors → block startup, exit app
+- User action required → dialog with actionable buttons
 
-**Next Steps**:
-- [ ] Create ADR 0014: Error Handling Strategy
-- [ ] Design fallback behaviors
-- [ ] Implement retry logic
-- [ ] Add user-facing error messages
+**Rationale**: FORGE is a developer tool where transparency is more important than automated recovery. Developers need to see what's broken and fix it, not have errors hidden by automatic retries.
+
+**Impact**: ✅ **UNBLOCKED** - Clear error handling strategy
+
+**References**: docs/adr/0014-error-handling-strategy.md
 
 ---
 
@@ -511,9 +501,9 @@ This document identifies areas where the FORGE design is incomplete or under-spe
 3. **Real-Time Updates** (ADR 0008) - Basic UX requirement
 
 ### P1 - Needed Soon
-4. **Worker Health Monitoring** (ADR 0009) - Reliability
-5. **Security & Credentials** (ADR 0010) - Production readiness
-6. **Error Handling** (ADR 0014) - User experience
+4. ~~**Worker Health Monitoring** (ADR 0009)~~ - ✅ Covered by ADR 0014
+5. **Security & Credentials** (ADR 0010) - ✅ **COMPLETED**
+6. **Error Handling** (ADR 0014) - ✅ **COMPLETED**
 
 ### P2 - Nice to Have
 7. **Multi-Workspace** (ADR 0011) - Power user feature
@@ -533,14 +523,14 @@ This document identifies areas where the FORGE design is incomplete or under-spe
 ## Recommended Next Steps
 
 1. **Immediate** (This Week):
-   - [ ] Create ADR 0006: Technology Stack (Python/Textual vs Rust/Ratatui)
-   - [ ] Create ADR 0007: Bead Integration Strategy
-   - [ ] Create ADR 0008: Real-Time Update Architecture
+   - [x] Create ADR 0006: Technology Stack (Python/Textual vs Rust/Ratatui) - **COMPLETED**
+   - [x] Create ADR 0007: Bead Integration Strategy - **COMPLETED**
+   - [x] Create ADR 0008: Real-Time Update Architecture - **COMPLETED**
 
 2. **Short Term** (Next 2 Weeks):
-   - [ ] Create ADR 0009: Worker Health Monitoring
-   - [ ] Create ADR 0010: Security & Credential Management
-   - [ ] Create ADR 0014: Error Handling Strategy
+   - [x] ~~Create ADR 0009: Worker Health Monitoring~~ - **Covered by ADR 0014**
+   - [x] Create ADR 0010: Security & Credential Management - **COMPLETED**
+   - [x] Create ADR 0014: Error Handling Strategy - **COMPLETED**
 
 3. **Medium Term** (Next Month):
    - [ ] Implement MVP with P0 ADRs
@@ -581,4 +571,4 @@ This document identifies areas where the FORGE design is incomplete or under-spe
 
 **FORGE** - Federated Orchestration & Resource Generation Engine
 
-Design is 60% complete. Critical gaps are in implementation details, not architecture.
+Design is **90% complete**. All P0 and P1 critical gaps resolved (ADRs 0006, 0007, 0008, 0010, 0014). Ready for MVP implementation.
