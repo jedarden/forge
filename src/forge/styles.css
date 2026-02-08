@@ -284,3 +284,92 @@ ProgressBar > .bar-background {
 .text-bold {
     text-style: bold;
 }
+
+/* =============================================================================
+ * Error Display Patterns (per ADR 0014)
+ * ============================================================================= */
+
+/* Notification Overlay Styles */
+NotificationOverlay {
+    layer: overlay;
+}
+
+.notification-container {
+    background: $surface;
+    border: thick $primary;
+}
+
+.notification-warning {
+    background: $warning 15%;
+    text-style: bold;
+}
+
+.notification-error {
+    background: $error 15%;
+    text-style: bold;
+}
+
+/* Component Error Styles */
+ComponentErrorWidget {
+    background: $error 10%;
+    border: round $error;
+}
+
+.error-header {
+    color: $error;
+    text-style: bold;
+}
+
+.error-fallback {
+    color: $warning;
+    text-style: italic;
+}
+
+/* Fatal Error Screen Styles */
+FatalErrorScreen {
+    layer: overlay;
+}
+
+.fatal-container {
+    background: $surface;
+}
+
+.fatal-title {
+    color: $error;
+    text-style: bold;
+}
+
+.fatal-errors {
+    background: $error 10%;
+    border: round $error;
+}
+
+.fatal-guidance {
+    background: $panel;
+    border: round $primary;
+}
+
+/* Error Dialog Styles */
+ErrorDialog {
+    layer: overlay;
+}
+
+.dialog-container {
+    background: $surface;
+    border: thick $error;
+}
+
+.dialog-title {
+    color: $error;
+    text-style: bold;
+}
+
+.dialog-message {
+    background: $panel;
+    border: round $primary;
+}
+
+.dialog-details {
+    background: $panel;
+    border: round $primary;
+}
