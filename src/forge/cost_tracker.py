@@ -219,6 +219,7 @@ class APICallEvent:
         output_tokens: Number of output tokens
         total_tokens: Total tokens used
         cost: Calculated cost in USD
+        workspace: Workspace path where the call was made
         raw_event: Raw event data for debugging
     """
     timestamp: datetime
@@ -228,6 +229,7 @@ class APICallEvent:
     output_tokens: int
     total_tokens: int
     cost: float
+    workspace: str = ""
     raw_event: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -240,6 +242,7 @@ class APICallEvent:
             "output_tokens": self.output_tokens,
             "total_tokens": self.total_tokens,
             "cost": self.cost,
+            "workspace": self.workspace,
         }
 
 
@@ -343,7 +346,7 @@ class CostTracker:
         conn = sqlite3.connect(self._db_path)
         cursor = conn.cursor()
 
-        # Create api_calls table
+        # Create api_calls table with workspace support
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS api_calls (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -354,6 +357,7 @@ class CostTracker:
                 output_tokens INTEGER NOT NULL,
                 total_tokens INTEGER NOT NULL,
                 cost REAL NOT NULL,
+                workspace TEXT NOT NULL DEFAULT '',
                 raw_event TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
@@ -373,6 +377,12 @@ class CostTracker:
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_api_calls_model
             ON api_calls(model)
+        """)
+
+        # Create index for workspace queries (multi-workspace support)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_api_calls_workspace
+            ON api_calls(workspace)
         """)
 
         # Create summary table for cached aggregations
@@ -505,8 +515,8 @@ class CostTracker:
             cursor.execute("""
                 INSERT INTO api_calls (
                     timestamp, worker_id, model, input_tokens,
-                    output_tokens, total_tokens, cost, raw_event
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    output_tokens, total_tokens, cost, workspace, raw_event
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 event.timestamp.isoformat(),
                 event.worker_id,
@@ -515,6 +525,7 @@ class CostTracker:
                 event.output_tokens,
                 event.total_tokens,
                 event.cost,
+                event.workspace,
                 str(event.raw_event),
             ))
 
@@ -802,6 +813,242 @@ class CostTracker:
         conn.close()
 
         return workers
+
+    # =============================================================================
+    # Multi-Workspace Support Methods
+    # =============================================================================
+
+    def get_all_workspaces(self) -> list[str]:
+        """Get list of all workspaces with recorded API calls"""
+        conn = sqlite3.connect(self._db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT DISTINCT workspace FROM api_calls WHERE workspace != '' ORDER BY workspace
+        """)
+
+        workspaces = [row[0] for row in cursor.fetchall()]
+        conn.close()
+
+        return workspaces
+
+    def get_costs_by_workspace(self, workspace: str, hours: int = 24) -> dict[str, Any]:
+        """
+        Get cost breakdown for a specific workspace.
+
+        Args:
+            workspace: Workspace path
+            hours: Number of hours to look back (default: 24)
+
+        Returns:
+            Dictionary with cost breakdown for the workspace
+        """
+        conn = sqlite3.connect(self._db_path)
+        cursor = conn.cursor()
+
+        cutoff = datetime.now() - timedelta(hours=hours)
+        cutoff_str = cutoff.isoformat()
+
+        # Get totals
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total_requests,
+                SUM(cost) as total_cost,
+                SUM(total_tokens) as total_tokens
+            FROM api_calls
+            WHERE workspace = ? AND timestamp >= ?
+        """, (workspace, cutoff_str))
+
+        row = cursor.fetchone()
+        total_requests = row[0] or 0
+        total_cost = row[1] or 0.0
+        total_tokens = row[2] or 0
+
+        # Get breakdown by model
+        cursor.execute("""
+            SELECT
+                model,
+                COUNT(*) as requests,
+                SUM(cost) as cost,
+                SUM(total_tokens) as tokens
+            FROM api_calls
+            WHERE workspace = ? AND timestamp >= ?
+            GROUP BY model
+            ORDER BY cost DESC
+        """, (workspace, cutoff_str))
+
+        by_model: dict[str, dict[str, Any]] = {}
+        for model, requests, cost, tokens in cursor.fetchall():
+            by_model[model] = {
+                "requests": requests,
+                "cost": cost,
+                "tokens": tokens,
+                "avg_cost_per_request": cost / requests if requests > 0 else 0,
+            }
+
+        conn.close()
+
+        return {
+            "workspace": workspace,
+            "total_requests": total_requests,
+            "total_cost": total_cost,
+            "total_tokens": total_tokens,
+            "by_model": by_model,
+        }
+
+    def get_costs_workspace_breakdown(self, hours: int = 24) -> dict[str, dict[str, Any]]:
+        """
+        Get cost breakdown by workspace.
+
+        Args:
+            hours: Number of hours to look back (default: 24)
+
+        Returns:
+            Dictionary mapping workspace paths to cost breakdowns
+        """
+        workspaces = self.get_all_workspaces()
+        breakdown = {}
+
+        for workspace in workspaces:
+            breakdown[workspace] = self.get_costs_by_workspace(workspace, hours)
+
+        return breakdown
+
+    def get_costs_period_by_workspace(
+        self, start: datetime, end: datetime, workspace: str | None = None
+    ) -> CostSummary:
+        """
+        Get cost summary for a specific time period, optionally filtered by workspace.
+
+        Args:
+            start: Period start
+            end: Period end
+            workspace: Optional workspace path to filter by
+
+        Returns:
+            CostSummary with aggregated data
+        """
+        conn = sqlite3.connect(self._db_path)
+        cursor = conn.cursor()
+
+        start_str = start.isoformat()
+        end_str = end.isoformat()
+
+        # Build query with optional workspace filter
+        if workspace:
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as total_requests,
+                    SUM(cost) as total_cost,
+                    SUM(total_tokens) as total_tokens
+                FROM api_calls
+                WHERE timestamp >= ? AND timestamp <= ? AND workspace = ?
+            """, (start_str, end_str, workspace))
+        else:
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as total_requests,
+                    SUM(cost) as total_cost,
+                    SUM(total_tokens) as total_tokens
+                FROM api_calls
+                WHERE timestamp >= ? AND timestamp <= ?
+            """, (start_str, end_str))
+
+        row = cursor.fetchone()
+        total_requests = row[0] or 0
+        total_cost = row[1] or 0.0
+        total_tokens = row[2] or 0
+
+        # Get breakdown by model (with workspace filter if specified)
+        if workspace:
+            cursor.execute("""
+                SELECT
+                    model,
+                    COUNT(*) as requests,
+                    SUM(cost) as cost,
+                    SUM(total_tokens) as tokens
+                FROM api_calls
+                WHERE timestamp >= ? AND timestamp <= ? AND workspace = ?
+                GROUP BY model
+                ORDER BY cost DESC
+            """, (start_str, end_str, workspace))
+        else:
+            cursor.execute("""
+                SELECT
+                    model,
+                    COUNT(*) as requests,
+                    SUM(cost) as cost,
+                    SUM(total_tokens) as tokens
+                FROM api_calls
+                WHERE timestamp >= ? AND timestamp <= ?
+                GROUP BY model
+                ORDER BY cost DESC
+            """, (start_str, end_str))
+
+        by_model: dict[str, dict[str, Any]] = {}
+        for model, requests, cost, tokens in cursor.fetchall():
+            by_model[model] = {
+                "requests": requests,
+                "cost": cost,
+                "tokens": tokens,
+                "avg_cost_per_request": cost / requests if requests > 0 else 0,
+                "avg_cost_per_mtok": (cost / tokens * 1_000_000) if tokens > 0 else 0,
+            }
+
+        # Get breakdown by worker (with workspace filter if specified)
+        if workspace:
+            cursor.execute("""
+                SELECT
+                    worker_id,
+                    COUNT(*) as requests,
+                    SUM(cost) as cost,
+                    SUM(total_tokens) as tokens,
+                    model
+                FROM api_calls
+                WHERE timestamp >= ? AND timestamp <= ? AND workspace = ?
+                GROUP BY worker_id, model
+                ORDER BY worker_id, cost DESC
+            """, (start_str, end_str, workspace))
+        else:
+            cursor.execute("""
+                SELECT
+                    worker_id,
+                    COUNT(*) as requests,
+                    SUM(cost) as cost,
+                    SUM(total_tokens) as tokens,
+                    model
+                FROM api_calls
+                WHERE timestamp >= ? AND timestamp <= ?
+                GROUP BY worker_id, model
+                ORDER BY worker_id, cost DESC
+            """, (start_str, end_str))
+
+        by_worker: dict[str, dict[str, Any]] = {}
+        for worker_id, requests, cost, tokens, model in cursor.fetchall():
+            if worker_id not in by_worker:
+                by_worker[worker_id] = {
+                    "requests": 0,
+                    "cost": 0.0,
+                    "tokens": 0,
+                    "models": {},
+                }
+
+            by_worker[worker_id]["requests"] += requests
+            by_worker[worker_id]["cost"] += cost
+            by_worker[worker_id]["tokens"] += tokens
+            by_worker[worker_id]["models"][model] = by_worker[worker_id]["models"].get(model, 0) + requests
+
+        conn.close()
+
+        return CostSummary(
+            period_start=start,
+            period_end=end,
+            total_cost=total_cost,
+            total_requests=total_requests,
+            total_tokens=total_tokens,
+            by_model=by_model,
+            by_worker=by_worker,
+        )
 
 
 # =============================================================================

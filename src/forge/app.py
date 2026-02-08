@@ -94,6 +94,13 @@ from forge.error_display import (
     ErrorDialog,
 )
 
+# Import workspace manager for multi-workspace support
+# Lazy import to avoid circular dependency
+def _get_workspace_manager():
+    """Lazy import of workspace manager"""
+    from forge.workspace_manager import get_workspace_manager, WorkspaceStatus
+    return get_workspace_manager(), WorkspaceStatus
+
 
 # =============================================================================
 # Data Models
@@ -843,6 +850,9 @@ class ForgeApp(App):
     _bead_watcher: BeadWatcher | None = None
     _bead_workspaces: list[Path] = field(default_factory=list)
 
+    # Workspace manager for multi-workspace support
+    _workspace_manager: Any | None = None  # WorkspaceManager
+
     # Cost tracker
     _cost_tracker: "CostTracker | None" = None
     _cost_refresh_interval: float = 30.0  # Refresh cost data every 30 seconds
@@ -872,6 +882,9 @@ class ForgeApp(App):
 
         # Initialize bead watcher workspaces from environment or current directory
         self._initialize_bead_workspaces()
+
+        # Initialize workspace manager for multi-workspace support
+        self._initialize_workspace_manager()
 
         # Initialize view state
         self._current_view = ViewMode.OVERVIEW
@@ -1025,12 +1038,27 @@ class ForgeApp(App):
             # Import launcher for worker spawning
             from forge.launcher import spawn_workers
 
-            workspace_path = workspace or str(Path.cwd())
+            # Determine workspace path
+            if workspace:
+                workspace_path = workspace
+            else:
+                # Use active workspace from workspace manager
+                if self._workspace_manager is not None:
+                    active_ws = self._workspace_manager.get_active_workspace()
+                    workspace_path = str(active_ws.path) if active_ws else str(Path.cwd())
+                else:
+                    workspace_path = str(Path.cwd())
+
             worker_ids = spawn_workers(
                 model=model,
                 count=count,
                 workspace=workspace_path
             )
+
+            # Assign workers to workspace in workspace manager
+            if self._workspace_manager is not None:
+                for worker_id in worker_ids:
+                    self._workspace_manager.assign_worker(worker_id, workspace_path)
 
             return create_success_result(
                 "spawn_worker",
@@ -1066,12 +1094,17 @@ class ForgeApp(App):
         except Exception as e:
             return create_error_result("kill_worker", f"Failed to kill worker: {e}")
 
-    def _tool_list_workers(self, filter: str = "all") -> ToolCallResult:
+    def _tool_list_workers(self, filter: str = "all", workspace: str | None = None) -> ToolCallResult:
         """Tool callback for list_workers - lists workers with optional filtering"""
         try:
             workers = self._workers_store
 
-            # Apply filter
+            # Apply workspace filter first
+            if workspace and self._workspace_manager is not None:
+                workspace_workers = self._workspace_manager.get_workspace_workers(workspace)
+                workers = [w for w in workers if w.session_id in workspace_workers]
+
+            # Apply status filter
             if filter != "all":
                 if filter == "idle":
                     filtered = [w for w in workers if w.status == WorkerStatus.IDLE]
@@ -1102,7 +1135,7 @@ class ForgeApp(App):
             return create_success_result(
                 "list_workers",
                 f"Found {len(filtered)} worker(s)",
-                {"workers": worker_data, "filter": filter}
+                {"workers": worker_data, "filter": filter, "workspace": workspace}
             )
         except Exception as e:
             return create_error_result("list_workers", f"Failed to list workers: {e}")
@@ -2200,39 +2233,84 @@ class ForgeApp(App):
         try:
             workspace_path = Path(path).expanduser()
 
-            if not workspace_path.exists():
-                return create_error_result("switch_workspace", f"Workspace not found: {path}")
+            if self._workspace_manager is None:
+                return create_error_result("switch_workspace", "Workspace manager not initialized")
 
-            # Update workspace (would trigger reload in real implementation)
+            # Switch workspace using manager
+            import asyncio
+            metadata = asyncio.run(self._workspace_manager.switch_workspace(workspace_path))
+
+            if metadata is None:
+                # Try to add the workspace
+                metadata = asyncio.run(self._workspace_manager.add_workspace(workspace_path))
+                if metadata is None:
+                    return create_error_result("switch_workspace", f"Workspace not found: {path}")
+
+                # Now switch to it
+                metadata = asyncio.run(self._workspace_manager.switch_workspace(workspace_path))
+
+            # Refresh workspace-dependent data
+            self._refresh_workspace_data()
+
             return create_success_result(
                 "switch_workspace",
-                f"Switched to workspace: {path}",
-                {"workspace": str(workspace_path)}
+                f"Switched to workspace: {metadata.name}",
+                {"workspace": str(workspace_path), "name": metadata.name}
             )
         except Exception as e:
             return create_error_result("switch_workspace", f"Failed to switch workspace: {e}")
 
+    def _refresh_workspace_data(self) -> None:
+        """Refresh data that depends on the current workspace"""
+        if self._workspace_manager is None:
+            return
+
+        # Get active workspace
+        active_ws = self._workspace_manager.get_active_workspace()
+        if active_ws is None:
+            return
+
+        # Update bead workspaces for the watcher
+        self._bead_workspaces = [active_ws.path]
+
+        # Restart bead watcher with new workspace
+        # (This would be done in a more sophisticated way in production)
+        pass
+
     def _tool_list_workspaces(self, filter: str = "all") -> ToolCallResult:
         """Tool callback for list_workspaces - lists available workspaces"""
         try:
-            from pathlib import Path
+            if self._workspace_manager is None:
+                return create_error_result("list_workspaces", "Workspace manager not initialized")
 
-            # Find workspaces (directories with .beads subdirectory)
-            workspaces = []
-            base_path = Path.home()
+            workspaces = self._workspace_manager.get_all_workspaces()
 
-            for item in base_path.rglob(".beads"):
-                workspace = item.parent
-                workspaces.append({
-                    "path": str(workspace),
-                    "name": workspace.name,
+            # Convert to dict format
+            workspace_list = []
+            for ws in workspaces:
+                # Apply filter
+                if filter == "active":
+                    if ws.status != WorkspaceStatus.ACTIVE:
+                        continue
+                elif filter == "inactive":
+                    if ws.status == WorkspaceStatus.ACTIVE:
+                        continue
+
+                workspace_list.append({
+                    "path": str(ws.path),
+                    "name": ws.name,
+                    "status": ws.status.value,
+                    "active": ws.status == WorkspaceStatus.ACTIVE,
+                    "bead_count": ws.bead_count,
+                    "worker_count": ws.worker_count,
+                    "total_cost": ws.total_cost,
                 })
 
             return create_success_result(
                 "list_workspaces",
-                f"Found {len(workspaces)} workspace(s)",
+                f"Found {len(workspace_list)} workspace(s)",
                 {
-                    "workspaces": workspaces,
+                    "workspaces": workspace_list,
                     "filter": filter
                 }
             )
@@ -2242,19 +2320,31 @@ class ForgeApp(App):
     def _tool_create_workspace(self, path: str, template: str = "empty") -> ToolCallResult:
         """Tool callback for create_workspace - creates a new workspace"""
         try:
+            if self._workspace_manager is None:
+                return create_error_result("create_workspace", "Workspace manager not initialized")
+
             workspace_path = Path(path).expanduser()
+
+            # Create directory
             workspace_path.mkdir(parents=True, exist_ok=True)
 
-            # Initialize workspace based on template
-            if template != "empty":
-                # Would add template-specific initialization
-                pass
+            # Initialize .beads directory
+            beads_dir = workspace_path / ".beads"
+            beads_dir.mkdir(exist_ok=True)
+
+            # Add to workspace manager
+            import asyncio
+            metadata = asyncio.run(self._workspace_manager.add_workspace(workspace_path))
+
+            if metadata is None:
+                return create_error_result("create_workspace", f"Failed to create workspace: {path}")
 
             return create_success_result(
                 "create_workspace",
-                f"Created workspace: {path}",
+                f"Created workspace: {metadata.name}",
                 {
                     "workspace": str(workspace_path),
+                    "name": metadata.name,
                     "template": template
                 }
             )
@@ -2264,17 +2354,48 @@ class ForgeApp(App):
     def _tool_get_workspace_info(self) -> ToolCallResult:
         """Tool callback for get_workspace_info - gets current workspace info"""
         try:
-            workspace_path = Path.cwd()
+            if self._workspace_manager is None:
+                return create_error_result("get_workspace_info", "Workspace manager not initialized")
+
+            active_ws = self._workspace_manager.get_active_workspace()
+
+            if active_ws is None:
+                # Try to use current directory
+                workspace_path = Path.cwd()
+                active_ws = self._workspace_manager.get_workspace(workspace_path)
+
+                if active_ws is None:
+                    # Return basic info even if not tracked
+                    info = {
+                        "path": str(workspace_path),
+                        "name": workspace_path.name,
+                        "tracked": False,
+                        "has_beads": (workspace_path / ".beads").exists(),
+                    }
+                    return create_success_result(
+                        "get_workspace_info",
+                        f"Workspace info (untracked): {workspace_path.name}",
+                        {"info": info}
+                    )
 
             info = {
-                "path": str(workspace_path),
-                "name": workspace_path.name,
-                "has_beads": (workspace_path / ".beads").exists(),
+                "path": str(active_ws.path),
+                "name": active_ws.name,
+                "status": active_ws.status.value,
+                "tracked": True,
+                "has_beads": active_ws.bead_count > 0,
+                "bead_count": active_ws.bead_count,
+                "open_beads": active_ws.open_beads,
+                "in_progress_beads": active_ws.in_progress_beads,
+                "closed_beads": active_ws.closed_beads,
+                "worker_count": active_ws.worker_count,
+                "total_cost": active_ws.total_cost,
+                "completion_rate": active_ws.completion_rate,
             }
 
             return create_success_result(
                 "get_workspace_info",
-                f"Current workspace: {workspace_path.name}",
+                f"Workspace: {active_ws.name}",
                 {"info": info}
             )
         except Exception as e:
@@ -2651,6 +2772,28 @@ class ForgeApp(App):
             else:
                 # No bead workspaces configured
                 self._bead_workspaces = []
+
+    def _initialize_workspace_manager(self) -> None:
+        """Initialize the workspace manager for multi-workspace support"""
+        try:
+            from forge.workspace_manager import (
+                WorkspaceManager,
+                DiscoveryConfig,
+                get_workspace_manager,
+            )
+
+            # Create discovery config with bead workspace paths
+            config = DiscoveryConfig(
+                search_paths=self._bead_workspaces or [Path.cwd()],
+                max_depth=3,
+            )
+
+            # Get or create workspace manager
+            self._workspace_manager = get_workspace_manager()
+
+            # Note: The workspace manager will be started asynchronously in on_mount
+        except ImportError:
+            self._workspace_manager = None
 
     def _on_bead_workspace_change(self, workspace: BeadWorkspace) -> None:
         """
