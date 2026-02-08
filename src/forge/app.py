@@ -568,11 +568,17 @@ class TasksPanel(Static):
 
         # Age (20 points)
         from datetime import datetime, timezone
-        created_at = getattr(task, 'created_at', datetime.now(timezone.utc))
-        if isinstance(created_at, str):
-            created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-        age_days = (datetime.now(timezone.utc) - created_at).days
-        age_score = min(age_days * 3, 20)
+        created_at = getattr(task, 'created_at', None)
+        if created_at:
+            if isinstance(created_at, str):
+                created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            # Make timezone-aware if naive
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            age_days = (datetime.now(timezone.utc) - created_at).days
+            age_score = min(age_days * 3, 20)
+        else:
+            age_score = 0
 
         # Labels (10 points)
         labels = getattr(task, 'labels', [])
@@ -581,18 +587,53 @@ class TasksPanel(Static):
 
         return min(priority_score + blocker_score + age_score + label_score, 100)
 
-    def _priority_style(self, priority: str) -> str:
-        """Get color style for priority level"""
-        if priority == "0" or priority == TaskPriority.P0:
-            return "bold red"
-        elif priority == "1" or priority == TaskPriority.P1:
-            return "bold orange"
-        elif priority == "2" or priority == TaskPriority.P2:
-            return "bold yellow"
-        elif priority == "3" or priority == TaskPriority.P3:
-            return "bold white"
-        else:
-            return "dim"
+    def _get_priority_score(self, priority: str | TaskPriority) -> int:
+        """Get score for priority level (0-40 points)"""
+        if isinstance(priority, str):
+            priority_map = {
+                "P0": TaskPriority.P0,
+                "P1": TaskPriority.P1,
+                "P2": TaskPriority.P2,
+                "P3": TaskPriority.P3,
+                "P4": TaskPriority.P4,
+            }
+            priority = priority_map.get(priority, TaskPriority.P2)
+
+        scores = {
+            TaskPriority.P0: 40,
+            TaskPriority.P1: 30,
+            TaskPriority.P2: 20,
+            TaskPriority.P3: 10,
+            TaskPriority.P4: 5,
+        }
+        return scores.get(priority, 20)
+
+    def _priority_style(self, priority: TaskPriority | str) -> str:
+        """Get style for priority display"""
+        if isinstance(priority, str):
+            priority_map = {
+                "P0": TaskPriority.P0,
+                "0": TaskPriority.P0,
+                "P1": TaskPriority.P1,
+                "1": TaskPriority.P1,
+                "P2": TaskPriority.P2,
+                "2": TaskPriority.P2,
+                "P3": TaskPriority.P3,
+                "3": TaskPriority.P3,
+                "P4": TaskPriority.P4,
+                "4": TaskPriority.P4,
+            }
+            priority = priority_map.get(priority, TaskPriority.P2)
+
+        styles = {
+            TaskPriority.P0: "bold red",
+            TaskPriority.P1: "bold yellow",
+            TaskPriority.P2: "bold cyan",
+            TaskPriority.P3: "bold white",
+            TaskPriority.P4: "dim white",
+        }
+        return styles.get(priority, "white")
+
 
 
 class CostsPanel(Static):
@@ -2910,8 +2951,8 @@ class ForgeApp(App):
         # Start background refresh task
         self.set_interval(2.0, self._refresh_data)
 
-        # Watch for terminal resize events
-        self.watch("size", self._on_terminal_resize)
+        # Terminal resize events are handled automatically by Textual
+        # No need to manually watch for size changes
 
         # Start status file watcher
         self._start_status_watcher()
