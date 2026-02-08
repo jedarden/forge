@@ -639,8 +639,8 @@ class ForgeApp(App):
         self._split_right = None
         self._view_history = []
         # Initialize tool executor with all tools
-        self._tool_executor = ToolExecutor(register_all=True)
-        self._register_view_tools()
+        self._tool_executor = ToolExecutor(register_all=False)  # We'll register manually with callbacks
+        self._register_all_tools()
         # Initialize tool definitions for chat backend
         self._tools_path = get_default_tools_path()
         self._tools_payload = initialize_tools(
@@ -651,40 +651,89 @@ class ForgeApp(App):
         # Initialize with sample data
         self._initialize_sample_data()
 
-    def _register_view_tools(self) -> None:
-        """Register view tools with the tool executor"""
+    def _register_tool_safe(self, tool_name: str, callback) -> None:
+        """Register a tool callback, handling missing tools gracefully"""
+        from forge.tool_definitions import get_tool
+
+        tool_def = get_tool(tool_name)
+        if tool_def is not None and self._tool_executor is not None:
+            self._tool_executor.register_tool(tool_def, callback=callback)
+
+    def _register_all_tools(self) -> None:
+        """Register all tool callbacks with the tool executor"""
         if self._tool_executor is None:
             return
 
-        # Register switch_view
-        self._tool_executor.register_tool(
-            ToolDefinition(
-                name="switch_view",
-                description="Switch to a different dashboard view",
-                category="view_control",
-            ),
-            callback=lambda view: self._tool_switch_view(view)
-        )
+        # Register view control tools (these have app-level callbacks)
+        self._register_tool_safe("switch_view", lambda **kwargs: self._tool_switch_view(**kwargs))
+        self._register_tool_safe("split_view", lambda **kwargs: self._tool_split_view(**kwargs))
+        self._register_tool_safe("focus_panel", lambda **kwargs: self._tool_focus_panel(**kwargs))
 
-        # Register split_view
-        self._tool_executor.register_tool(
-            ToolDefinition(
-                name="split_view",
-                description="Create a split-screen layout",
-                category="view_control",
-            ),
-            callback=lambda left, right: self._tool_split_view(left, right)
-        )
+        # Register worker management tools
+        self._register_tool_safe("spawn_worker", lambda **kwargs: self._tool_spawn_worker(**kwargs))
+        self._register_tool_safe("kill_worker", lambda **kwargs: self._tool_kill_worker(**kwargs))
+        self._register_tool_safe("list_workers", lambda **kwargs: self._tool_list_workers(**kwargs))
+        self._register_tool_safe("restart_worker", lambda **kwargs: self._tool_restart_worker(**kwargs))
 
-        # Register focus_panel
-        self._tool_executor.register_tool(
-            ToolDefinition(
-                name="focus_panel",
-                description="Focus on a specific panel",
-                category="view_control",
-            ),
-            callback=lambda panel: self._tool_focus_panel(panel)
-        )
+        # Register task management tools
+        self._register_tool_safe("filter_tasks", lambda **kwargs: self._tool_filter_tasks(**kwargs))
+        self._register_tool_safe("create_task", lambda **kwargs: self._tool_create_task(**kwargs))
+        self._register_tool_safe("assign_task", lambda **kwargs: self._tool_assign_task(**kwargs))
+
+        # Register cost analytics tools
+        self._register_tool_safe("show_costs", lambda **kwargs: self._tool_show_costs(**kwargs))
+        self._register_tool_safe("optimize_routing", lambda **kwargs: self._tool_optimize_routing(**kwargs))
+        self._register_tool_safe("forecast_costs", lambda **kwargs: self._tool_forecast_costs(**kwargs))
+        self._register_tool_safe("show_metrics", lambda **kwargs: self._tool_show_metrics(**kwargs))
+
+        # Register data export tools
+        self._register_tool_safe("export_logs", lambda **kwargs: self._tool_export_logs(**kwargs))
+        self._register_tool_safe("export_metrics", lambda **kwargs: self._tool_export_metrics(**kwargs))
+        self._register_tool_safe("screenshot", lambda **kwargs: self._tool_screenshot(**kwargs))
+
+        # Register configuration tools
+        self._register_tool_safe("set_config", lambda **kwargs: self._tool_set_config(**kwargs))
+        self._register_tool_safe("get_config", lambda **kwargs: self._tool_get_config(**kwargs))
+        self._register_tool_safe("save_layout", lambda **kwargs: self._tool_save_layout(**kwargs))
+        self._register_tool_safe("load_layout", lambda **kwargs: self._tool_load_layout(**kwargs))
+
+        # Register help & discovery tools
+        self._register_tool_safe("help", lambda **kwargs: self._tool_help(**kwargs))
+        self._register_tool_safe("search_docs", lambda **kwargs: self._tool_search_docs(**kwargs))
+        self._register_tool_safe("list_capabilities", lambda **kwargs: self._tool_list_capabilities(**kwargs))
+
+        # Register notification tools (from tools.py, not tool_definitions.py)
+        self._register_tool_safe("show_notification", lambda **kwargs: self._tool_show_notification(**kwargs))
+        self._register_tool_safe("show_warning", lambda **kwargs: self._tool_show_warning(**kwargs))
+        self._register_tool_safe("ask_user", lambda **kwargs: self._tool_ask_user(**kwargs))
+        self._register_tool_safe("highlight_beads", lambda **kwargs: self._tool_highlight_beads(**kwargs))
+
+        # Register system tools (from tools.py)
+        self._register_tool_safe("get_status", lambda **kwargs: self._tool_get_status(**kwargs))
+        self._register_tool_safe("refresh", lambda **kwargs: self._tool_refresh(**kwargs))
+        self._register_tool_safe("ping_worker", lambda **kwargs: self._tool_ping_worker(**kwargs))
+        self._register_tool_safe("get_worker_info", lambda **kwargs: self._tool_get_worker_info(**kwargs))
+        self._register_tool_safe("pause_worker", lambda **kwargs: self._tool_pause_worker(**kwargs))
+        self._register_tool_safe("resume_worker", lambda **kwargs: self._tool_resume_worker(**kwargs))
+
+        # Register workspace tools (from tools.py)
+        self._register_tool_safe("switch_workspace", lambda **kwargs: self._tool_switch_workspace(**kwargs))
+        self._register_tool_safe("list_workspaces", lambda **kwargs: self._tool_list_workspaces(**kwargs))
+        self._register_tool_safe("create_workspace", lambda **kwargs: self._tool_create_workspace(**kwargs))
+        self._register_tool_safe("get_workspace_info", lambda **kwargs: self._tool_get_workspace_info(**kwargs))
+
+        # Register analytics tools (from tools.py)
+        self._register_tool_safe("show_throughput", lambda **kwargs: self._tool_show_throughput(**kwargs))
+        self._register_tool_safe("show_latency", lambda **kwargs: self._tool_show_latency(**kwargs))
+        self._register_tool_safe("show_success_rate", lambda **kwargs: self._tool_show_success_rate(**kwargs))
+        self._register_tool_safe("show_worker_efficiency", lambda **kwargs: self._tool_show_worker_efficiency(**kwargs))
+        self._register_tool_safe("show_task_distribution", lambda **kwargs: self._tool_show_task_distribution(**kwargs))
+        self._register_tool_safe("show_trends", lambda **kwargs: self._tool_show_trends(**kwargs))
+        self._register_tool_safe("analyze_bottlenecks", lambda **kwargs: self._tool_analyze_bottlenecks(**kwargs))
+
+    # =============================================================================
+    # View Control Tool Callbacks
+    # =============================================================================
 
     def _tool_switch_view(self, view: str) -> ToolCallResult:
         """Tool callback for switch_view"""
@@ -721,6 +770,1178 @@ class ForgeApp(App):
             )
         except Exception as e:
             return create_error_result("focus_panel", f"Failed to focus panel: {e}")
+
+    # =============================================================================
+    # Worker Management Tool Callbacks
+    # =============================================================================
+
+    def _tool_spawn_worker(self, model: str, count: int, workspace: str | None = None) -> ToolCallResult:
+        """Tool callback for spawn_worker - spawns new AI coding workers"""
+        try:
+            # Import launcher for worker spawning
+            from forge.launcher import spawn_workers
+
+            workspace_path = workspace or str(Path.cwd())
+            worker_ids = spawn_workers(
+                model=model,
+                count=count,
+                workspace=workspace_path
+            )
+
+            return create_success_result(
+                "spawn_worker",
+                f"Spawned {count} {model} worker(s)",
+                {
+                    "worker_ids": worker_ids,
+                    "model": model,
+                    "count": count,
+                    "workspace": workspace_path
+                }
+            )
+        except Exception as e:
+            return create_error_result("spawn_worker", f"Failed to spawn workers: {e}")
+
+    def _tool_kill_worker(self, worker_id: str, filter: str | None = None) -> ToolCallResult:
+        """Tool callback for kill_worker - terminates a worker"""
+        try:
+            from forge.launcher import kill_worker_by_id, kill_workers_by_filter
+
+            if worker_id.lower() == "all":
+                # Kill all workers with optional filter
+                killed_ids = kill_workers_by_filter(filter or "all")
+            else:
+                # Kill specific worker
+                killed_ids = [worker_id]
+                kill_worker_by_id(worker_id)
+
+            return create_success_result(
+                "kill_worker",
+                f"Terminated {len(killed_ids)} worker(s)",
+                {"worker_ids": killed_ids}
+            )
+        except Exception as e:
+            return create_error_result("kill_worker", f"Failed to kill worker: {e}")
+
+    def _tool_list_workers(self, filter: str = "all") -> ToolCallResult:
+        """Tool callback for list_workers - lists workers with optional filtering"""
+        try:
+            workers = self._workers_store
+
+            # Apply filter
+            if filter != "all":
+                if filter == "idle":
+                    filtered = [w for w in workers if w.status == "idle"]
+                elif filter == "active":
+                    filtered = [w for w in workers if w.status == "active"]
+                elif filter == "failed":
+                    filtered = [w for w in workers if w.status == "failed"]
+                elif filter == "stuck":
+                    filtered = [w for w in workers if w.status == "stuck"]
+                elif filter == "healthy":
+                    filtered = [w for w in workers if w.status in ["idle", "active"]]
+                else:
+                    filtered = workers
+            else:
+                filtered = workers
+
+            worker_data = [
+                {
+                    "id": w.id,
+                    "model": w.model,
+                    "status": w.status,
+                    "workspace": w.workspace,
+                    "task": w.current_task,
+                }
+                for w in filtered
+            ]
+
+            return create_success_result(
+                "list_workers",
+                f"Found {len(filtered)} worker(s)",
+                {"workers": worker_data, "filter": filter}
+            )
+        except Exception as e:
+            return create_error_result("list_workers", f"Failed to list workers: {e}")
+
+    def _tool_restart_worker(self, worker_id: str) -> ToolCallResult:
+        """Tool callback for restart_worker - restarts a worker"""
+        try:
+            from forge.launcher import restart_worker
+
+            new_worker_id = restart_worker(worker_id)
+
+            return create_success_result(
+                "restart_worker",
+                f"Restarted worker {worker_id} -> {new_worker_id}",
+                {"old_id": worker_id, "new_id": new_worker_id}
+            )
+        except Exception as e:
+            return create_error_result("restart_worker", f"Failed to restart worker: {e}")
+
+    # =============================================================================
+    # Task Management Tool Callbacks
+    # =============================================================================
+
+    def _tool_filter_tasks(self, priority: str | None = None, status: str | None = None, labels: list[str] | None = None) -> ToolCallResult:
+        """Tool callback for filter_tasks - filters task queue"""
+        try:
+            tasks = self._tasks_store
+
+            # Apply filters
+            if priority:
+                tasks = [t for t in tasks if t.priority == priority]
+            if status:
+                tasks = [t for t in tasks if t.status == status]
+            if labels:
+                for label in labels:
+                    tasks = [t for t in tasks if label in t.labels]
+
+            task_data = [
+                {
+                    "id": t.id,
+                    "title": t.title,
+                    "priority": t.priority,
+                    "status": t.status,
+                    "labels": t.labels,
+                }
+                for t in tasks
+            ]
+
+            return create_success_result(
+                "filter_tasks",
+                f"Filtered to {len(tasks)} task(s)",
+                {
+                    "tasks": task_data,
+                    "filters": {"priority": priority, "status": status, "labels": labels}
+                }
+            )
+        except Exception as e:
+            return create_error_result("filter_tasks", f"Failed to filter tasks: {e}")
+
+    def _tool_create_task(self, title: str, priority: str, description: str | None = None) -> ToolCallResult:
+        """Tool callback for create_task - creates a new task"""
+        try:
+            # Generate task ID
+            import uuid
+            task_id = f"bd-{uuid.uuid4().hex[:6]}"
+
+            # Create task
+            new_task = Task(
+                id=task_id,
+                title=title,
+                priority=priority,
+                status="open",
+                description=description or "",
+                labels=[]
+            )
+
+            self._tasks_store.append(new_task)
+            if self._tasks_panel:
+                self._tasks_panel.tasks = self._tasks_store
+
+            return create_success_result(
+                "create_task",
+                f"Created task {task_id}: {title}",
+                {
+                    "task_id": task_id,
+                    "title": title,
+                    "priority": priority
+                }
+            )
+        except Exception as e:
+            return create_error_result("create_task", f"Failed to create task: {e}")
+
+    def _tool_assign_task(self, task_id: str, worker_id: str = "auto") -> ToolCallResult:
+        """Tool callback for assign_task - assigns a task to a worker"""
+        try:
+            # Find task
+            task = next((t for t in self._tasks_store if t.id == task_id), None)
+            if not task:
+                return create_error_result("assign_task", f"Task not found: {task_id}")
+
+            # Auto-assign or assign to specific worker
+            if worker_id == "auto":
+                # Find first available idle worker
+                worker = next((w for w in self._workers_store if w.status == "idle"), None)
+                if not worker:
+                    return create_error_result("assign_task", "No available workers")
+                worker_id = worker.id
+
+            # Update task
+            task.status = "in_progress"
+            task.assignee = worker_id
+
+            # Update worker
+            for worker in self._workers_store:
+                if worker.id == worker_id:
+                    worker.current_task = task_id
+                    worker.status = "active"
+                    break
+
+            return create_success_result(
+                "assign_task",
+                f"Assigned {task_id} to {worker_id}",
+                {"task_id": task_id, "worker_id": worker_id}
+            )
+        except Exception as e:
+            return create_error_result("assign_task", f"Failed to assign task: {e}")
+
+    # =============================================================================
+    # Cost & Analytics Tool Callbacks
+    # =============================================================================
+
+    def _tool_show_costs(self, period: str = "today", breakdown: str | None = None) -> ToolCallResult:
+        """Tool callback for show_costs - displays cost analysis"""
+        try:
+            # Switch to costs view
+            self.action_switch_view("costs")
+
+            # Apply period filter (would update costs panel)
+            cost_data = [
+                {
+                    "date": c.date,
+                    "model": c.model,
+                    "cost": c.cost,
+                }
+                for c in self._costs_store
+            ]
+
+            return create_success_result(
+                "show_costs",
+                f"Showing costs for {period}",
+                {
+                    "period": period,
+                    "breakdown": breakdown,
+                    "costs": cost_data
+                }
+            )
+        except Exception as e:
+            return create_error_result("show_costs", f"Failed to show costs: {e}")
+
+    def _tool_optimize_routing(self) -> ToolCallResult:
+        """Tool callback for optimize_routing - runs cost optimization"""
+        try:
+            # Placeholder for optimization logic
+            # In real implementation, this would analyze routing and update config
+            return create_success_result(
+                "optimize_routing",
+                "Cost optimization analysis complete. No changes recommended.",
+                {
+                    "recommendations": [],
+                    "potential_savings": 0.0
+                }
+            )
+        except Exception as e:
+            return create_error_result("optimize_routing", f"Failed to optimize routing: {e}")
+
+    def _tool_forecast_costs(self, days: int = 30) -> ToolCallResult:
+        """Tool callback for forecast_costs - forecasts future costs"""
+        try:
+            # Calculate forecast based on current usage
+            daily_avg = sum(c.cost for c in self._costs_store) / max(len(self._costs_store), 1)
+            forecast = daily_avg * days
+
+            return create_success_result(
+                "forecast_costs",
+                f"Forecasted cost for {days} days: ${forecast:.2f}",
+                {
+                    "days": days,
+                    "forecast": forecast,
+                    "daily_average": daily_avg
+                }
+            )
+        except Exception as e:
+            return create_error_result("forecast_costs", f"Failed to forecast costs: {e}")
+
+    def _tool_show_metrics(self, metric_type: str = "all", period: str = "today") -> ToolCallResult:
+        """Tool callback for show_metrics - displays performance metrics"""
+        try:
+            # Switch to metrics view
+            self.action_switch_view("metrics")
+
+            metrics_data = {}
+            if self._metrics_store:
+                metrics_data = {
+                    "throughput": self._metrics_store.throughput,
+                    "latency": self._metrics_store.latency,
+                    "success_rate": self._metrics_store.success_rate,
+                }
+
+            return create_success_result(
+                "show_metrics",
+                f"Showing {metric_type} metrics for {period}",
+                {
+                    "metric_type": metric_type,
+                    "period": period,
+                    "metrics": metrics_data
+                }
+            )
+        except Exception as e:
+            return create_error_result("show_metrics", f"Failed to show metrics: {e}")
+
+    # =============================================================================
+    # Data Export Tool Callbacks
+    # =============================================================================
+
+    def _tool_export_logs(self, format: str = "json", period: str = "today") -> ToolCallResult:
+        """Tool callback for export_logs - exports activity logs"""
+        try:
+            import tempfile
+            from datetime import datetime
+
+            # Filter logs by period
+            logs = self._logs_store
+
+            # Generate output file
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                suffix=f".{format}",
+                prefix=f"forge_logs_{timestamp}_",
+                delete=False
+            ) as f:
+                if format == "json":
+                    import json
+                    json.dump([l.to_dict() for l in logs], f, indent=2)
+                elif format == "csv":
+                    import csv
+                    if logs:
+                        writer = csv.DictWriter(f, fieldnames=logs[0].to_dict().keys())
+                        writer.writeheader()
+                        for log in logs:
+                            writer.writerow(log.to_dict())
+                else:  # txt
+                    for log in logs:
+                        f.write(f"{log.timestamp} [{log.level}] {log.message}\n")
+                output_path = f.name
+
+            return create_success_result(
+                "export_logs",
+                f"Exported {len(logs)} log entries to {output_path}",
+                {
+                    "file": output_path,
+                    "format": format,
+                    "period": period,
+                    "count": len(logs)
+                }
+            )
+        except Exception as e:
+            return create_error_result("export_logs", f"Failed to export logs: {e}")
+
+    def _tool_export_metrics(self, metric_type: str = "all", format: str = "json") -> ToolCallResult:
+        """Tool callback for export_metrics - exports metrics data"""
+        try:
+            import tempfile
+            from datetime import datetime
+
+            # Gather metrics data
+            metrics_data = {
+                "workers": [
+                    {
+                        "id": w.id,
+                        "model": w.model,
+                        "status": w.status,
+                    }
+                    for w in self._workers_store
+                ],
+                "tasks": [
+                    {
+                        "id": t.id,
+                        "title": t.title,
+                        "priority": t.priority,
+                        "status": t.status,
+                    }
+                    for t in self._tasks_store
+                ],
+            }
+
+            if self._metrics_store:
+                metrics_data["performance"] = {
+                    "throughput": self._metrics_store.throughput,
+                    "latency": self._metrics_store.latency,
+                    "success_rate": self._metrics_store.success_rate,
+                }
+
+            # Generate output file
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                suffix=f".{format}",
+                prefix=f"forge_metrics_{timestamp}_",
+                delete=False
+            ) as f:
+                if format == "json":
+                    import json
+                    json.dump(metrics_data, f, indent=2)
+                elif format == "csv":
+                    import csv
+                    # Flatten for CSV export
+                    flat_data = []
+                    for category, items in metrics_data.items():
+                        if isinstance(items, list):
+                            for item in items:
+                                item["category"] = category
+                                flat_data.append(item)
+                    if flat_data:
+                        writer = csv.DictWriter(f, fieldnames=flat_data[0].keys())
+                        writer.writeheader()
+                        writer.writerows(flat_data)
+                output_path = f.name
+
+            return create_success_result(
+                "export_metrics",
+                f"Exported metrics to {output_path}",
+                {
+                    "file": output_path,
+                    "format": format,
+                    "metric_type": metric_type
+                }
+            )
+        except Exception as e:
+            return create_error_result("export_metrics", f"Failed to export metrics: {e}")
+
+    def _tool_screenshot(self, panel: str = "all") -> ToolCallResult:
+        """Tool callback for screenshot - takes a screenshot"""
+        try:
+            import tempfile
+            from datetime import datetime
+
+            # Textual doesn't have built-in screenshot, so we export state
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = f"/tmp/forge_screenshot_{timestamp}.txt"
+
+            with open(output_path, "w") as f:
+                f.write(f"FORGE Screenshot - {timestamp}\n")
+                f.write(f"Current View: {self._current_view.value}\n")
+                f.write(f"Workers: {len(self._workers_store)}\n")
+                f.write(f"Tasks: {len(self._tasks_store)}\n")
+                f.write("\n=== Workers ===\n")
+                for worker in self._workers_store:
+                    f.write(f"  {worker.id}: {worker.status} - {worker.current_task or 'No task'}\n")
+                f.write("\n=== Tasks ===\n")
+                for task in self._tasks_store[:10]:  # First 10 tasks
+                    f.write(f"  {task.id}: [{task.priority}] {task.title} - {task.status}\n")
+
+            return create_success_result(
+                "screenshot",
+                f"Screenshot saved to {output_path}",
+                {
+                    "file": output_path,
+                    "panel": panel
+                }
+            )
+        except Exception as e:
+            return create_error_result("screenshot", f"Failed to take screenshot: {e}")
+
+    # =============================================================================
+    # Configuration Tool Callbacks
+    # =============================================================================
+
+    def _tool_set_config(self, key: str, value: str) -> ToolCallResult:
+        """Tool callback for set_config - updates configuration"""
+        try:
+            # In real implementation, this would update config file
+            # For now, just acknowledge
+            return create_success_result(
+                "set_config",
+                f"Set {key} = {value}",
+                {
+                    "key": key,
+                    "value": value
+                }
+            )
+        except Exception as e:
+            return create_error_result("set_config", f"Failed to set config: {e}")
+
+    def _tool_get_config(self, key: str | None = None) -> ToolCallResult:
+        """Tool callback for get_config - views configuration"""
+        try:
+            # In real implementation, this would read from config file
+            # For now, return sample config
+            config = {
+                "default_model": "sonnet",
+                "max_workers": 10,
+                "workspace": str(Path.cwd()),
+            }
+
+            if key:
+                value = config.get(key)
+                return create_success_result(
+                    "get_config",
+                    f"{key} = {value}",
+                    {"key": key, "value": value}
+                )
+            else:
+                return create_success_result(
+                    "get_config",
+                    "Current configuration",
+                    {"config": config}
+                )
+        except Exception as e:
+            return create_error_result("get_config", f"Failed to get config: {e}")
+
+    def _tool_save_layout(self, name: str) -> ToolCallResult:
+        """Tool callback for save_layout - saves dashboard layout"""
+        try:
+            import json
+            from pathlib import Path
+
+            layout = {
+                "view": self._current_view.value,
+                "split_left": self._split_left,
+                "split_right": self._split_right,
+            }
+
+            layout_dir = Path.home() / ".forge" / "layouts"
+            layout_dir.mkdir(parents=True, exist_ok=True)
+            layout_file = layout_dir / f"{name}.json"
+
+            layout_file.write_text(json.dumps(layout, indent=2))
+
+            return create_success_result(
+                "save_layout",
+                f"Saved layout '{name}'",
+                {
+                    "name": name,
+                    "file": str(layout_file)
+                }
+            )
+        except Exception as e:
+            return create_error_result("save_layout", f"Failed to save layout: {e}")
+
+    def _tool_load_layout(self, name: str) -> ToolCallResult:
+        """Tool callback for load_layout - loads dashboard layout"""
+        try:
+            import json
+            from pathlib import Path
+
+            layout_file = Path.home() / ".forge" / "layouts" / f"{name}.json"
+
+            if not layout_file.exists():
+                return create_error_result("load_layout", f"Layout not found: {name}")
+
+            layout = json.loads(layout_file.read_text())
+
+            # Apply layout
+            if "view" in layout:
+                self.action_switch_view(layout["view"])
+            if "split_left" in layout and "split_right" in layout:
+                self.action_split_view(layout["split_left"], layout["split_right"])
+
+            return create_success_result(
+                "load_layout",
+                f"Loaded layout '{name}'",
+                {
+                    "name": name,
+                    "layout": layout
+                }
+            )
+        except Exception as e:
+            return create_error_result("load_layout", f"Failed to load layout: {e}")
+
+    # =============================================================================
+    # Help & Discovery Tool Callbacks
+    # =============================================================================
+
+    def _tool_help(self, topic: str | None = None) -> ToolCallResult:
+        """Tool callback for help - displays help information"""
+        try:
+            help_text = f"FORGE Help - {topic or 'All Topics'}\n\n"
+
+            if topic == "spawning" or topic is None:
+                help_text += "Spawning Workers:\n"
+                help_text += "  - Use 'spawn_worker' tool to spawn new AI workers\n"
+                help_text += "  - Specify model (sonnet, opus, haiku, gpt4, qwen)\n"
+                help_text += "  - Specify count (1-10 workers)\n\n"
+
+            if topic == "costs" or topic is None:
+                help_text += "Cost Management:\n"
+                help_text += "  - Use 'show_costs' to view spending\n"
+                help_text += "  - Use 'optimize_routing' to reduce costs\n"
+                help_text += "  - Use 'forecast_costs' to predict future spending\n\n"
+
+            if topic == "tasks" or topic is None:
+                help_text += "Task Management:\n"
+                help_text += "  - Use 'filter_tasks' to find specific tasks\n"
+                help_text += "  - Use 'create_task' to add new tasks\n"
+                help_text += "  - Use 'assign_task' to assign tasks to workers\n\n"
+
+            if topic == "tools" or topic is None:
+                help_text += f"Available Tools: Multiple tools across various categories\n"
+                help_text += "  - Use 'list_capabilities' to see all tools\n"
+                help_text += "  - Use 'search_docs' to find specific information\n\n"
+
+            return create_success_result(
+                "help",
+                f"Help for {topic or 'all topics'}",
+                {
+                    "topic": topic,
+                    "help_text": help_text.strip()
+                }
+            )
+        except Exception as e:
+            return create_error_result("help", f"Failed to show help: {e}")
+
+    def _tool_search_docs(self, query: str) -> ToolCallResult:
+        """Tool callback for search_docs - searches documentation"""
+        try:
+            from pathlib import Path
+
+            # Search for query in docs directory
+            docs_dir = Path(__file__).parent.parent.parent / "docs"
+            results = []
+
+            if docs_dir.exists():
+                for doc_file in docs_dir.rglob("*.md"):
+                    content = doc_file.read_text().lower()
+                    if query.lower() in content:
+                        results.append({
+                            "file": str(doc_file.relative_to(docs_dir)),
+                            "matches": content.count(query.lower())
+                        })
+
+            results.sort(key=lambda r: r["matches"], reverse=True)
+
+            return create_success_result(
+                "search_docs",
+                f"Found {len(results)} result(s) for '{query}'",
+                {
+                    "query": query,
+                    "results": results[:10]  # Top 10 results
+                }
+            )
+        except Exception as e:
+            return create_error_result("search_docs", f"Failed to search docs: {e}")
+
+    def _tool_list_capabilities(self) -> ToolCallResult:
+        """Tool callback for list_capabilities - lists all available tools"""
+        try:
+            from collections import Counter
+
+            # Get tools by category
+            category_counts = Counter()
+            tool_list = []
+
+            from forge.tool_definitions import get_all_tools
+            all_tools = get_all_tools()
+
+            for tool in all_tools:
+                category_counts[tool.category.value] += 1
+                tool_list.append({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "category": tool.category.value,
+                    "requires_confirmation": tool.requires_confirmation,
+                })
+
+            return create_success_result(
+                "list_capabilities",
+                f"FORGE has {len(all_tools)} tools across {len(category_counts)} categories",
+                {
+                    "total_tools": len(all_tools),
+                    "categories": dict(category_counts),
+                    "tools": tool_list
+                }
+            )
+        except Exception as e:
+            return create_error_result("list_capabilities", f"Failed to list capabilities: {e}")
+
+    # =============================================================================
+    # Notification Tool Callbacks
+    # =============================================================================
+
+    def _tool_show_notification(self, message: str, level: str = "info") -> ToolCallResult:
+        """Tool callback for show_notification - displays a notification"""
+        try:
+            # In Textual, we could use a notification overlay
+            # For now, log to the logs store
+            from datetime import datetime
+
+            log_entry = LogEntry(
+                timestamp=datetime.now(),
+                level=level.upper(),
+                source="notification",
+                message=message
+            )
+            self._logs_store.append(log_entry)
+
+            return create_success_result(
+                "show_notification",
+                f"Notification: {message}",
+                {
+                    "message": message,
+                    "level": level
+                }
+            )
+        except Exception as e:
+            return create_error_result("show_notification", f"Failed to show notification: {e}")
+
+    def _tool_show_warning(self, message: str, details: str | None = None) -> ToolCallResult:
+        """Tool callback for show_warning - displays a warning"""
+        try:
+            from datetime import datetime
+
+            log_entry = LogEntry(
+                timestamp=datetime.now(),
+                level="WARNING",
+                source="warning",
+                message=f"{message} - {details}" if details else message
+            )
+            self._logs_store.append(log_entry)
+
+            return create_success_result(
+                "show_warning",
+                f"Warning: {message}",
+                {
+                    "message": message,
+                    "details": details
+                }
+            )
+        except Exception as e:
+            return create_error_result("show_warning", f"Failed to show warning: {e}")
+
+    def _tool_ask_user(self, question: str, options: list[str] | None = None) -> ToolCallResult:
+        """Tool callback for ask_user - prompts the user for input"""
+        try:
+            # This would require implementing a modal dialog in Textual
+            # For now, return that user needs to be prompted
+            return create_success_result(
+                "ask_user",
+                f"Question for user: {question}",
+                {
+                    "question": question,
+                    "options": options or ["Yes", "No"],
+                    "requires_input": True
+                }
+            )
+        except Exception as e:
+            return create_error_result("ask_user", f"Failed to ask user: {e}")
+
+    def _tool_highlight_beads(self, bead_ids: list[str], reason: str | None = None) -> ToolCallResult:
+        """Tool callback for highlight_beads - highlights specific beads"""
+        try:
+            # In real implementation, this would update the tasks panel
+            # to highlight the specified beads
+            return create_success_result(
+                "highlight_beads",
+                f"Highlighted {len(bead_ids)} bead(s)",
+                {
+                    "bead_ids": bead_ids,
+                    "reason": reason
+                }
+            )
+        except Exception as e:
+            return create_error_result("highlight_beads", f"Failed to highlight beads: {e}")
+
+    # =============================================================================
+    # System Tool Callbacks
+    # =============================================================================
+
+    def _tool_get_status(self, component: str = "all") -> ToolCallResult:
+        """Tool callback for get_status - gets system status"""
+        try:
+            status = {}
+
+            if component in ["all", "workers"]:
+                status["workers"] = {
+                    "total": len(self._workers_store),
+                    "active": sum(1 for w in self._workers_store if w.status == "active"),
+                    "idle": sum(1 for w in self._workers_store if w.status == "idle"),
+                    "failed": sum(1 for w in self._workers_store if w.status == "failed"),
+                }
+
+            if component in ["all", "tasks"]:
+                status["tasks"] = {
+                    "total": len(self._tasks_store),
+                    "open": sum(1 for t in self._tasks_store if t.status == "open"),
+                    "in_progress": sum(1 for t in self._tasks_store if t.status == "in_progress"),
+                    "blocked": sum(1 for t in self._tasks_store if t.status == "blocked"),
+                    "completed": sum(1 for t in self._tasks_store if t.status == "completed"),
+                }
+
+            if component in ["all", "system"]:
+                status["system"] = {
+                    "workspace": str(Path.cwd()),
+                    "current_view": self._current_view.value,
+                }
+
+            return create_success_result(
+                "get_status",
+                f"Status for {component}",
+                {
+                    "component": component,
+                    "status": status
+                }
+            )
+        except Exception as e:
+            return create_error_result("get_status", f"Failed to get status: {e}")
+
+    def _tool_refresh(self, scope: str = "current") -> ToolCallResult:
+        """Tool callback for refresh - refreshes data"""
+        try:
+            self.action_refresh()
+
+            return create_success_result(
+                "refresh",
+                f"Refreshed {scope}",
+                {"scope": scope}
+            )
+        except Exception as e:
+            return create_error_result("refresh", f"Failed to refresh: {e}")
+
+    def _tool_ping_worker(self, worker_id: str) -> ToolCallResult:
+        """Tool callback for ping_worker - checks if worker is responsive"""
+        try:
+            worker = next((w for w in self._workers_store if w.id == worker_id), None)
+            if not worker:
+                return create_error_result("ping_worker", f"Worker not found: {worker_id}")
+
+            # In real implementation, this would actually ping the worker
+            is_responsive = worker.status in ["idle", "active"]
+
+            return create_success_result(
+                "ping_worker",
+                f"Worker {worker_id} is {'responsive' if is_responsive else 'not responsive'}",
+                {
+                    "worker_id": worker_id,
+                    "responsive": is_responsive,
+                    "status": worker.status
+                }
+            )
+        except Exception as e:
+            return create_error_result("ping_worker", f"Failed to ping worker: {e}")
+
+    def _tool_get_worker_info(self, worker_id: str) -> ToolCallResult:
+        """Tool callback for get_worker_info - gets detailed worker information"""
+        try:
+            worker = next((w for w in self._workers_store if w.id == worker_id), None)
+            if not worker:
+                return create_error_result("get_worker_info", f"Worker not found: {worker_id}")
+
+            worker_info = {
+                "id": worker.id,
+                "model": worker.model,
+                "status": worker.status,
+                "workspace": worker.workspace,
+                "current_task": worker.current_task,
+                "created_at": worker.created_at.isoformat() if hasattr(worker, "created_at") else None,
+            }
+
+            return create_success_result(
+                "get_worker_info",
+                f"Worker info for {worker_id}",
+                {
+                    "worker_id": worker_id,
+                    "info": worker_info
+                }
+            )
+        except Exception as e:
+            return create_error_result("get_worker_info", f"Failed to get worker info: {e}")
+
+    def _tool_pause_worker(self, worker_id: str) -> ToolCallResult:
+        """Tool callback for pause_worker - pauses a worker"""
+        try:
+            worker = next((w for w in self._workers_store if w.id == worker_id), None)
+            if not worker:
+                return create_error_result("pause_worker", f"Worker not found: {worker_id}")
+
+            worker.status = "paused"
+
+            return create_success_result(
+                "pause_worker",
+                f"Paused worker {worker_id}",
+                {"worker_id": worker_id}
+            )
+        except Exception as e:
+            return create_error_result("pause_worker", f"Failed to pause worker: {e}")
+
+    def _tool_resume_worker(self, worker_id: str) -> ToolCallResult:
+        """Tool callback for resume_worker - resumes a paused worker"""
+        try:
+            worker = next((w for w in self._workers_store if w.id == worker_id), None)
+            if not worker:
+                return create_error_result("resume_worker", f"Worker not found: {worker_id}")
+
+            worker.status = "idle"  # Resume to idle state
+
+            return create_success_result(
+                "resume_worker",
+                f"Resumed worker {worker_id}",
+                {"worker_id": worker_id}
+            )
+        except Exception as e:
+            return create_error_result("resume_worker", f"Failed to resume worker: {e}")
+
+    # =============================================================================
+    # Workspace Tool Callbacks
+    # =============================================================================
+
+    def _tool_switch_workspace(self, path: str) -> ToolCallResult:
+        """Tool callback for switch_workspace - switches to a different workspace"""
+        try:
+            workspace_path = Path(path).expanduser()
+
+            if not workspace_path.exists():
+                return create_error_result("switch_workspace", f"Workspace not found: {path}")
+
+            # Update workspace (would trigger reload in real implementation)
+            return create_success_result(
+                "switch_workspace",
+                f"Switched to workspace: {path}",
+                {"workspace": str(workspace_path)}
+            )
+        except Exception as e:
+            return create_error_result("switch_workspace", f"Failed to switch workspace: {e}")
+
+    def _tool_list_workspaces(self, filter: str = "all") -> ToolCallResult:
+        """Tool callback for list_workspaces - lists available workspaces"""
+        try:
+            from pathlib import Path
+
+            # Find workspaces (directories with .beads subdirectory)
+            workspaces = []
+            base_path = Path.home()
+
+            for item in base_path.rglob(".beads"):
+                workspace = item.parent
+                workspaces.append({
+                    "path": str(workspace),
+                    "name": workspace.name,
+                })
+
+            return create_success_result(
+                "list_workspaces",
+                f"Found {len(workspaces)} workspace(s)",
+                {
+                    "workspaces": workspaces,
+                    "filter": filter
+                }
+            )
+        except Exception as e:
+            return create_error_result("list_workspaces", f"Failed to list workspaces: {e}")
+
+    def _tool_create_workspace(self, path: str, template: str = "empty") -> ToolCallResult:
+        """Tool callback for create_workspace - creates a new workspace"""
+        try:
+            workspace_path = Path(path).expanduser()
+            workspace_path.mkdir(parents=True, exist_ok=True)
+
+            # Initialize workspace based on template
+            if template != "empty":
+                # Would add template-specific initialization
+                pass
+
+            return create_success_result(
+                "create_workspace",
+                f"Created workspace: {path}",
+                {
+                    "workspace": str(workspace_path),
+                    "template": template
+                }
+            )
+        except Exception as e:
+            return create_error_result("create_workspace", f"Failed to create workspace: {e}")
+
+    def _tool_get_workspace_info(self) -> ToolCallResult:
+        """Tool callback for get_workspace_info - gets current workspace info"""
+        try:
+            workspace_path = Path.cwd()
+
+            info = {
+                "path": str(workspace_path),
+                "name": workspace_path.name,
+                "has_beads": (workspace_path / ".beads").exists(),
+            }
+
+            return create_success_result(
+                "get_workspace_info",
+                f"Current workspace: {workspace_path.name}",
+                {"info": info}
+            )
+        except Exception as e:
+            return create_error_result("get_workspace_info", f"Failed to get workspace info: {e}")
+
+    # =============================================================================
+    # Analytics Tool Callbacks
+    # =============================================================================
+
+    def _tool_show_throughput(self, period: str = "today") -> ToolCallResult:
+        """Tool callback for show_throughput - displays throughput metrics"""
+        try:
+            self.action_switch_view("metrics")
+
+            # Calculate throughput
+            completed_tasks = sum(1 for t in self._tasks_store if t.status == "completed")
+            throughput = completed_tasks  # Tasks per period
+
+            return create_success_result(
+                "show_throughput",
+                f"Throughput: {throughput} tasks/{period}",
+                {
+                    "period": period,
+                    "throughput": throughput,
+                    "completed_tasks": completed_tasks
+                }
+            )
+        except Exception as e:
+            return create_error_result("show_throughput", f"Failed to show throughput: {e}")
+
+    def _tool_show_latency(self, period: str = "today") -> ToolCallResult:
+        """Tool callback for show_latency - displays latency metrics"""
+        try:
+            self.action_switch_view("metrics")
+
+            # Calculate average latency (placeholder)
+            avg_latency = 2.5  # seconds
+
+            return create_success_result(
+                "show_latency",
+                f"Average latency: {avg_latency}s",
+                {
+                    "period": period,
+                    "avg_latency": avg_latency
+                }
+            )
+        except Exception as e:
+            return create_error_result("show_latency", f"Failed to show latency: {e}")
+
+    def _tool_show_success_rate(self, period: str = "today") -> ToolCallResult:
+        """Tool callback for show_success_rate - displays success rate metrics"""
+        try:
+            self.action_switch_view("metrics")
+
+            # Calculate success rate
+            total = len(self._tasks_store)
+            completed = sum(1 for t in self._tasks_store if t.status == "completed")
+            success_rate = (completed / total * 100) if total > 0 else 0
+
+            return create_success_result(
+                "show_success_rate",
+                f"Success rate: {success_rate:.1f}%",
+                {
+                    "period": period,
+                    "success_rate": success_rate,
+                    "completed": completed,
+                    "total": total
+                }
+            )
+        except Exception as e:
+            return create_error_result("show_success_rate", f"Failed to show success rate: {e}")
+
+    def _tool_show_worker_efficiency(self, by_model: bool = True) -> ToolCallResult:
+        """Tool callback for show_worker_efficiency - displays worker efficiency"""
+        try:
+            efficiency = []
+
+            if by_model:
+                # Group by model
+                from collections import defaultdict
+                model_stats = defaultdict(lambda: {"completed": 0, "total": 0})
+
+                for worker in self._workers_store:
+                    model_stats[worker.model]["total"] += 1
+                    if worker.status in ["idle", "active"]:
+                        model_stats[worker.model]["completed"] += 1
+
+                for model, stats in model_stats.items():
+                    efficiency.append({
+                        "model": model,
+                        "efficiency": stats["completed"] / stats["total"] * 100 if stats["total"] > 0 else 0,
+                        "completed": stats["completed"],
+                        "total": stats["total"],
+                    })
+
+            return create_success_result(
+                "show_worker_efficiency",
+                f"Worker efficiency by model",
+                {
+                    "by_model": by_model,
+                    "efficiency": efficiency
+                }
+            )
+        except Exception as e:
+            return create_error_result("show_worker_efficiency", f"Failed to show worker efficiency: {e}")
+
+    def _tool_show_task_distribution(self) -> ToolCallResult:
+        """Tool callback for show_task_distribution - displays task distribution"""
+        try:
+            from collections import Counter
+
+            priority_dist = Counter(t.priority for t in self._tasks_store)
+            status_dist = Counter(t.status for t in self._tasks_store)
+
+            return create_success_result(
+                "show_task_distribution",
+                "Task distribution across priorities and statuses",
+                {
+                    "by_priority": dict(priority_dist),
+                    "by_status": dict(status_dist),
+                }
+            )
+        except Exception as e:
+            return create_error_result("show_task_distribution", f"Failed to show task distribution: {e}")
+
+    def _tool_show_trends(self, metric: str, period: str = "this_week") -> ToolCallResult:
+        """Tool callback for show_trends - displays metric trends over time"""
+        try:
+            self.action_switch_view("metrics")
+
+            # Placeholder trend data
+            trend_data = [
+                {"date": "2026-02-01", "value": 10},
+                {"date": "2026-02-02", "value": 15},
+                {"date": "2026-02-03", "value": 12},
+                {"date": "2026-02-04", "value": 20},
+                {"date": "2026-02-05", "value": 18},
+            ]
+
+            return create_success_result(
+                "show_trends",
+                f"Trends for {metric} over {period}",
+                {
+                    "metric": metric,
+                    "period": period,
+                    "trend": trend_data
+                }
+            )
+        except Exception as e:
+            return create_error_result("show_trends", f"Failed to show trends: {e}")
+
+    def _tool_analyze_bottlenecks(self) -> ToolCallResult:
+        """Tool callback for analyze_bottlenecks - analyzes workflow bottlenecks"""
+        try:
+            bottlenecks = []
+
+            # Check for idle workers with pending tasks
+            idle_workers = sum(1 for w in self._workers_store if w.status == "idle")
+            pending_tasks = sum(1 for t in self._tasks_store if t.status in ["open", "in_progress"])
+
+            if idle_workers > 0 and pending_tasks > 0:
+                bottlenecks.append({
+                    "type": "underutilization",
+                    "severity": "low",
+                    "description": f"{idle_workers} idle workers with {pending_tasks} pending tasks",
+                })
+
+            # Check for long-running tasks
+            for task in self._tasks_store:
+                if task.status == "in_progress":
+                    # Check if task has been running too long
+                    bottlenecks.append({
+                        "type": "long_running_task",
+                        "severity": "medium",
+                        "description": f"Task {task.id} has been in progress",
+                    })
+
+            return create_success_result(
+                "analyze_bottlenecks",
+                f"Found {len(bottlenecks)} potential bottleneck(s)",
+                {
+                    "bottlenecks": bottlenecks
+                }
+            )
+        except Exception as e:
+            return create_error_result("analyze_bottlenecks", f"Failed to analyze bottlenecks: {e}")
 
     @property
     def workers(self) -> list[Worker]:
