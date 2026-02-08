@@ -8,12 +8,14 @@ Implements the 6-panel dashboard layout for 199×55 terminal:
 - Metrics: Performance metrics and resource usage
 - Logs: Activity log stream
 - Chat: Conversational command input
+- Views: Full-screen and split-screen views
 """
 
 from dataclasses import dataclass, field
+from enum import Enum
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable
+from typing import Any, Callable, cast
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -38,9 +40,29 @@ from textual.widgets import (
     Static,
 )
 
+# Import tools module
+from forge.tools import (
+    ToolExecutor,
+    ToolCallResult,
+    ToolDefinition,
+    create_success_result,
+    create_error_result,
+)
+
 # =============================================================================
 # Data Models
 # =============================================================================
+
+
+class ViewMode(Enum):
+    """View mode for the application"""
+    OVERVIEW = "overview"  # Default 6-panel dashboard
+    WORKERS = "workers"    # Full-screen workers view
+    TASKS = "tasks"        # Full-screen tasks view
+    COSTS = "costs"        # Full-screen costs view
+    METRICS = "metrics"    # Full-screen metrics view
+    LOGS = "logs"          # Full-screen logs view
+    SPLIT = "split"        # Split-screen view
 
 
 class WorkerStatus(Enum):
@@ -470,16 +492,38 @@ class ForgeApp(App):
     SUB_TITLE = "Federated Orchestration & Resource Generation Engine"
     CSS_PATH = "styles.css"
 
+    # View state
+    _current_view: ViewMode = ViewMode.OVERVIEW
+    _split_left: str | None = None
+    _split_right: str | None = None
+    _view_history: list[ViewMode] = []
+    _tool_executor: ToolExecutor | None = None
+
     # Bindings
     BINDINGS = [
+        # Global
         Binding("q", "quit", "Quit", show=True),
-        Binding("c", "focus_chat", "Chat", show=True),
-        Binding("w", "focus_panel('workers')", "Workers", show=True),
-        Binding("t", "focus_panel('tasks')", "Tasks", show=True),
-        Binding("m", "focus_panel('metrics')", "Metrics", show=True),
-        Binding("l", "focus_panel('logs')", "Logs", show=True),
-        Binding("r", "refresh", "Refresh", show=True),
         Binding(":", "toggle_chat", "Command", show=True),
+        Binding("r", "refresh", "Refresh", show=True),
+        Binding("?", "show_help", "Help", show=True),
+        # View Navigation (uppercase for switching views)
+        Binding("W", "switch_view('workers')", "Workers View", show=True),
+        Binding("T", "switch_view('tasks')", "Tasks View", show=True),
+        Binding("C", "switch_view('costs')", "Costs View", show=True),
+        Binding("M", "switch_view('metrics')", "Metrics View", show=True),
+        Binding("L", "switch_view('logs')", "Logs View", show=True),
+        Binding("O", "switch_view('overview')", "Overview", show=True),
+        Binding("s", "toggle_split", "Split View", show=True),
+        # Panel Focus (lowercase for focusing panels)
+        Binding("c", "focus_chat", "Chat", show=True),
+        Binding("ctrl+w", "focus_panel('workers')", "Focus Workers", show=True),
+        Binding("ctrl+t", "focus_panel('tasks')", "Focus Tasks", show=True),
+        Binding("ctrl+m", "focus_panel('metrics')", "Focus Metrics", show=True),
+        Binding("ctrl+l", "focus_panel('logs')", "Focus Logs", show=True),
+        # Navigation
+        Binding("escape", "go_back", "Back", show=True),
+        Binding("tab", "cycle_view", "Next View", show=True),
+        Binding("shift+tab", "cycle_view_reverse", "Prev View", show=True),
     ]
 
     # Data storage (private to avoid conflicts with Textual internals)
@@ -507,8 +551,87 @@ class ForgeApp(App):
         self._costs_store = []
         self._metrics_store = None
         self._logs_store = []
+        # Initialize view state
+        self._current_view = ViewMode.OVERVIEW
+        self._split_left = None
+        self._split_right = None
+        self._view_history = []
+        # Initialize tool executor
+        self._tool_executor = ToolExecutor()
+        self._register_view_tools()
         # Initialize with sample data
         self._initialize_sample_data()
+
+    def _register_view_tools(self) -> None:
+        """Register view tools with the tool executor"""
+        if self._tool_executor is None:
+            return
+
+        # Register switch_view
+        self._tool_executor.register_tool(
+            ToolDefinition(
+                name="switch_view",
+                description="Switch to a different dashboard view",
+                category="view_control",
+            ),
+            callback=lambda view: self._tool_switch_view(view)
+        )
+
+        # Register split_view
+        self._tool_executor.register_tool(
+            ToolDefinition(
+                name="split_view",
+                description="Create a split-screen layout",
+                category="view_control",
+            ),
+            callback=lambda left, right: self._tool_split_view(left, right)
+        )
+
+        # Register focus_panel
+        self._tool_executor.register_tool(
+            ToolDefinition(
+                name="focus_panel",
+                description="Focus on a specific panel",
+                category="view_control",
+            ),
+            callback=lambda panel: self._tool_focus_panel(panel)
+        )
+
+    def _tool_switch_view(self, view: str) -> ToolCallResult:
+        """Tool callback for switch_view"""
+        try:
+            self.action_switch_view(view)
+            return create_success_result(
+                "switch_view",
+                f"Switched to {view} view",
+                {"view": view}
+            )
+        except Exception as e:
+            return create_error_result("switch_view", f"Failed to switch view: {e}")
+
+    def _tool_split_view(self, left: str, right: str) -> ToolCallResult:
+        """Tool callback for split_view"""
+        try:
+            self.action_split_view(left, right)
+            return create_success_result(
+                "split_view",
+                f"Created split view: {left} | {right}",
+                {"left": left, "right": right}
+            )
+        except Exception as e:
+            return create_error_result("split_view", f"Failed to create split view: {e}")
+
+    def _tool_focus_panel(self, panel: str) -> ToolCallResult:
+        """Tool callback for focus_panel"""
+        try:
+            self.action_focus_panel(panel)
+            return create_success_result(
+                "focus_panel",
+                f"Focused on {panel} panel",
+                {"panel": panel}
+            )
+        except Exception as e:
+            return create_error_result("focus_panel", f"Failed to focus panel: {e}")
 
     @property
     def workers(self) -> list[Worker]:
@@ -715,11 +838,192 @@ class ForgeApp(App):
         now = datetime.now()
         log_entry = LogEntry(now, "COMMAND", f"User command: {command}", "💬")
         self.logs.append(log_entry)
+
+        # Process natural language commands
+        command_lower = command.lower()
+
+        # View switching commands
+        if "show" in command_lower or "go to" in command_lower or "switch" in command_lower:
+            if "worker" in command_lower:
+                self.action_switch_view("workers")
+            elif "task" in command_lower:
+                self.action_switch_view("tasks")
+            elif "cost" in command_lower:
+                self.action_switch_view("costs")
+            elif "metric" in command_lower:
+                self.action_switch_view("metrics")
+            elif "log" in command_lower:
+                self.action_switch_view("logs")
+            elif "overview" in command_lower or "dashboard" in command_lower:
+                self.action_switch_view("overview")
+
+        # Split view commands
+        elif "split" in command_lower:
+            # Simple split command - default to workers|tasks
+            self.action_split_view("workers", "tasks")
+
+        # Focus commands
+        elif "focus" in command_lower:
+            if "worker" in command_lower:
+                self.action_focus_panel("workers")
+            elif "task" in command_lower:
+                self.action_focus_panel("tasks")
+            elif "cost" in command_lower:
+                self.action_focus_panel("costs")
+            elif "metric" in command_lower:
+                self.action_focus_panel("metrics")
+            elif "log" in command_lower:
+                self.action_focus_panel("logs")
+            elif "chat" in command_lower:
+                self.action_focus_chat()
+
+        # Help command
+        elif command_lower in ["help", "?", "h"]:
+            self.action_show_help()
+
+        # Refresh command
+        elif "refresh" in command_lower or "reload" in command_lower:
+            self.action_refresh()
+
+        else:
+            # Unknown command - log it
+            info_entry = LogEntry(now, "INFO", f"Command received: {command}", "ℹ")
+            self.logs.append(info_entry)
+
         self._update_all_panels()
 
     # -------------------------------------------------------------------------
     # Actions
     # -------------------------------------------------------------------------
+
+    def action_switch_view(self, view: str) -> None:
+        """Switch to a different view"""
+        # Map view string to ViewMode enum
+        view_map = {
+            "overview": ViewMode.OVERVIEW,
+            "workers": ViewMode.WORKERS,
+            "tasks": ViewMode.TASKS,
+            "costs": ViewMode.COSTS,
+            "metrics": ViewMode.METRICS,
+            "logs": ViewMode.LOGS,
+        }
+
+        new_view = view_map.get(view)
+        if new_view is None:
+            self._log_error(f"Unknown view: {view}")
+            return
+
+        # Save current view to history
+        if self._current_view != new_view:
+            self._view_history.append(self._current_view)
+
+        self._current_view = new_view
+        self._update_view_layout()
+
+        # Log the view change
+        self._log_info(f"Switched to {view} view")
+
+    def action_split_view(self, left: str, right: str) -> None:
+        """Create a split-screen view"""
+        self._split_left = left
+        self._split_right = right
+        self._current_view = ViewMode.SPLIT
+        self._view_history.append(ViewMode.OVERVIEW)
+        self._update_view_layout()
+
+        # Log the split view creation
+        self._log_info(f"Created split view: {left} | {right}")
+
+    def action_toggle_split(self) -> None:
+        """Toggle split view mode"""
+        if self._current_view == ViewMode.SPLIT:
+            # Go back to overview
+            self.action_switch_view("overview")
+        else:
+            # Create default split view (workers | tasks)
+            self.action_split_view("workers", "tasks")
+
+    def action_go_back(self) -> None:
+        """Go back to the previous view"""
+        if self._view_history:
+            previous_view = self._view_history.pop()
+            self._current_view = previous_view
+            self._update_view_layout()
+            self._log_info(f"Returned to {previous_view.value} view")
+        else:
+            self._log_info("No previous view in history")
+
+    def action_cycle_view(self) -> None:
+        """Cycle to the next view"""
+        views = [ViewMode.OVERVIEW, ViewMode.WORKERS, ViewMode.TASKS,
+                 ViewMode.COSTS, ViewMode.METRICS, ViewMode.LOGS]
+        current_index = views.index(self._current_view)
+        next_index = (current_index + 1) % len(views)
+        self.action_switch_view(views[next_index].value)
+
+    def action_cycle_view_reverse(self) -> None:
+        """Cycle to the previous view"""
+        views = [ViewMode.OVERVIEW, ViewMode.WORKERS, ViewMode.TASKS,
+                 ViewMode.COSTS, ViewMode.METRICS, ViewMode.LOGS]
+        current_index = views.index(self._current_view)
+        prev_index = (current_index - 1) % len(views)
+        self.action_switch_view(views[prev_index].value)
+
+    def action_show_help(self) -> None:
+        """Show help overlay"""
+        # For now, just log the help message
+        help_text = """
+FORGE Control Panel Help
+========================
+
+View Navigation:
+  W/T/C/M/L/O - Switch to Workers/Tasks/Costs/Metrics/Logs/Overview
+  Tab/Shift+Tab - Cycle through views
+  Esc - Go back to previous view
+  S - Toggle split view
+
+Panel Focus:
+  Ctrl+W/T/M/L - Focus Workers/Tasks/Metrics/Logs panel
+  C - Focus chat input
+
+Other:
+  R - Refresh all data
+  Q - Quit
+  : - Activate command input
+
+Type :help for more information
+        """
+        self._log_info(help_text.strip())
+
+    def _update_view_layout(self) -> None:
+        """Update the view layout based on current view mode"""
+        # This is a placeholder - the actual layout updates would happen
+        # by showing/hiding containers or remounting the compose tree
+        # For now, we'll update the sub_title to show the current view
+        view_titles = {
+            ViewMode.OVERVIEW: "Dashboard Overview",
+            ViewMode.WORKERS: "Worker Pool Status",
+            ViewMode.TASKS: "Task Queue",
+            ViewMode.COSTS: "Cost Analytics",
+            ViewMode.METRICS: "Performance Metrics",
+            ViewMode.LOGS: "Activity Log",
+            ViewMode.SPLIT: f"Split: {self._split_left} | {self._split_right}",
+        }
+        self.sub_title = view_titles.get(self._current_view, "FORGE")
+
+    def _log_info(self, message: str) -> None:
+        """Log an info message"""
+        now = datetime.now()
+        log_entry = LogEntry(now, "INFO", message, "ℹ")
+        self.logs.append(log_entry)
+        self._update_all_panels()
+
+    def _log_error(self, message: str) -> None:
+        """Log an error message"""
+        now = datetime.now()
+        log_entry = LogEntry(now, "ERROR", message, "✗")
+        self.logs.append(log_entry)
+        self._update_all_panels()
 
     def action_focus_chat(self) -> None:
         """Focus the chat input"""
@@ -733,16 +1037,25 @@ class ForgeApp(App):
 
     def action_focus_panel(self, panel_name: str) -> None:
         """Focus a specific panel"""
+        # Normalize panel name
+        panel_name = panel_name.lower().replace(" ", "_")
+
         panel_map = {
             "workers": self._workers_panel,
             "tasks": self._tasks_panel,
+            "costs": self._costs_panel,
             "metrics": self._metrics_panel,
             "logs": self._logs_panel,
+            "chat": self._chat_panel,
+            "command": self._chat_panel,
         }
 
         panel = panel_map.get(panel_name)
         if panel is not None:
             panel.focus()
+            self._log_info(f"Focused on {panel_name} panel")
+        else:
+            self._log_error(f"Unknown panel: {panel_name}")
 
     def action_refresh(self) -> None:
         """Force refresh all data"""

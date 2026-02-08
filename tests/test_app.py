@@ -16,6 +16,7 @@ from forge.app import (
     Task,
     TaskPriority,
     TaskStatus,
+    ViewMode,
     Worker,
     WorkerStatus,
 )
@@ -353,3 +354,240 @@ class TestDataModels:
         assert entry.requests == 100
         assert entry.tokens == 500000
         assert entry.cost == 5.50
+
+
+class TestViewSwitching:
+    """Tests for view switching and navigation"""
+
+    @pytest.mark.asyncio
+    async def test_initial_view_mode(self) -> None:
+        """Test that app starts in overview mode"""
+        app = ForgeApp()
+        assert app._current_view == ViewMode.OVERVIEW
+
+    @pytest.mark.asyncio
+    async def test_switch_view_to_workers(self) -> None:
+        """Test switching to workers view"""
+        app = ForgeApp()
+
+        async with app.run_test() as pilot:
+            await pilot.press("W")
+            await pilot.pause()
+
+            assert app._current_view == ViewMode.WORKERS
+
+    @pytest.mark.asyncio
+    async def test_switch_view_to_tasks(self) -> None:
+        """Test switching to tasks view"""
+        app = ForgeApp()
+
+        async with app.run_test() as pilot:
+            await pilot.press("T")
+            await pilot.pause()
+
+            assert app._current_view == ViewMode.TASKS
+
+    @pytest.mark.asyncio
+    async def test_switch_view_to_costs(self) -> None:
+        """Test switching to costs view"""
+        app = ForgeApp()
+
+        async with app.run_test() as pilot:
+            await pilot.press("C")
+            await pilot.pause()
+
+            assert app._current_view == ViewMode.COSTS
+
+    @pytest.mark.asyncio
+    async def test_switch_view_to_metrics(self) -> None:
+        """Test switching to metrics view"""
+        app = ForgeApp()
+
+        async with app.run_test() as pilot:
+            await pilot.press("M")
+            await pilot.pause()
+
+            assert app._current_view == ViewMode.METRICS
+
+    @pytest.mark.asyncio
+    async def test_switch_view_to_logs(self) -> None:
+        """Test switching to logs view"""
+        app = ForgeApp()
+
+        async with app.run_test() as pilot:
+            await pilot.press("L")
+            await pilot.pause()
+
+            assert app._current_view == ViewMode.LOGS
+
+    @pytest.mark.asyncio
+    async def test_switch_view_to_overview(self) -> None:
+        """Test switching back to overview"""
+        app = ForgeApp()
+
+        async with app.run_test() as pilot:
+            # First switch to workers
+            app.action_switch_view("workers")
+            await pilot.pause()
+            assert app._current_view == ViewMode.WORKERS
+
+            # Switch back to overview
+            await pilot.press("O")
+            await pilot.pause()
+            assert app._current_view == ViewMode.OVERVIEW
+
+    @pytest.mark.asyncio
+    async def test_view_history_tracking(self) -> None:
+        """Test that view history is tracked"""
+        app = ForgeApp()
+
+        async with app.run_test() as pilot:
+            # Switch through several views
+            await pilot.press("W")
+            await pilot.pause()
+
+            await pilot.press("T")
+            await pilot.pause()
+
+            # Check history was tracked
+            assert len(app._view_history) >= 2
+
+    @pytest.mark.asyncio
+    async def test_go_back_action(self) -> None:
+        """Test going back to previous view"""
+        app = ForgeApp()
+
+        async with app.run_test() as pilot:
+            # Switch to workers
+            await pilot.press("W")
+            await pilot.pause()
+            assert app._current_view == ViewMode.WORKERS
+
+            # Switch to tasks
+            await pilot.press("T")
+            await pilot.pause()
+            assert app._current_view == ViewMode.TASKS
+
+            # Go back
+            await pilot.press("escape")
+            await pilot.pause()
+            assert app._current_view == ViewMode.WORKERS
+
+    @pytest.mark.asyncio
+    async def test_cycle_view_forward(self) -> None:
+        """Test cycling forward through views"""
+        app = ForgeApp()
+
+        async with app.run_test() as pilot:
+            initial_view = app._current_view
+
+            await pilot.press("tab")
+            await pilot.pause()
+
+            assert app._current_view != initial_view
+
+    @pytest.mark.asyncio
+    async def test_split_view_toggle(self) -> None:
+        """Test toggling split view mode"""
+        app = ForgeApp()
+
+        async with app.run_test() as pilot:
+            # Toggle split view on
+            await pilot.press("s")
+            await pilot.pause()
+            assert app._current_view == ViewMode.SPLIT
+
+            # Toggle split view off
+            await pilot.press("s")
+            await pilot.pause()
+            assert app._current_view == ViewMode.OVERVIEW
+
+    @pytest.mark.asyncio
+    async def test_command_view_switching(self) -> None:
+        """Test view switching via command input"""
+        app = ForgeApp()
+
+        async with app.run_test() as pilot:
+            # Submit command to switch views
+            if app._chat_panel and app._chat_panel.on_command_submit:
+                app._chat_panel.on_command_submit("show workers")
+
+            await pilot.pause()
+            assert app._current_view == ViewMode.WORKERS
+
+            # Try another command
+            app._chat_panel.on_command_submit("go to tasks")
+            await pilot.pause()
+            assert app._current_view == ViewMode.TASKS
+
+    @pytest.mark.asyncio
+    async def test_focus_panel_action(self) -> None:
+        """Test focusing panels via action"""
+        app = ForgeApp()
+
+        async with app.run_test() as pilot:
+            # Focus workers panel
+            app.action_focus_panel("workers")
+            await pilot.pause()
+
+            # Focus logs panel
+            app.action_focus_panel("logs")
+            await pilot.pause()
+
+            # Focus chat panel
+            app.action_focus_panel("chat")
+            await pilot.pause()
+
+    @pytest.mark.asyncio
+    async def test_tool_executor_initialization(self) -> None:
+        """Test that tool executor is initialized"""
+        app = ForgeApp()
+        assert app._tool_executor is not None
+
+    @pytest.mark.asyncio
+    async def test_tool_switch_view_callback(self) -> None:
+        """Test switch_view tool callback"""
+        app = ForgeApp()
+
+        async with app.run_test() as pilot:
+            initial_view = app._current_view
+
+            # Call the tool callback directly
+            result = app._tool_switch_view("workers")
+
+            await pilot.pause()
+
+            assert result.success
+            assert result.tool_name == "switch_view"
+            assert app._current_view == ViewMode.WORKERS
+
+    @pytest.mark.asyncio
+    async def test_tool_split_view_callback(self) -> None:
+        """Test split_view tool callback"""
+        app = ForgeApp()
+
+        async with app.run_test() as pilot:
+            # Call the tool callback directly
+            result = app._tool_split_view("workers", "tasks")
+
+            await pilot.pause()
+
+            assert result.success
+            assert result.tool_name == "split_view"
+            assert app._current_view == ViewMode.SPLIT
+            assert app._split_left == "workers"
+            assert app._split_right == "tasks"
+
+    @pytest.mark.asyncio
+    async def test_tool_focus_panel_callback(self) -> None:
+        """Test focus_panel tool callback"""
+        app = ForgeApp()
+
+        async with app.run_test() as pilot:
+            # Call the tool callback directly
+            result = app._tool_focus_panel("workers")
+
+            await pilot.pause()
+
+            assert result.success
+            assert result.tool_name == "focus_panel"
