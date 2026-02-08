@@ -41,22 +41,24 @@ This document identifies areas where the FORGE design is incomplete or under-spe
 
 ### 1. Implementation Technology Stack
 
-**Status**: ✅ **RESOLVED** (ADR 0006)
+**Status**: ✅ **RESOLVED** (ADR 0006 - Revised 2026-02-08)
 
 **Decisions made**:
-- **TUI Framework**: Textual 0.50+ (Python)
-- **Programming Language**: Python 3.11+
-- **State Storage**: SQLite for metrics/history, JSON for configs, in-memory for real-time
+- **TUI Framework**: Ratatui 0.26+ (Rust)
+- **Programming Language**: Rust 1.75+
+- **Async Runtime**: Tokio 1.35+
+- **State Storage**: SQLite (rusqlite) for metrics/history, YAML for configs, in-memory for real-time
 
 **Rationale**:
-- Python + Textual: 3-5x faster development than Rust, proven dashboard capabilities
-- Binary size trade-off accepted: 15-20MB (PyInstaller) vs 2-5MB (Rust) - still atomic-update friendly
-- Rich ecosystem: PyYAML, orjson, watchdog, libtmux built-in support
-- Dumb orchestrator pattern suits Python's expressiveness (glue code, not performance-critical)
+- Python prototype validated design but revealed Textual framework brittleness
+- Rust + Ratatui: Type safety prevents property conflicts, compile-time correctness
+- Binary quality: 2-5MB vs 15-20MB (Python), <50ms startup vs 200-500ms
+- Long-term maintainability prioritized over short-term development speed
+- Ownership model enforces clean architecture
 
-**Impact**: ✅ **UNBLOCKED** - Implementation can begin
+**Impact**: ✅ **UNBLOCKED** - Rust implementation begins, Python prototype archived
 
-**References**: docs/adr/0006-technology-stack-selection.md
+**References**: docs/adr/0006-technology-stack-selection.md (revised)
 
 ---
 
@@ -105,32 +107,32 @@ This document identifies areas where the FORGE design is incomplete or under-spe
 
 #### 3a. Worker Status Updates
 - **Hybrid: inotify + fallback polling**
-- Primary: watchdog library monitors `~/.forge/status/*.json` (20-50ms latency)
+- Primary: notify crate monitors `~/.forge/status/*.json` (10-30ms latency with debouncing)
 - Fallback: Poll every 5 seconds if inotify unavailable
-- Triggers: on_modified, on_created, on_deleted events
+- Triggers: NotifyEvent::Modify, Create, Remove events
 
 #### 3b. Log Streaming
 - **Async tail with ring buffer**
-- 100ms polling interval per log file (aiofiles async I/O)
-- Ring buffer: deque(maxlen=1000) prevents unbounded growth
-- Batch updates: flush 10 entries at once to UI
-- Handles log rotation gracefully
+- 100ms polling interval per log file (tokio::fs async I/O)
+- Ring buffer: VecDeque<LogEntry> with capacity limit prevents unbounded growth
+- Batch updates: flush 10 entries at once to UI via mpsc channel
+- Handles log rotation gracefully (detect inode change)
 
 #### 3c. Cost Tracking Updates
 - **Event-driven from logs + periodic aggregation**
 - Parse log entries for `api_call_completed` events (real-time)
-- Batch insert to SQLite every 10 seconds
+- Batch insert to SQLite every 10 seconds (tokio::task)
 - UI refresh every 10 seconds after flush
-- Background hourly rollups
+- Background hourly rollups (tokio::time::interval)
 
 #### 3d. TUI Refresh Strategy
-- **Reactive data binding (Textual framework)**
-- Reactive vars auto-trigger widget re-render on change
-- 60 FPS render cap (Textual batches updates)
-- Event-driven: no unnecessary redraws
+- **Event-driven rendering (Ratatui + crossterm)**
+- Poll for events (keyboard, resize, custom) with 16ms timeout (60 FPS)
+- Render only when state changes via mpsc channels
+- Frame buffer optimization: Ratatui diffs and updates only changed cells
 - Configurable: max FPS, auto-scroll, refresh intervals
 
-**Performance**: <10% CPU, <100MB memory, <200ms latency for most updates
+**Performance**: <5% CPU, <50MB memory, <50ms latency for most updates
 
 **Impact**: ✅ **UNBLOCKED** - Real-time dashboard ready
 
