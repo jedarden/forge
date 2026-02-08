@@ -366,9 +366,16 @@ impl App {
             Span::raw("Quit"),
         ];
 
+        let dims_text = format!("{}x{}", area.width, area.height);
+
         let footer = Paragraph::new(Line::from(hints))
             .style(Style::default().fg(Color::Gray))
-            .block(Block::default().borders(Borders::TOP));
+            .block(
+                Block::default()
+                    .borders(Borders::TOP)
+                    .title(Span::styled(dims_text, Style::default().fg(Color::DarkGray)))
+                    .title_alignment(ratatui::layout::Alignment::Right),
+            );
 
         frame.render_widget(footer, area);
     }

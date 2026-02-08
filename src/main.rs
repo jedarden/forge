@@ -68,6 +68,14 @@ fn main() -> ExitCode {
 
     info!("Starting FORGE dashboard");
 
+    // Log terminal dimensions for debugging
+    if let Ok((cols, rows)) = crossterm::terminal::size() {
+        info!("Terminal size: {}x{} (columns x rows)", cols, rows);
+        eprintln!("Terminal size: {}x{} (columns x rows)", cols, rows);
+    } else {
+        error!("Failed to get terminal size");
+    }
+
     // Run the TUI application
     match run_app() {
         Ok(()) => {
