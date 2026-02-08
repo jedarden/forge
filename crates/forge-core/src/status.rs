@@ -1,0 +1,545 @@
+//! Status file reader for worker status from `~/.forge/status/*.json`.
+//!
+//! This module provides functionality to read and parse worker status files,
+//! handling missing files, invalid JSON, and partial data gracefully.
+//!
+//! ## Example
+//!
+//! ```no_run
+//! use forge_core::status::{StatusReader, WorkerStatusInfo};
+//!
+//! fn main() -> forge_core::Result<()> {
+//!     let reader = StatusReader::new(None)?;
+//!
+//!     // Read all worker statuses
+//!     let workers = reader.read_all()?;
+//!     for worker in workers {
+//!         println!("{}: {}", worker.worker_id, worker.status);
+//!     }
+//!
+//!     // Read a specific worker's status
+//!     if let Some(worker) = reader.read_worker("my-worker")? {
+//!         println!("Worker {} is {}", worker.worker_id, worker.status);
+//!     }
+//!
+//!     Ok(())
+//! }
+//! ```
+
+use std::path::{Path, PathBuf};
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use tracing::{debug, warn};
+
+use crate::error::{ForgeError, Result};
+use crate::types::WorkerStatus;
+
+/// Complete worker status information as stored in status files.
+///
+/// This struct represents the full contents of a worker's status file
+/// at `~/.forge/status/<worker_id>.json`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkerStatusInfo {
+    /// Unique identifier for the worker
+    pub worker_id: String,
+
+    /// Current status of the worker
+    #[serde(default)]
+    pub status: WorkerStatus,
+
+    /// Model being used by this worker (e.g., "sonnet", "opus", "haiku")
+    #[serde(default)]
+    pub model: Option<String>,
+
+    /// Workspace directory the worker is operating in
+    #[serde(default)]
+    pub workspace: Option<PathBuf>,
+
+    /// Process ID of the worker
+    #[serde(default)]
+    pub pid: Option<u32>,
+
+    /// Timestamp when the worker was started
+    #[serde(default)]
+    pub started_at: Option<DateTime<Utc>>,
+
+    /// Timestamp of the worker's last activity
+    #[serde(default)]
+    pub last_activity: Option<DateTime<Utc>>,
+
+    /// ID of the bead/task currently being processed
+    #[serde(default)]
+    pub current_task: Option<String>,
+
+    /// Number of tasks completed by this worker
+    #[serde(default)]
+    pub tasks_completed: u32,
+}
+
+impl WorkerStatusInfo {
+    /// Create a new WorkerStatusInfo with just an ID and status.
+    ///
+    /// This is useful for creating placeholder entries when a status file
+    /// is missing or corrupted.
+    pub fn new(worker_id: impl Into<String>, status: WorkerStatus) -> Self {
+        Self {
+            worker_id: worker_id.into(),
+            status,
+            model: None,
+            workspace: None,
+            pid: None,
+            started_at: None,
+            last_activity: None,
+            current_task: None,
+            tasks_completed: 0,
+        }
+    }
+
+    /// Create an error placeholder for a worker with a corrupted or unreadable status file.
+    pub fn error(worker_id: impl Into<String>) -> Self {
+        Self::new(worker_id, WorkerStatus::Error)
+    }
+
+    /// Returns true if the worker is considered healthy.
+    pub fn is_healthy(&self) -> bool {
+        self.status.is_healthy()
+    }
+
+    /// Returns true if the worker appears to be stale (no activity for a long time).
+    ///
+    /// A worker is considered stale if its last_activity is more than 5 minutes ago.
+    pub fn is_stale(&self, threshold_secs: i64) -> bool {
+        match self.last_activity {
+            Some(last) => {
+                let now = Utc::now();
+                let elapsed = now.signed_duration_since(last);
+                elapsed.num_seconds() > threshold_secs
+            }
+            None => false, // No activity data, can't determine staleness
+        }
+    }
+}
+
+impl Default for WorkerStatusInfo {
+    fn default() -> Self {
+        Self::new("unknown", WorkerStatus::Idle)
+    }
+}
+
+/// Reader for worker status files from `~/.forge/status/`.
+///
+/// The reader provides methods to read individual worker statuses or all
+/// workers at once. It handles errors gracefully, returning Error status
+/// for workers with corrupted or unreadable files.
+#[derive(Debug, Clone)]
+pub struct StatusReader {
+    /// Directory containing status files
+    status_dir: PathBuf,
+}
+
+impl StatusReader {
+    /// Create a new StatusReader.
+    ///
+    /// If `status_dir` is None, uses the default `~/.forge/status/` directory.
+    pub fn new(status_dir: Option<PathBuf>) -> Result<Self> {
+        let status_dir = match status_dir {
+            Some(dir) => dir,
+            None => Self::default_status_dir()?,
+        };
+
+        debug!("StatusReader initialized with directory: {:?}", status_dir);
+
+        Ok(Self { status_dir })
+    }
+
+    /// Get the default status directory (`~/.forge/status/`).
+    pub fn default_status_dir() -> Result<PathBuf> {
+        let home = std::env::var("HOME").map_err(|_| ForgeError::ConfigMissingField {
+            field: "HOME environment variable".to_string(),
+        })?;
+
+        Ok(PathBuf::from(home).join(".forge").join("status"))
+    }
+
+    /// Get the path to a worker's status file.
+    pub fn status_file_path(&self, worker_id: &str) -> PathBuf {
+        self.status_dir.join(format!("{}.json", worker_id))
+    }
+
+    /// Read a specific worker's status file.
+    ///
+    /// Returns `None` if the file doesn't exist.
+    /// Returns `Some(WorkerStatusInfo)` with Error status if the file is corrupted.
+    pub fn read_worker(&self, worker_id: &str) -> Result<Option<WorkerStatusInfo>> {
+        let path = self.status_file_path(worker_id);
+
+        if !path.exists() {
+            debug!("Status file not found: {:?}", path);
+            return Ok(None);
+        }
+
+        match self.parse_status_file(&path) {
+            Ok(status) => Ok(Some(status)),
+            Err(e) => {
+                warn!("Failed to parse status file {:?}: {}", path, e);
+                Ok(Some(WorkerStatusInfo::error(worker_id)))
+            }
+        }
+    }
+
+    /// Read all worker status files in the status directory.
+    ///
+    /// Returns a list of all workers found. Workers with corrupted files
+    /// will have Error status.
+    ///
+    /// If the status directory doesn't exist, returns an empty list.
+    pub fn read_all(&self) -> Result<Vec<WorkerStatusInfo>> {
+        if !self.status_dir.exists() {
+            debug!("Status directory does not exist: {:?}", self.status_dir);
+            return Ok(Vec::new());
+        }
+
+        let entries = std::fs::read_dir(&self.status_dir).map_err(|e| ForgeError::Io {
+            operation: "reading status directory".to_string(),
+            path: self.status_dir.clone(),
+            source: e,
+        })?;
+
+        let mut workers = Vec::new();
+
+        for entry in entries {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(e) => {
+                    warn!("Failed to read directory entry: {}", e);
+                    continue;
+                }
+            };
+
+            let path = entry.path();
+
+            // Only process .json files
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+
+            let worker_id = match path.file_stem().and_then(|s| s.to_str()) {
+                Some(id) => id.to_string(),
+                None => continue,
+            };
+
+            match self.parse_status_file(&path) {
+                Ok(status) => workers.push(status),
+                Err(e) => {
+                    warn!("Failed to parse status file {:?}: {}", path, e);
+                    workers.push(WorkerStatusInfo::error(worker_id));
+                }
+            }
+        }
+
+        // Sort by worker_id for consistent ordering
+        workers.sort_by(|a, b| a.worker_id.cmp(&b.worker_id));
+
+        debug!("Read {} worker statuses", workers.len());
+        Ok(workers)
+    }
+
+    /// Parse a status file into a WorkerStatusInfo.
+    fn parse_status_file(&self, path: &Path) -> Result<WorkerStatusInfo> {
+        let content = std::fs::read_to_string(path).map_err(|e| ForgeError::Io {
+            operation: "reading status file".to_string(),
+            path: path.to_path_buf(),
+            source: e,
+        })?;
+
+        serde_json::from_str(&content).map_err(|e| ForgeError::StatusFileParse {
+            path: path.to_path_buf(),
+            message: e.to_string(),
+        })
+    }
+
+    /// Get list of worker IDs from status files (without parsing).
+    ///
+    /// This is faster than `read_all()` when you only need the worker IDs.
+    pub fn list_workers(&self) -> Result<Vec<String>> {
+        if !self.status_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let entries = std::fs::read_dir(&self.status_dir).map_err(|e| ForgeError::Io {
+            operation: "listing status directory".to_string(),
+            path: self.status_dir.clone(),
+            source: e,
+        })?;
+
+        let mut worker_ids = Vec::new();
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+
+            if let Some(id) = path.file_stem().and_then(|s| s.to_str()) {
+                worker_ids.push(id.to_string());
+            }
+        }
+
+        worker_ids.sort();
+        Ok(worker_ids)
+    }
+
+    /// Check if the status directory exists.
+    pub fn status_dir_exists(&self) -> bool {
+        self.status_dir.exists()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn create_test_status_file(dir: &Path, worker_id: &str, content: &str) {
+        let path = dir.join(format!("{}.json", worker_id));
+        std::fs::write(path, content).unwrap();
+    }
+
+    #[test]
+    fn test_worker_status_info_new() {
+        let status = WorkerStatusInfo::new("test-worker", WorkerStatus::Active);
+        assert_eq!(status.worker_id, "test-worker");
+        assert_eq!(status.status, WorkerStatus::Active);
+        assert!(status.model.is_none());
+        assert!(status.workspace.is_none());
+    }
+
+    #[test]
+    fn test_worker_status_info_error() {
+        let status = WorkerStatusInfo::error("broken-worker");
+        assert_eq!(status.worker_id, "broken-worker");
+        assert_eq!(status.status, WorkerStatus::Error);
+    }
+
+    #[test]
+    fn test_worker_status_info_is_healthy() {
+        assert!(WorkerStatusInfo::new("w", WorkerStatus::Active).is_healthy());
+        assert!(WorkerStatusInfo::new("w", WorkerStatus::Idle).is_healthy());
+        assert!(WorkerStatusInfo::new("w", WorkerStatus::Starting).is_healthy());
+        assert!(!WorkerStatusInfo::new("w", WorkerStatus::Failed).is_healthy());
+        assert!(!WorkerStatusInfo::new("w", WorkerStatus::Error).is_healthy());
+    }
+
+    #[test]
+    fn test_worker_status_info_is_stale() {
+        let mut status = WorkerStatusInfo::new("w", WorkerStatus::Active);
+
+        // No last_activity - not stale
+        assert!(!status.is_stale(300));
+
+        // Recent activity - not stale
+        status.last_activity = Some(Utc::now());
+        assert!(!status.is_stale(300));
+
+        // Old activity - stale
+        status.last_activity = Some(Utc::now() - chrono::Duration::seconds(600));
+        assert!(status.is_stale(300));
+    }
+
+    #[test]
+    fn test_status_reader_empty_dir() {
+        let tmp_dir = TempDir::new().unwrap();
+        let reader = StatusReader::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+
+        let workers = reader.read_all().unwrap();
+        assert!(workers.is_empty());
+
+        let worker = reader.read_worker("nonexistent").unwrap();
+        assert!(worker.is_none());
+    }
+
+    #[test]
+    fn test_status_reader_nonexistent_dir() {
+        let reader = StatusReader::new(Some(PathBuf::from("/nonexistent/path/to/status"))).unwrap();
+
+        let workers = reader.read_all().unwrap();
+        assert!(workers.is_empty());
+    }
+
+    #[test]
+    fn test_status_reader_valid_file() {
+        let tmp_dir = TempDir::new().unwrap();
+        let status_json = r#"{
+            "worker_id": "test-worker",
+            "status": "active",
+            "model": "sonnet",
+            "workspace": "/home/user/project",
+            "pid": 12345,
+            "started_at": "2026-02-08T10:00:00Z",
+            "last_activity": "2026-02-08T10:30:00Z",
+            "current_task": "bd-123",
+            "tasks_completed": 5
+        }"#;
+
+        create_test_status_file(tmp_dir.path(), "test-worker", status_json);
+
+        let reader = StatusReader::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        let worker = reader.read_worker("test-worker").unwrap().unwrap();
+
+        assert_eq!(worker.worker_id, "test-worker");
+        assert_eq!(worker.status, WorkerStatus::Active);
+        assert_eq!(worker.model, Some("sonnet".to_string()));
+        assert_eq!(
+            worker.workspace,
+            Some(PathBuf::from("/home/user/project"))
+        );
+        assert_eq!(worker.pid, Some(12345));
+        assert_eq!(worker.current_task, Some("bd-123".to_string()));
+        assert_eq!(worker.tasks_completed, 5);
+    }
+
+    #[test]
+    fn test_status_reader_partial_file() {
+        let tmp_dir = TempDir::new().unwrap();
+        // Minimal valid JSON - only required worker_id
+        let status_json = r#"{"worker_id": "minimal-worker"}"#;
+
+        create_test_status_file(tmp_dir.path(), "minimal-worker", status_json);
+
+        let reader = StatusReader::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        let worker = reader.read_worker("minimal-worker").unwrap().unwrap();
+
+        assert_eq!(worker.worker_id, "minimal-worker");
+        assert_eq!(worker.status, WorkerStatus::Idle); // Default
+        assert!(worker.model.is_none());
+        assert!(worker.workspace.is_none());
+        assert_eq!(worker.tasks_completed, 0); // Default
+    }
+
+    #[test]
+    fn test_status_reader_invalid_json() {
+        let tmp_dir = TempDir::new().unwrap();
+        create_test_status_file(tmp_dir.path(), "bad-worker", "not valid json {");
+
+        let reader = StatusReader::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        let worker = reader.read_worker("bad-worker").unwrap().unwrap();
+
+        // Should return Error status for corrupted files
+        assert_eq!(worker.worker_id, "bad-worker");
+        assert_eq!(worker.status, WorkerStatus::Error);
+    }
+
+    #[test]
+    fn test_status_reader_read_all() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        create_test_status_file(
+            tmp_dir.path(),
+            "worker-a",
+            r#"{"worker_id": "worker-a", "status": "active"}"#,
+        );
+        create_test_status_file(
+            tmp_dir.path(),
+            "worker-b",
+            r#"{"worker_id": "worker-b", "status": "idle"}"#,
+        );
+        create_test_status_file(
+            tmp_dir.path(),
+            "worker-c",
+            "invalid json",
+        );
+
+        // Non-JSON file should be ignored
+        std::fs::write(tmp_dir.path().join("readme.txt"), "ignore me").unwrap();
+
+        let reader = StatusReader::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        let workers = reader.read_all().unwrap();
+
+        assert_eq!(workers.len(), 3);
+
+        // Should be sorted by worker_id
+        assert_eq!(workers[0].worker_id, "worker-a");
+        assert_eq!(workers[0].status, WorkerStatus::Active);
+
+        assert_eq!(workers[1].worker_id, "worker-b");
+        assert_eq!(workers[1].status, WorkerStatus::Idle);
+
+        assert_eq!(workers[2].worker_id, "worker-c");
+        assert_eq!(workers[2].status, WorkerStatus::Error);
+    }
+
+    #[test]
+    fn test_status_reader_list_workers() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        create_test_status_file(
+            tmp_dir.path(),
+            "alpha",
+            r#"{"worker_id": "alpha"}"#,
+        );
+        create_test_status_file(
+            tmp_dir.path(),
+            "beta",
+            r#"{"worker_id": "beta"}"#,
+        );
+        std::fs::write(tmp_dir.path().join("readme.txt"), "ignore").unwrap();
+
+        let reader = StatusReader::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        let ids = reader.list_workers().unwrap();
+
+        assert_eq!(ids, vec!["alpha", "beta"]);
+    }
+
+    #[test]
+    fn test_status_reader_status_file_path() {
+        let reader = StatusReader::new(Some(PathBuf::from("/tmp/status"))).unwrap();
+        let path = reader.status_file_path("my-worker");
+
+        assert_eq!(path, PathBuf::from("/tmp/status/my-worker.json"));
+    }
+
+    #[test]
+    fn test_worker_status_info_deserialize_all_statuses() {
+        let test_cases = [
+            (r#"{"worker_id": "w", "status": "active"}"#, WorkerStatus::Active),
+            (r#"{"worker_id": "w", "status": "idle"}"#, WorkerStatus::Idle),
+            (r#"{"worker_id": "w", "status": "failed"}"#, WorkerStatus::Failed),
+            (r#"{"worker_id": "w", "status": "stopped"}"#, WorkerStatus::Stopped),
+            (r#"{"worker_id": "w", "status": "error"}"#, WorkerStatus::Error),
+            (r#"{"worker_id": "w", "status": "starting"}"#, WorkerStatus::Starting),
+        ];
+
+        for (json, expected_status) in test_cases {
+            let info: WorkerStatusInfo = serde_json::from_str(json).unwrap();
+            assert_eq!(info.status, expected_status, "Failed for JSON: {}", json);
+        }
+    }
+
+    #[test]
+    fn test_worker_status_info_serialize_roundtrip() {
+        let original = WorkerStatusInfo {
+            worker_id: "test-worker".to_string(),
+            status: WorkerStatus::Active,
+            model: Some("opus".to_string()),
+            workspace: Some(PathBuf::from("/home/user/project")),
+            pid: Some(42),
+            started_at: Some(Utc::now()),
+            last_activity: Some(Utc::now()),
+            current_task: Some("fg-123".to_string()),
+            tasks_completed: 10,
+        };
+
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: WorkerStatusInfo = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(original.worker_id, deserialized.worker_id);
+        assert_eq!(original.status, deserialized.status);
+        assert_eq!(original.model, deserialized.model);
+        assert_eq!(original.workspace, deserialized.workspace);
+        assert_eq!(original.pid, deserialized.pid);
+        assert_eq!(original.current_task, deserialized.current_task);
+        assert_eq!(original.tasks_completed, deserialized.tasks_completed);
+    }
+}
