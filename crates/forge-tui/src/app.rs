@@ -419,20 +419,14 @@ impl App {
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(chunks[1]);
 
-        // Task queue - placeholder until bead integration
-        let task_queue_content = if self.data_manager.is_ready() {
-            "Task queue not yet integrated.\n\n\
-             Future: integrate with br (beads_rust) CLI\n\
-             to show pending, blocked, and in-progress tasks."
-        } else {
-            "Loading..."
-        };
+        // Task queue - shows real bead data from monitored workspaces
+        let task_queue_content = self.data_manager.bead_manager.format_task_queue_summary();
 
         self.draw_panel(
             frame,
             bottom_chunks[0],
             "Task Queue",
-            task_queue_content,
+            &task_queue_content,
             self.focus_panel == FocusPanel::TaskQueue,
         );
 
@@ -463,25 +457,13 @@ impl App {
 
     /// Draw the Tasks view.
     fn draw_tasks(&self, frame: &mut Frame, area: Rect) {
-        let content = if self.data_manager.is_ready() {
-            "Task queue integration not yet implemented.\n\n\
-             This view will show beads from the project's\n\
-             .beads/ directory when integrated with br CLI.\n\n\
-             Future features:\n\
-             - Ready, blocked, and in-progress tasks\n\
-             - Priority-based sorting (P0-P4)\n\
-             - Task assignment to workers\n\
-             - Dependency visualization\n\n\
-             [A] Assign  [P] Priority  [M] Model  [C] Close"
-        } else {
-            "Loading..."
-        };
+        let content = self.data_manager.bead_manager.format_task_queue_full();
 
         self.draw_panel(
             frame,
             area,
             "Task Queue & Bead Management",
-            content,
+            &content,
             true,
         );
     }

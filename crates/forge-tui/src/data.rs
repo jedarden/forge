@@ -2,11 +2,13 @@
 //!
 //! This module provides the data layer for the TUI, managing worker state,
 //! task information, and formatting data for display. It integrates with
-//! forge-core's StatusWatcher to provide real-time updates and forge-worker's
-//! tmux discovery for additional session information.
+//! forge-core's StatusWatcher to provide real-time updates, forge-worker's
+//! tmux discovery for additional session information, and the BeadManager
+//! for task queue data from monitored workspaces.
 
 use std::collections::HashMap;
 
+use crate::bead::BeadManager;
 use crate::status::{StatusWatcher, StatusWatcherConfig, WorkerCounts, WorkerStatusFile};
 use forge_core::types::WorkerStatus;
 use forge_worker::discovery::DiscoveryResult;
@@ -386,12 +388,14 @@ fn truncate_string(s: &str, max_len: usize) -> String {
 /// Interval for tmux discovery polling (5 seconds).
 const TMUX_DISCOVERY_INTERVAL_SECS: u64 = 5;
 
-/// Data manager that handles the StatusWatcher and provides formatted data.
+/// Data manager that handles the StatusWatcher, BeadManager, and provides formatted data.
 pub struct DataManager {
     /// StatusWatcher for real-time updates
     watcher: Option<StatusWatcher>,
     /// Cached worker data
     pub worker_data: WorkerData,
+    /// Bead manager for task queue data
+    pub bead_manager: BeadManager,
     /// Error message if watcher failed to initialize
     init_error: Option<String>,
     /// Last tmux discovery time
@@ -401,7 +405,7 @@ pub struct DataManager {
 }
 
 impl DataManager {
-    /// Create a new DataManager, initializing the StatusWatcher.
+    /// Create a new DataManager, initializing the StatusWatcher and BeadManager.
     pub fn new() -> Self {
         let (watcher, init_error) = match StatusWatcher::new(StatusWatcherConfig::default()) {
             Ok(w) => (Some(w), None),
@@ -414,9 +418,14 @@ impl DataManager {
             .build()
             .ok();
 
+        // Initialize bead manager with default workspaces
+        let mut bead_manager = BeadManager::new();
+        bead_manager.add_default_workspaces();
+
         let mut manager = Self {
             watcher,
             worker_data: WorkerData::new(),
+            bead_manager,
             init_error,
             last_tmux_poll: None,
             runtime,
@@ -441,9 +450,14 @@ impl DataManager {
             .build()
             .ok();
 
+        // Initialize bead manager with default workspaces
+        let mut bead_manager = BeadManager::new();
+        bead_manager.add_default_workspaces();
+
         let mut manager = Self {
             watcher,
             worker_data: WorkerData::new(),
+            bead_manager,
             init_error,
             last_tmux_poll: None,
             runtime,
@@ -453,7 +467,7 @@ impl DataManager {
         manager
     }
 
-    /// Poll for updates from the StatusWatcher and tmux discovery.
+    /// Poll for updates from the StatusWatcher, BeadManager, and tmux discovery.
     ///
     /// This should be called regularly (e.g., in the event loop).
     pub fn poll_updates(&mut self) {
@@ -465,6 +479,9 @@ impl DataManager {
             // Update worker data from watcher state
             self.worker_data.update_from_watcher(watcher);
         }
+
+        // Poll bead manager for task queue updates
+        self.bead_manager.poll_updates();
 
         // Periodically poll tmux discovery (less frequently)
         let should_poll_tmux = self
