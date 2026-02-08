@@ -492,14 +492,87 @@ class TasksPanel(Static):
         self._update_display(new_tasks)
 
     def _update_display(self, tasks: list[Task]) -> None:
-        """Update the display with task data"""
+        """Update the display with task data and value scores"""
         ready_tasks = [t for t in tasks if t.status == TaskStatus.READY]
 
+        # Calculate value scores for ready tasks
+        ready_tasks_with_scores = []
+        for task in ready_tasks:
+            score = self._calculate_task_value_score(task)
+            ready_tasks_with_scores.append((task, score))
+
+        # Sort by value score (descending)
+        ready_tasks_with_scores.sort(key=lambda x: x[1], reverse=True)
+
+        # Build display text
         title = Text()
         title.append("📋 TASK QUEUE (", style="bold")
         title.append(f"{len(ready_tasks)}", style="bold cyan")
         title.append(" Ready)", style="bold")
+
+        # Add top tasks with scores
+        if ready_tasks_with_scores:
+            title.append("\n\n", style="")
+            title.append("Top Tasks by Value Score:\n", style="bold yellow")
+
+            for i, (task, score) in enumerate(ready_tasks_with_scores[:5], 1):
+                # Color code by score
+                if score >= 70:
+                    score_style = "bold green"
+                elif score >= 40:
+                    score_style = "bold yellow"
+                else:
+                    score_style = "bold white"
+
+                title.append(f"{i}. ", style="dim")
+                title.append(f"{task.id[:10]}...", style="cyan")
+                title.append(f" {task.title[:30]}", style="white")
+                title.append(f" [P{task.priority}]", style=self._priority_style(task.priority))
+                title.append(f" ★{score}", style=score_style)
+                title.append("\n", style="")
+
+            if len(ready_tasks_with_scores) > 5:
+                title.append(f"... and {len(ready_tasks_with_scores) - 5} more\n", style="dim")
+
         self.update(title)
+
+    def _calculate_task_value_score(self, task: Task) -> int:
+        """Calculate task value score using the scoring algorithm"""
+        # Priority (40 points)
+        priority_score = self._get_priority_score(task.priority)
+
+        # Blockers (30 points) - count tasks blocked by this task
+        # For Task objects, we need to check if there's a blocks attribute
+        blocker_count = len(getattr(task, 'blocks', []))
+        blocker_score = min(blocker_count * 10, 30)
+
+        # Age (20 points)
+        from datetime import datetime, timezone
+        created_at = getattr(task, 'created_at', datetime.now(timezone.utc))
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+        age_days = (datetime.now(timezone.utc) - created_at).days
+        age_score = min(age_days * 3, 20)
+
+        # Labels (10 points)
+        labels = getattr(task, 'labels', [])
+        urgent_labels = {"critical", "urgent", "blocker", "hotfix", "mvp"}
+        label_score = 10 if any(l.lower() in urgent_labels for l in labels) else 0
+
+        return min(priority_score + blocker_score + age_score + label_score, 100)
+
+    def _priority_style(self, priority: str) -> str:
+        """Get color style for priority level"""
+        if priority == "0" or priority == TaskPriority.P0:
+            return "bold red"
+        elif priority == "1" or priority == TaskPriority.P1:
+            return "bold orange"
+        elif priority == "2" or priority == TaskPriority.P2:
+            return "bold yellow"
+        elif priority == "3" or priority == TaskPriority.P3:
+            return "bold white"
+        else:
+            return "dim"
 
 
 class CostsPanel(Static):
@@ -831,6 +904,7 @@ class ForgeApp(App):
         self._register_tool_safe("filter_tasks", lambda **kwargs: self._tool_filter_tasks(**kwargs))
         self._register_tool_safe("create_task", lambda **kwargs: self._tool_create_task(**kwargs))
         self._register_tool_safe("assign_task", lambda **kwargs: self._tool_assign_task(**kwargs))
+        self._register_tool_safe("suggest_assignments", lambda **kwargs: self._tool_suggest_assignments(**kwargs))
 
         # Register cost analytics tools
         self._register_tool_safe("show_costs", lambda **kwargs: self._tool_show_costs(**kwargs))
@@ -1137,6 +1211,181 @@ class ForgeApp(App):
             )
         except Exception as e:
             return create_error_result("assign_task", f"Failed to assign task: {e}")
+
+    def _tool_suggest_assignments(self, count: int = 5, worker_filter: str = "all") -> ToolCallResult:
+        """Tool callback for suggest_assignments - suggests optimal task-worker assignments"""
+        try:
+            from forge.config import get_config
+            from forge.beads import calculate_value_score, Bead
+
+            config = get_config()
+            priority_tiers = config.routing.priority_tiers
+
+            # Get worker tier mapping
+            tier_mapping = {
+                "P0": priority_tiers.P0,
+                "P1": priority_tiers.P1,
+                "P2": priority_tiers.P2,
+                "P3": priority_tiers.P3,
+                "P4": priority_tiers.P4,
+            }
+
+            # Filter workers based on worker_filter
+            available_workers = []
+            for worker in self._workers_store:
+                if worker.status != "idle":
+                    continue
+
+                # Determine worker tier
+                worker_tier = self._get_worker_tier(worker.model)
+                worker_model = worker.model.lower()
+
+                # Apply filter
+                if worker_filter == "all":
+                    available_workers.append(worker)
+                elif worker_filter == "premium" and worker_tier == "premium":
+                    available_workers.append(worker)
+                elif worker_filter == "standard" and worker_tier == "standard":
+                    available_workers.append(worker)
+                elif worker_filter == "budget" and worker_tier == "budget":
+                    available_workers.append(worker)
+                elif worker_filter in ["sonnet", "opus", "haiku"] and worker_filter in worker_model:
+                    available_workers.append(worker)
+
+            # Get ready tasks (not completed or in progress)
+            ready_tasks = [
+                t for t in self._tasks_store
+                if t.status not in ("completed", "in_progress")
+            ]
+
+            # Calculate value scores for each task
+            task_scores = []
+            for task in ready_tasks:
+                # Calculate value score using the algorithm
+                # Priority (40pts) + Blockers (30pts) + Age (20pts) + Labels (10pts)
+                priority_score = self._get_priority_score(task.priority)
+                blocker_score = min(len(getattr(task, 'blocks', [])) * 10, 30)
+
+                # Age score (older tasks get more points)
+                from datetime import datetime, timezone
+                created_at = getattr(task, 'created_at', datetime.now(timezone.utc))
+                if isinstance(created_at, str):
+                    created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                age_days = (datetime.now(timezone.utc) - created_at).days
+                age_score = min(age_days * 3, 20)
+
+                # Label score (urgent labels get bonus)
+                labels = getattr(task, 'labels', [])
+                urgent_labels = {"critical", "urgent", "blocker", "hotfix", "mvp"}
+                label_score = 10 if any(l.lower() in urgent_labels for l in labels) else 0
+
+                total_score = priority_score + blocker_score + age_score + label_score
+
+                task_scores.append({
+                    "task": task,
+                    "value_score": total_score,
+                    "priority_score": priority_score,
+                    "blocker_score": blocker_score,
+                    "age_score": age_score,
+                    "label_score": label_score,
+                })
+
+            # Sort by value score (descending)
+            task_scores.sort(key=lambda x: x["value_score"], reverse=True)
+
+            # Generate suggestions
+            suggestions = []
+            for i, task_data in enumerate(task_scores[:count]):
+                task = task_data["task"]
+                score = task_data["value_score"]
+
+                # Determine required tier from task priority
+                required_tier = tier_mapping.get(task.priority, "standard")
+
+                # Find matching workers
+                matching_workers = [
+                    w for w in available_workers
+                    if self._get_worker_tier(w.model) == required_tier
+                ]
+
+                # If no matching workers, use any available worker
+                if not matching_workers:
+                    matching_workers = available_workers
+
+                worker_suggestions = [
+                    {
+                        "worker_id": w.id,
+                        "model": w.model,
+                        "tier": self._get_worker_tier(w.model),
+                    }
+                    for w in matching_workers[:3]  # Top 3 workers per task
+                ]
+
+                suggestions.append({
+                    "rank": i + 1,
+                    "task_id": task.id,
+                    "task_title": task.title,
+                    "priority": task.priority,
+                    "value_score": score,
+                    "score_breakdown": {
+                        "priority": task_data["priority_score"],
+                        "blockers": task_data["blocker_score"],
+                        "age": task_data["age_score"],
+                        "labels": task_data["label_score"],
+                    },
+                    "required_tier": required_tier,
+                    "suggested_workers": worker_suggestions,
+                    "labels": getattr(task, 'labels', []),
+                    "age_days": task_data["age_score"] // 3 if task_data["age_score"] > 0 else 0,
+                })
+
+            return create_success_result(
+                "suggest_assignments",
+                f"Generated {len(suggestions)} task assignment suggestions",
+                {
+                    "suggestions": suggestions,
+                    "total_tasks": len(ready_tasks),
+                    "available_workers": len(available_workers),
+                    "worker_filter": worker_filter,
+                }
+            )
+        except Exception as e:
+            return create_error_result("suggest_assignments", f"Failed to suggest assignments: {e}")
+
+    def _get_priority_score(self, priority: str | TaskPriority) -> int:
+        """Get priority score for value calculation (0-40 points)"""
+        if isinstance(priority, TaskPriority):
+            priority = priority.value
+
+        priority_scores = {
+            "0": 40,  # P0 - Critical
+            "1": 30,  # P1 - High
+            "2": 20,  # P2 - Medium
+            "3": 10,  # P3 - Low
+            "4": 5,   # P4 - Backlog
+        }
+        return priority_scores.get(str(priority), 15)
+
+    def _get_worker_tier(self, model: str) -> str:
+        """Determine worker tier based on model"""
+        model_lower = model.lower()
+
+        # Premium models
+        if any(m in model_lower for m in ["opus", "gpt-4", "claude-opus"]):
+            return "premium"
+        if any(m in model_lower for m in ["sonnet", "claude-sonnet", "gpt-4o"]):
+            return "premium"
+
+        # Standard models
+        if any(m in model_lower for m in ["qwen", "llama", "mistral"]):
+            return "standard"
+
+        # Budget models
+        if any(m in model_lower for m in ["haiku", "claude-haiku"]):
+            return "budget"
+
+        # Default to standard
+        return "standard"
 
     # =============================================================================
     # Cost & Analytics Tool Callbacks

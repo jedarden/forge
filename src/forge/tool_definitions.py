@@ -508,6 +508,35 @@ TASK_MANAGEMENT_TOOLS = [
             {"user": "Assign the top task to the best worker", "tool": "assign_task", "arguments": {"task_id": "auto", "worker_id": "auto"}},
         ]
     ),
+    ToolDefinition(
+        name="suggest_assignments",
+        description="Suggest optimal task-worker assignments based on value scores and worker tiers. Uses the scoring algorithm (priority 40pts + blockers 30pts + age 20pts + labels 10pts) to rank tasks and matches them to appropriate worker tiers (premium for P0/P1, standard for P2, budget for P3/P4). Use this when the user wants to know which tasks should be assigned to which workers.",
+        category=ToolCategory.TASK_MANAGEMENT,
+        parameters=[
+            ToolParameter(
+                name="count",
+                type="integer",
+                description="Number of suggestions to return (default: 5)",
+                required=False,
+                minimum=1,
+                maximum=20,
+                default=5
+            ),
+            ToolParameter(
+                name="worker_filter",
+                type="string",
+                description="Filter workers by tier (premium, standard, budget) or model type",
+                required=False,
+                enum=["premium", "standard", "budget", "sonnet", "opus", "haiku", "all"],
+                default="all"
+            )
+        ],
+        examples=[
+            {"user": "Suggest task assignments", "tool": "suggest_assignments", "arguments": {"count": 5}},
+            {"user": "What should my premium workers work on?", "tool": "suggest_assignments", "arguments": {"worker_filter": "premium", "count": 3}},
+            {"user": "Recommend assignments for sonnet workers", "tool": "suggest_assignments", "arguments": {"worker_filter": "sonnet"}},
+        ]
+    ),
 ]
 
 # Cost & Analytics Tools
