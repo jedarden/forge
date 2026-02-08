@@ -13,6 +13,7 @@
 //! - Parse JSON output from launchers
 //! - Manage worker lifecycle (start, stop, status check)
 //! - **Discover active workers** from existing tmux sessions
+//! - **Read bead queues** from workspaces for task allocation
 //!
 //! # Architecture
 //!
@@ -133,12 +134,14 @@
 //! - `FORGE_MODEL`: Model to use
 //! - `FORGE_WORKSPACE`: Working directory path
 
+pub mod bead_queue;
 pub mod discovery;
 pub mod launcher;
 pub mod tmux;
 pub mod types;
 
 // Re-export main types for convenience
+pub use bead_queue::{BeadAllocation, BeadQueueManager, BeadQueueReader, QueuedBead};
 pub use discovery::{discover_workers, DiscoveredWorker, DiscoveryResult, WorkerType};
 pub use launcher::WorkerLauncher;
 pub use types::{LaunchConfig, LauncherOutput, SpawnRequest, WorkerHandle};
