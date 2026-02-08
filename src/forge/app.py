@@ -999,9 +999,10 @@ class ForgeApp(App):
             # Apply period filter (would update costs panel)
             cost_data = [
                 {
-                    "date": c.date,
                     "model": c.model,
                     "cost": c.cost,
+                    "tokens": c.tokens,
+                    "requests": c.requests,
                 }
                 for c in self._costs_store
             ]
@@ -1102,17 +1103,32 @@ class ForgeApp(App):
             ) as f:
                 if format == "json":
                     import json
-                    json.dump([l.to_dict() for l in logs], f, indent=2)
+                    log_dicts = [
+                        {
+                            "timestamp": l.timestamp.isoformat(),
+                            "level": l.level,
+                            "message": l.message,
+                            "icon": l.icon,
+                        }
+                        for l in logs
+                    ]
+                    json.dump(log_dicts, f, indent=2)
                 elif format == "csv":
                     import csv
                     if logs:
-                        writer = csv.DictWriter(f, fieldnames=logs[0].to_dict().keys())
+                        fieldnames = ["timestamp", "level", "message", "icon"]
+                        writer = csv.DictWriter(f, fieldnames=fieldnames)
                         writer.writeheader()
                         for log in logs:
-                            writer.writerow(log.to_dict())
+                            writer.writerow({
+                                "timestamp": log.timestamp.isoformat(),
+                                "level": log.level,
+                                "message": log.message,
+                                "icon": log.icon,
+                            })
                 else:  # txt
                     for log in logs:
-                        f.write(f"{log.timestamp} [{log.level}] {log.message}\n")
+                        f.write(f"{log.timestamp} [{log.level}] {log.icon} {log.message}\n")
                 output_path = f.name
 
             return create_success_result(
