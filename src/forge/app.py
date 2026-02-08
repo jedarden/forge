@@ -11,10 +11,11 @@ Implements the 6-panel dashboard layout for 199×55 terminal:
 - Views: Full-screen and split-screen views
 """
 
+import asyncio
 from dataclasses import dataclass, field
-from enum import Enum
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, cast
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -38,6 +39,16 @@ from textual.widgets import (
     Markdown,
     ProgressBar,
     Static,
+)
+
+# Import status watcher module
+from forge.status_watcher import (
+    StatusWatcher,
+    StatusFileEvent,
+    WorkerStatusCache,
+    WorkerStatusFile,
+    WorkerStatusValue,
+    parse_status_file,
 )
 
 # Import tools module
@@ -72,6 +83,8 @@ class WorkerStatus(Enum):
     UNHEALTHY = "unhealthy"
     SPAWNING = "spawning"
     TERMINATING = "terminating"
+    FAILED = "failed"
+    STOPPED = "stopped"
 
 
 class TaskPriority(Enum):
@@ -103,6 +116,35 @@ class Worker:
     tokens_used: int = 0
     cost: float = 0.0
     last_heartbeat: datetime | None = None
+    error: str | None = None  # Error message if status file is corrupted
+
+    @classmethod
+    def from_status_file(cls, status_file: WorkerStatusFile) -> "Worker":
+        """Create Worker from WorkerStatusFile"""
+        # Map WorkerStatusValue to WorkerStatus
+        status_map = {
+            WorkerStatusValue.ACTIVE: WorkerStatus.ACTIVE,
+            WorkerStatusValue.IDLE: WorkerStatus.IDLE,
+            WorkerStatusValue.FAILED: WorkerStatus.UNHEALTHY,
+            WorkerStatusValue.STOPPED: WorkerStatus.TERMINATING,
+            WorkerStatusValue.STARTING: WorkerStatus.SPAWNING,
+            WorkerStatusValue.SPAWNED: WorkerStatus.SPAWNING,
+        }
+
+        status = status_map.get(
+            status_file.status,
+            WorkerStatus.UNHEALTHY if status_file.error else WorkerStatus.IDLE
+        )
+
+        return cls(
+            session_id=status_file.worker_id,
+            model=status_file.model,
+            workspace=status_file.workspace,
+            status=status,
+            current_task=status_file.current_task,
+            uptime_seconds=0,  # Calculate from started_at if needed
+            error=status_file.error,
+        )
 
 
 @dataclass
@@ -194,6 +236,7 @@ class WorkersPanel(Static):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._table: DataTable[Worker] | None = None
+        self._status_cache = WorkerStatusCache()
 
     def compose(self: ComposeResult) -> ComposeResult:
         yield Label("👷 WORKER POOL")
@@ -207,6 +250,31 @@ class WorkersPanel(Static):
         """React to worker list changes"""
         self._update_counts(new_workers)
         self._update_display(new_workers)
+
+    def on_status_file_event(self, event: StatusFileEvent) -> None:
+        """
+        Handle status file change events.
+
+        Args:
+            event: Status file event from the watcher
+        """
+        # Update cache
+        self._status_cache.update(event)
+
+        # Rebuild workers list from cache
+        self._rebuild_workers_from_cache()
+
+    def _rebuild_workers_from_cache(self) -> None:
+        """Rebuild workers list from status cache"""
+        cached_statuses = self._status_cache.get_all()
+        new_workers = []
+
+        for status_file in cached_statuses.values():
+            worker = Worker.from_status_file(status_file)
+            new_workers.append(worker)
+
+        # Update reactive workers list
+        self.workers = new_workers
 
     def _update_counts(self, workers: list[Worker]) -> None:
         """Update worker counts"""
@@ -254,6 +322,8 @@ class WorkersPanel(Static):
             WorkerStatus.UNHEALTHY: "✗DEAD",
             WorkerStatus.SPAWNING: "⟳SPAWN",
             WorkerStatus.TERMINATING: "⦻STOP",
+            WorkerStatus.FAILED: "✗FAIL",
+            WorkerStatus.STOPPED: "⦻STOP",
         }
         return symbols.get(status, "?UNKNOWN")
 
@@ -548,6 +618,10 @@ class ForgeApp(App):
     _logs_panel: LogsPanel | None = None
     _chat_panel: ChatPanel | None = None
 
+    # Status watcher
+    _status_watcher: StatusWatcher | None = None
+    _status_dir: Path = Path.home() / ".forge" / "status"
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         # Initialize storage
@@ -826,6 +900,9 @@ class ForgeApp(App):
         # Watch for terminal resize events
         self.watch("size", self._on_terminal_resize)
 
+        # Start status file watcher
+        self._start_status_watcher()
+
     def _update_all_panels(self) -> None:
         """Update all panels with current data"""
         if self._workers_panel is not None:
@@ -844,6 +921,67 @@ class ForgeApp(App):
         # This would fetch real data in production
         # For now, just trigger panel updates
         self._update_all_panels()
+
+    def _start_status_watcher(self) -> None:
+        """Start the status file watcher for real-time worker updates"""
+        async def start_watcher() -> None:
+            """Async task to start the status watcher"""
+            self._status_watcher = StatusWatcher(
+                status_dir=self._status_dir,
+                callback=self._on_status_file_event,
+                poll_interval=1.0,
+            )
+            watcher_type = await self._status_watcher.start()
+
+            # Log which watcher type is being used
+            now = datetime.now()
+            if watcher_type == "inotify":
+                log_entry = LogEntry(now, "INFO", "Status watcher started (inotify mode)", "🔍")
+            else:
+                log_entry = LogEntry(now, "INFO", "Status watcher started (polling mode)", "🔄")
+            self.logs.append(log_entry)
+
+        # Start watcher in background
+        asyncio.create_task(start_watcher())
+
+    def _on_status_file_event(self, event: StatusFileEvent) -> None:
+        """
+        Handle status file change events from the watcher.
+
+        Args:
+            event: Status file event
+        """
+        # Forward event to workers panel
+        if self._workers_panel is not None:
+            self._workers_panel.on_status_file_event(event)
+
+        # Log significant events
+        now = datetime.now()
+        if event.event_type == StatusFileEvent.EventType.DELETED:
+            log_entry = LogEntry(
+                now,
+                "INFO",
+                f"Worker stopped: {event.worker_id}",
+                "⦻"
+            )
+            self.logs.append(log_entry)
+        elif event.status and event.status.error:
+            # Log corrupted status file
+            log_entry = LogEntry(
+                now,
+                "ERROR",
+                f"Worker {event.worker_id}: {event.status.error}",
+                "⚠"
+            )
+            self.logs.append(log_entry)
+        elif event.status and event.status.status == WorkerStatusValue.FAILED:
+            log_entry = LogEntry(
+                now,
+                "WARN",
+                f"Worker failed: {event.worker_id}",
+                "✗"
+            )
+            self.logs.append(log_entry)
 
     def _handle_command(self, command: str) -> None:
         """Handle chat command submission"""
@@ -1112,6 +1250,13 @@ Type :help for more information
         log_entry = LogEntry(now, "INFO", "Dashboard refreshed", "🔄")
         self.logs.append(log_entry)
         self._update_all_panels()
+
+    async def on_unmount(self) -> None:
+        """Cleanup when app is unmounted"""
+        # Stop status watcher
+        if self._status_watcher is not None:
+            await self._status_watcher.stop()
+            self._status_watcher = None
 
 # =============================================================================
 # CLI Entry Point

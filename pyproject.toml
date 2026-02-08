@@ -25,6 +25,7 @@ classifiers = [
 dependencies = [
     "textual>=0.80.0",
     "rich>=13.7.0",
+    "watchdog>=4.0.0",
 ]
 
 [project.optional-dependencies]
