@@ -830,15 +830,15 @@ class ForgeApp(App):
             # Apply filter
             if filter != "all":
                 if filter == "idle":
-                    filtered = [w for w in workers if w.status == "idle"]
+                    filtered = [w for w in workers if w.status == WorkerStatus.IDLE]
                 elif filter == "active":
-                    filtered = [w for w in workers if w.status == "active"]
+                    filtered = [w for w in workers if w.status == WorkerStatus.ACTIVE]
                 elif filter == "failed":
-                    filtered = [w for w in workers if w.status == "failed"]
+                    filtered = [w for w in workers if w.status == WorkerStatus.FAILED]
                 elif filter == "stuck":
-                    filtered = [w for w in workers if w.status == "stuck"]
+                    filtered = [w for w in workers if w.status == WorkerStatus.UNHEALTHY]
                 elif filter == "healthy":
-                    filtered = [w for w in workers if w.status in ["idle", "active"]]
+                    filtered = [w for w in workers if w.status in [WorkerStatus.IDLE, WorkerStatus.ACTIVE]]
                 else:
                     filtered = workers
             else:
@@ -846,9 +846,9 @@ class ForgeApp(App):
 
             worker_data = [
                 {
-                    "id": w.id,
+                    "id": w.session_id,
                     "model": w.model,
-                    "status": w.status,
+                    "status": w.status.value,
                     "workspace": w.workspace,
                     "task": w.current_task,
                 }
