@@ -2,6 +2,8 @@
 
 Complete reference for all tools available in the conversational interface.
 
+**Total Tools: 45** across 11 categories
+
 ---
 
 ## How to Use Tools
@@ -406,6 +408,292 @@ List all available tools and features.
 ```
 "What can you do?"           → list_capabilities()
 "Show me all commands"       → list_capabilities()
+```
+
+---
+
+## Notification
+
+### `show_notification(message, level?)`
+Display a notification message to the user.
+
+**Parameters**:
+- `message` (string): Notification message to display
+- `level` (string, optional): Notification level - `info`, `warning`, `error`, `success` (default: `info`)
+
+**Examples**:
+```
+"Show a notification"                           → show_notification("Task completed")
+"Warn me about something"                       → show_notification("High costs detected", level="warning")
+```
+
+---
+
+### `show_warning(message, details?)`
+Display a warning message to the user.
+
+**Parameters**:
+- `message` (string): Warning message to display
+- `details` (string, optional): Additional details about the warning
+
+**Examples**:
+```
+"Show a warning about costs"                    → show_warning("Costs are high", "Consider optimizing routing")
+```
+
+---
+
+### `ask_user(question, options?)`
+Prompt the user for input with a question and options.
+
+**Parameters**:
+- `question` (string): Question to ask the user
+- `options` (array, optional): List of options for the user to choose from
+
+**Examples**:
+```
+"Ask if I should kill the worker"              → ask_user("Kill worker sonnet-alpha?", ["Yes", "No", "Cancel"])
+```
+
+---
+
+### `highlight_beads(bead_ids, reason?)`
+Highlight specific beads in the task queue.
+
+**Parameters**:
+- `bead_ids` (array): List of bead IDs to highlight
+- `reason` (string, optional): Reason for highlighting
+
+**Examples**:
+```
+"Highlight these beads"                        → highlight_beads(["bd-abc", "bd-def"], "Blocking critical work")
+```
+
+---
+
+## System
+
+### `get_status(component?)`
+Get the current status of FORGE and all workers.
+
+**Parameters**:
+- `component` (string, optional): Specific component to check - `all`, `workers`, `backend`, `system` (default: `all`)
+
+**Examples**:
+```
+"What's the status?"                           → get_status()
+"Show worker status"                           → get_status(component="workers")
+```
+
+---
+
+### `refresh(scope?)`
+Refresh the current view or all data.
+
+**Parameters**:
+- `scope` (string, optional): What to refresh - `current`, `all`, `workers`, `tasks`, `costs` (default: `current`)
+
+**Examples**:
+```
+"Refresh"                                      → refresh()
+"Refresh all data"                             → refresh(scope="all")
+```
+
+---
+
+### `ping_worker(worker_id)`
+Check if a worker is responsive.
+
+**Parameters**:
+- `worker_id` (string): Worker ID to ping
+
+**Examples**:
+```
+"Check if sonnet-alpha is responsive"          → ping_worker("sonnet-alpha")
+```
+
+---
+
+### `get_worker_info(worker_id)`
+Get detailed information about a specific worker.
+
+**Parameters**:
+- `worker_id` (string): Worker ID to get info for
+
+**Examples**:
+```
+"Show info for sonnet-alpha"                   → get_worker_info("sonnet-alpha")
+```
+
+---
+
+### `pause_worker(worker_id)`
+Pause a worker (temporarily stop processing).
+
+**Parameters**:
+- `worker_id` (string): Worker ID to pause
+
+**Requires confirmation**: Always
+
+**Examples**:
+```
+"Pause sonnet-alpha"                           → pause_worker("sonnet-alpha")
+```
+
+---
+
+### `resume_worker(worker_id)`
+Resume a paused worker.
+
+**Parameters**:
+- `worker_id` (string): Worker ID to resume
+
+**Examples**:
+```
+"Resume sonnet-alpha"                          → resume_worker("sonnet-alpha")
+```
+
+---
+
+## Workspace
+
+### `switch_workspace(path)`
+Switch to a different workspace.
+
+**Parameters**:
+- `path` (string): Workspace path to switch to
+
+**Requires confirmation**: Always
+
+**Examples**:
+```
+"Switch to /home/coder/trading"                → switch_workspace("/home/coder/trading")
+```
+
+---
+
+### `list_workspaces(filter?)`
+List all available workspaces.
+
+**Parameters**:
+- `filter` (string, optional): Filter workspaces by status - `active`, `inactive`, `all`
+
+**Examples**:
+```
+"Show all workspaces"                          → list_workspaces()
+"Show active workspaces"                       → list_workspaces(filter="active")
+```
+
+---
+
+### `create_workspace(path, template?)`
+Create a new workspace.
+
+**Parameters**:
+- `path` (string): Workspace path to create
+- `template` (string, optional): Template to use - `empty`, `python`, `javascript`, `rust`
+
+**Examples**:
+```
+"Create a Python workspace"                    → create_workspace("/home/coder/myproject", template="python")
+```
+
+---
+
+### `get_workspace_info()`
+Get information about the current workspace.
+
+**Examples**:
+```
+"Show workspace info"                          → get_workspace_info()
+```
+
+---
+
+## Analytics
+
+### `show_throughput(period?)`
+Display task throughput metrics.
+
+**Parameters**:
+- `period` (string, optional): Time period for analysis (same as `show_costs`)
+
+**Examples**:
+```
+"Show throughput today"                        → show_throughput(period="today")
+```
+
+---
+
+### `show_latency(period?)`
+Display task latency metrics.
+
+**Parameters**:
+- `period` (string, optional): Time period for analysis (same as `show_costs`)
+
+**Examples**:
+```
+"Show latency this week"                       → show_latency(period="this_week")
+```
+
+---
+
+### `show_success_rate(period?)`
+Display task success rate metrics.
+
+**Parameters**:
+- `period` (string, optional): Time period for analysis (same as `show_costs`)
+
+**Examples**:
+```
+"Show success rate"                            → show_success_rate()
+```
+
+---
+
+### `show_worker_efficiency(by_model?)`
+Display worker efficiency comparison.
+
+**Parameters**:
+- `by_model` (boolean, optional): Group by model type (default: `true`)
+
+**Examples**:
+```
+"Show worker efficiency"                       → show_worker_efficiency()
+```
+
+---
+
+### `show_task_distribution()`
+Display task distribution across priorities.
+
+**Examples**:
+```
+"Show task distribution"                       → show_task_distribution()
+```
+
+---
+
+### `show_trends(metric, period?)`
+Display trends for a specific metric over time.
+
+**Parameters**:
+- `metric` (string): Metric to show trends for - `costs`, `throughput`, `latency`, `success_rate`, `worker_count`
+- `period` (string, optional): Time period for trends (default: `this_week`)
+
+**Examples**:
+```
+"Show cost trends this week"                   → show_trends(metric="costs", period="this_week")
+```
+
+---
+
+### `analyze_bottlenecks()`
+Analyze potential bottlenecks in the workflow.
+
+**Examples**:
+```
+"Find bottlenecks"                             → analyze_bottlenecks()
 ```
 
 ---
