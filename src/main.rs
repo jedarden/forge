@@ -18,6 +18,8 @@
 //! forge --version
 //! ```
 
+use std::io::Write;
+use std::panic;
 use std::process::ExitCode;
 
 use clap::Parser;
@@ -54,6 +56,9 @@ fn main() -> ExitCode {
         }
     };
 
+    // Install panic hook to ensure terminal cleanup
+    install_panic_hook();
+
     info!("Starting FORGE dashboard");
 
     // Run the TUI application
@@ -68,6 +73,48 @@ fn main() -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// Install a panic hook that restores the terminal before printing the panic message.
+///
+/// This ensures that even if the application panics while in raw mode with the
+/// alternate screen enabled, the terminal will be properly restored so the user
+/// can see the panic message and continue using their terminal.
+fn install_panic_hook() {
+    let original_hook = panic::take_hook();
+
+    panic::set_hook(Box::new(move |panic_info| {
+        // Attempt to restore terminal state
+        let _ = restore_terminal();
+
+        // Call the original panic hook to print the panic message
+        original_hook(panic_info);
+    }));
+}
+
+/// Restore terminal to its normal state.
+///
+/// This function is called both on normal exit and during panic handling.
+fn restore_terminal() -> std::io::Result<()> {
+    let mut stdout = std::io::stdout();
+
+    // Disable raw mode first
+    let _ = crossterm::terminal::disable_raw_mode();
+
+    // Leave alternate screen and disable mouse capture
+    crossterm::execute!(
+        stdout,
+        crossterm::terminal::LeaveAlternateScreen,
+        crossterm::event::DisableMouseCapture
+    )?;
+
+    // Show cursor
+    crossterm::execute!(stdout, crossterm::cursor::Show)?;
+
+    // Flush to ensure all escape sequences are written
+    stdout.flush()?;
+
+    Ok(())
 }
 
 /// Set up logging based on CLI arguments.
