@@ -1,0 +1,60 @@
+# Claude Sonnet 4.5 Worker Configuration
+# Premium mid-range model for balanced performance and cost
+
+# Worker metadata
+name: "claude-sonnet"
+description: "Claude Sonnet 4.5 model - balanced performance for most tasks"
+version: "1.0.0"
+author: "Anthropic"
+
+# Launcher configuration
+launcher: "claude-code"
+model: "sonnet"
+
+# Cost/tier information (for routing)
+tier: "premium"
+cost_per_million_tokens:
+  input: 3.0
+  output: 15.0
+
+# Subscription information
+subscription:
+  enabled: true
+  monthly_cost: 20
+  quota_type: "unlimited"
+  quota_limit: null
+
+# Environment variables
+environment:
+  ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+  CLAUDE_CONFIG_DIR: "~/.config/claude-code"
+  CLAUDE_MODEL: "sonnet"
+
+# Spawn arguments (passed to launcher)
+spawn_args:
+  - "--tmux"
+  - "--session=${session_name}"
+  - "--workspace=${workspace}"
+  - "--model=${model}"
+
+# File paths
+log_path: "~/.forge/logs/${worker_id}.log"
+status_path: "~/.forge/status/${worker_id}.json"
+
+# Health check (optional)
+health_check:
+  enabled: true
+  interval_seconds: 60
+  timeout_seconds: 10
+  command: "tmux has-session -t ${session_name}"
+
+# Capabilities (for task routing)
+capabilities:
+  - "code_generation"
+  - "code_review"
+  - "debugging"
+  - "refactoring"
+  - "documentation"
+max_context_tokens: 200000
+supports_tools: true
+supports_vision: true
