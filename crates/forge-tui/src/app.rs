@@ -398,20 +398,18 @@ impl App {
             self.focus_panel == FocusPanel::WorkerPool,
         );
 
-        // Subscriptions - still placeholder until subscription tracking is implemented
+        // Subscriptions/Utilization panel - show real metrics
         let subscriptions_content = if self.data_manager.is_ready() {
-            "Subscription tracking not yet implemented.\n\n\
-             Future feature: track API usage limits\n\
-             for Claude Pro, GLM-4.7, and other models."
+            self.format_utilization_panel()
         } else {
-            "Loading..."
+            "Loading...".to_string()
         };
 
         self.draw_panel(
             frame,
             top_chunks[1],
-            "Subscriptions",
-            subscriptions_content,
+            "Utilization",
+            &subscriptions_content,
             self.focus_panel == FocusPanel::Subscriptions,
         );
 
@@ -643,6 +641,64 @@ impl App {
         self.data_manager.poll_updates();
     }
 
+    /// Format the utilization panel showing worker metrics.
+    fn format_utilization_panel(&self) -> String {
+        let counts = self.data_manager.worker_counts();
+        let mut lines = Vec::new();
+
+        if counts.total == 0 {
+            return "No workers to measure.\n\n\
+                    Start workers to see utilization metrics."
+                .to_string();
+        }
+
+        // Calculate utilization percentage
+        let utilization = if counts.total > 0 {
+            (counts.active * 100) / counts.total
+        } else {
+            0
+        };
+
+        // Worker utilization bar
+        lines.push("Worker Utilization:".to_string());
+        lines.push(format_progress_bar(utilization, 100, 20));
+        lines.push(format!("{}/{} workers active ({}%)", counts.active, counts.total, utilization));
+        lines.push(String::new());
+
+        // Breakdown by status
+        lines.push("Status Breakdown:".to_string());
+        if counts.active > 0 {
+            lines.push(format!("  ✅ Active:   {}", counts.active));
+        }
+        if counts.idle > 0 {
+            lines.push(format!("  💤 Idle:     {}", counts.idle));
+        }
+        if counts.starting > 0 {
+            lines.push(format!("  🔄 Starting: {}", counts.starting));
+        }
+        if counts.failed > 0 {
+            lines.push(format!("  ❌ Failed:   {}", counts.failed));
+        }
+        if counts.stopped > 0 {
+            lines.push(format!("  ⏹  Stopped:  {}", counts.stopped));
+        }
+        if counts.error > 0 {
+            lines.push(format!("  ⚠  Error:    {}", counts.error));
+        }
+
+        // Health summary
+        lines.push(String::new());
+        let healthy = counts.healthy();
+        let unhealthy = counts.unhealthy();
+        if unhealthy > 0 {
+            lines.push(format!("⚠  {} unhealthy workers", unhealthy));
+        } else {
+            lines.push(format!("✅ All {} workers healthy", healthy));
+        }
+
+        lines.join("\n")
+    }
+
     /// Draw the help overlay.
     fn draw_help_overlay(&self, frame: &mut Frame, area: Rect) {
         // Calculate centered overlay area
@@ -713,6 +769,20 @@ fn truncate_status_error(err: &str) -> String {
     }
 }
 
+/// Format a simple ASCII progress bar.
+fn format_progress_bar(value: usize, max: usize, width: usize) -> String {
+    let pct = if max > 0 { value * 100 / max } else { 0 };
+    let filled = (pct * width) / 100;
+    let empty = width.saturating_sub(filled);
+
+    format!(
+        "[{}{}] {}%",
+        "█".repeat(filled),
+        "░".repeat(empty),
+        pct
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -768,13 +838,13 @@ mod tests {
     }
 
     #[test]
-    fn test_overview_renders_subscriptions_panel() {
+    fn test_overview_renders_utilization_panel() {
         let app = App::new();
         let buffer = render_app(&app, 100, 30);
 
         assert!(
-            buffer_contains(&buffer, "Subscriptions"),
-            "Overview should render Subscriptions panel"
+            buffer_contains(&buffer, "Utilization"),
+            "Overview should render Utilization panel"
         );
     }
 
@@ -837,8 +907,8 @@ mod tests {
         let buffer = render_app(&app, 100, 30);
         assert!(buffer_contains(&buffer, "Worker Pool"));
 
-        // 2. Subscriptions (part of Overview)
-        assert!(buffer_contains(&buffer, "Subscriptions"));
+        // 2. Utilization (part of Overview, was Subscriptions)
+        assert!(buffer_contains(&buffer, "Utilization"));
 
         // 3. Task Queue (Tasks view)
         app.switch_view(View::Tasks);
@@ -953,7 +1023,7 @@ mod tests {
 
         // All panels should still be visible
         assert!(buffer_contains(&buffer, "Worker Pool"));
-        assert!(buffer_contains(&buffer, "Subscriptions"));
+        assert!(buffer_contains(&buffer, "Utilization"));
     }
 
     #[test]

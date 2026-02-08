@@ -10,6 +10,7 @@ rust-version.workspace = true
 
 [dependencies]
 forge-core = { path = "../forge-core" }
+forge-worker = { path = "../forge-worker" }
 ratatui.workspace = true
 crossterm.workspace = true
 chrono.workspace = true
