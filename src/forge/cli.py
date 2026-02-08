@@ -19,16 +19,22 @@ from forge.config import (
     get_config_value,
     set_config_value,
 )
+from forge.setup import check_first_run, run_interactive_setup
 
 
-@click.group()
+@click.group(invoke_without_command=True)
 @click.version_option(version="0.1.0", prog_name="forge")
-def cli() -> None:
+@click.pass_context
+def cli(ctx: click.Context) -> None:
     """FORGE - Federated Orchestration & Resource Generation Engine
 
     Terminal-based AI agent control panel for managing workers, tasks, and costs.
+
+    Run 'forge' to launch the dashboard.
     """
-    pass
+    # If no subcommand provided, launch dashboard
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(dashboard)
 
 
 @cli.command()
@@ -38,18 +44,32 @@ def cli() -> None:
     type=click.Path(path_type=Path),
     help="Output path for config file (defaults to ~/.forge/config.yaml)",
 )
-def init(output: Path | None) -> None:
-    """Initialize FORGE configuration with default settings.
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    help="Force re-initialization (runs setup wizard even if config exists)",
+)
+def init(output: Path | None, force: bool) -> None:
+    """Initialize FORGE configuration.
 
-    Creates a default configuration file at ~/.forge/config.yaml or the specified path.
+    By default, runs the interactive setup wizard.
+    Use --force to re-run setup even if config exists.
     """
-    try:
-        config_path = init_default_config(output)
-        click.secho(f"✓ Created default configuration at: {config_path}", fg="green")
-        click.echo("\nEdit this file to customize your FORGE settings.")
-    except Exception as e:
-        click.secho(f"✗ Failed to create configuration: {e}", fg="red")
-        sys.exit(1)
+    if force or check_first_run():
+        # Run interactive setup
+        setup_success = run_interactive_setup()
+        if not setup_success:
+            click.echo()
+            click.echo("Setup incomplete.")
+            sys.exit(1)
+    else:
+        # Config already exists
+        config_path = Path.home() / ".forge" / "config.yaml"
+        click.secho(f"✓ Configuration already exists at: {config_path}", fg="green")
+        click.echo()
+        click.echo("To reconfigure, use:")
+        click.echo("  forge init --force")
 
 
 @cli.command()
@@ -173,11 +193,33 @@ def set(path: str, value: str, workspace: Path | None, force: bool) -> None:
     type=click.Path(exists=True, path_type=Path),
     help="Workspace path for override loading",
 )
-def dashboard(config: Path | None, workspace: Path | None) -> None:
+@click.option(
+    "--skip-setup",
+    is_flag=True,
+    help="Skip interactive setup even if config doesn't exist",
+)
+def dashboard(config: Path | None, workspace: Path | None, skip_setup: bool) -> None:
     """Launch the FORGE TUI dashboard.
 
     This is the main FORGE interface for managing AI workers and tasks.
+
+    On first run, this will launch an interactive setup wizard.
     """
+    # Check if this is first run (no config exists)
+    if not skip_setup and not config and check_first_run():
+        click.echo()
+        setup_success = run_interactive_setup()
+
+        if not setup_success:
+            click.echo()
+            click.echo("Setup incomplete. Run 'forge' again when ready.")
+            sys.exit(0)
+
+        # Give user a moment to read success message
+        click.echo()
+        click.pause("Press any key to launch FORGE dashboard...")
+        click.clear()
+
     # Validate config first if specified
     if config:
         try:
@@ -192,6 +234,9 @@ def dashboard(config: Path | None, workspace: Path | None) -> None:
         app_config = get_config(workspace_path=workspace)
     except ConfigError as e:
         click.secho(f"✗ Failed to load configuration: {e}", fg="red")
+        click.echo()
+        click.echo("If you need to reconfigure FORGE, run:")
+        click.echo("  forge init --force")
         sys.exit(1)
 
     # Launch the dashboard
