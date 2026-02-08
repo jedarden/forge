@@ -28,8 +28,10 @@
 
 pub mod error;
 pub mod logging;
+pub mod status;
 pub mod types;
 
 // Re-export main types for convenience
 pub use error::{ForgeError, Result};
 pub use logging::{init_logging, LogGuard};
+pub use status::{StatusReader, WorkerStatusInfo};
