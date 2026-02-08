@@ -400,8 +400,18 @@ class InotifyStatusWatcher:
 
             return True
 
+        except OSError as e:
+            # Check for inotify limit error
+            if 'inotify' in str(e).lower() or 'no space left' in str(e).lower() or 'user limit' in str(e).lower():
+                # Inotify limit reached - fall back to polling
+                self._available = False
+                import sys
+                print(f"[FORGE] inotify limit reached, falling back to polling: {e}", file=sys.stderr)
+                return False
+            raise
+
         except Exception as e:
-            # Fall back to polling
+            # Fall back to polling for other errors
             self._available = False
             import sys
             print(f"[FORGE] Inotify watcher failed, falling back to polling: {e}", file=sys.stderr)
@@ -435,6 +445,7 @@ class PollingStatusWatcher:
     Watch status files using periodic polling.
 
     Fallback mechanism when inotify is not available or fails.
+    Uses 5-second poll interval per ADR 0008.
     """
 
     def __init__(
@@ -442,7 +453,7 @@ class PollingStatusWatcher:
         status_dir: Path | str,
         callback: Callable[[StatusFileEvent], None],
         parser: StatusFileParser | None = None,
-        poll_interval: float = 1.0,
+        poll_interval: float = 5.0,
     ):
         """
         Initialize the polling watcher.
@@ -451,7 +462,7 @@ class PollingStatusWatcher:
             status_dir: Directory containing status files
             callback: Function to call for each status file event
             parser: Status file parser (creates default if None)
-            poll_interval: Seconds between polls (default 1.0)
+            poll_interval: Seconds between polls (default 5.0 per ADR 0008)
         """
         self.status_dir = Path(status_dir).expanduser()
         self.callback = callback
@@ -584,6 +595,7 @@ class StatusWatcher:
     Unified status file watcher with automatic fallback.
 
     Tries inotify first, falls back to polling if unavailable.
+    Uses 5-second polling interval per ADR 0008.
     """
 
     def __init__(
@@ -591,7 +603,7 @@ class StatusWatcher:
         status_dir: Path | str,
         callback: Callable[[StatusFileEvent], None],
         parser: StatusFileParser | None = None,
-        poll_interval: float = 1.0,
+        poll_interval: float = 5.0,
     ):
         """
         Initialize the status watcher.
@@ -600,7 +612,7 @@ class StatusWatcher:
             status_dir: Directory containing status files (~/.forge/status/)
             callback: Function to call for each status file event
             parser: Status file parser (creates default if None)
-            poll_interval: Seconds between polls for fallback (default 1.0)
+            poll_interval: Seconds between polls for fallback (default 5.0 per ADR 0008)
         """
         self.status_dir = Path(status_dir).expanduser()
         self.callback = callback
@@ -778,7 +790,7 @@ def parse_status_file(status_file: Path | str) -> WorkerStatusFile:
 async def watch_status_files(
     status_dir: Path | str,
     callback: Callable[[StatusFileEvent], None],
-    poll_interval: float = 1.0,
+    poll_interval: float = 5.0,
 ) -> StatusWatcher:
     """
     Convenience function to start watching status files.
@@ -786,7 +798,7 @@ async def watch_status_files(
     Args:
         status_dir: Directory containing status files
         callback: Function to call for each event
-        poll_interval: Polling interval for fallback
+        poll_interval: Polling interval for fallback (default 5.0 per ADR 0008)
 
     Returns:
         StatusWatcher instance

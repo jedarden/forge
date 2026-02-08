@@ -51,6 +51,13 @@ from forge.status_watcher import (
     parse_status_file,
 )
 
+# Import bead watcher module
+from forge.beads import (
+    BeadWatcher,
+    BeadWorkspace,
+    parse_workspace,
+)
+
 # Import tools module
 from forge.tools import (
     ToolExecutor,
@@ -69,11 +76,11 @@ def _get_cost_tracker():
     return get_cost_tracker()
 
 
-# Import log parser for cost tracking (lazy import)
-def _get_log_monitor():
-    """Lazy import of log monitor"""
-    from forge.log_parser import LogMonitor
-    return LogMonitor
+# Import log watcher for real-time log file monitoring (lazy import)
+def _get_log_watcher():
+    """Lazy import of log watcher"""
+    from forge.log_watcher import LogWatcher, LogFileEvent
+    return LogWatcher, LogFileEvent
 
 
 # =============================================================================
@@ -638,6 +645,10 @@ class ForgeApp(App):
     _status_watcher: StatusWatcher | None = None
     _status_dir: Path = Path.home() / ".forge" / "status"
 
+    # Bead watcher
+    _bead_watcher: BeadWatcher | None = None
+    _bead_workspaces: list[Path] = field(default_factory=list)
+
     # Cost tracker
     _cost_tracker: "CostTracker | None" = None
     _cost_refresh_interval: float = 30.0  # Refresh cost data every 30 seconds
@@ -661,6 +672,9 @@ class ForgeApp(App):
 
         # Initialize log monitor (lazy, starts in on_mount)
         self._log_monitor = None
+
+        # Initialize bead watcher workspaces from environment or current directory
+        self._initialize_bead_workspaces()
 
         # Initialize view state
         self._current_view = ViewMode.OVERVIEW
@@ -2244,6 +2258,81 @@ class ForgeApp(App):
             LogEntry(now, "WARN", "Check subscription usage", "⚠"),
         ]
 
+    def _initialize_bead_workspaces(self) -> None:
+        """Initialize bead workspaces from environment or current directory"""
+        # Check FORGE_WORKSPACES environment variable
+        import os
+        workspaces_str = os.environ.get("FORGE_WORKSPACES", "")
+
+        if workspaces_str:
+            # Parse colon-separated list of workspaces
+            self._bead_workspaces = [Path(w).expanduser() for w in workspaces_str.split(":") if w]
+        else:
+            # Default to current directory if it has .beads subdirectory
+            cwd = Path.cwd()
+            if (cwd / ".beads").exists():
+                self._bead_workspaces = [cwd]
+            else:
+                # No bead workspaces configured
+                self._bead_workspaces = []
+
+    def _on_bead_workspace_change(self, workspace: BeadWorkspace) -> None:
+        """
+        Handle bead workspace change events from the watcher.
+
+        Args:
+            workspace: Updated bead workspace
+        """
+        # Convert Bead objects to Task objects for the UI
+        new_tasks = []
+        for bead in workspace.beads:
+            # Map bead status to task status
+            status_map = {
+                "open": TaskStatus.READY,
+                "in_progress": TaskStatus.IN_PROGRESS,
+                "blocked": TaskStatus.BLOCKED,
+                "closed": TaskStatus.COMPLETED,
+            }
+            task_status = status_map.get(bead.status, TaskStatus.READY)
+
+            # Map bead priority to task priority
+            priority_map = {
+                "0": TaskPriority.P0,
+                "1": TaskPriority.P1,
+                "2": TaskPriority.P2,
+                "3": TaskPriority.P3,
+                "4": TaskPriority.P4,
+            }
+            task_priority = priority_map.get(bead.priority, TaskPriority.P2)
+
+            task = Task(
+                id=bead.id,
+                title=bead.title,
+                priority=task_priority,
+                status=task_status,
+                model="",
+                workspace=str(workspace.path),
+                assignee=bead.assignee,
+                tokens_used=0,
+                created_at=datetime.now(),
+            )
+            new_tasks.append(task)
+
+        # Update tasks store (triggers TUI update via reactive variable)
+        self._tasks_store = new_tasks
+        if self._tasks_panel is not None:
+            self._tasks_panel.tasks = self._tasks_store
+
+        # Log significant changes
+        now = datetime.now()
+        log_entry = LogEntry(
+            now,
+            "INFO",
+            f"Tasks updated: {len(new_tasks)} bead(s) from {workspace.path.name}",
+            "📋"
+        )
+        self.logs.append(log_entry)
+
     def compose(self: ComposeResult) -> ComposeResult:
         """Compose the UI"""
         yield Header()
@@ -2310,6 +2399,9 @@ class ForgeApp(App):
         # Start log monitor for cost tracking
         self._start_log_monitor()
 
+        # Start bead watcher for task updates
+        self._start_bead_watcher()
+
         # Start cost data refresh
         self.set_interval(self._cost_refresh_interval, self._refresh_cost_data)
 
@@ -2345,7 +2437,7 @@ class ForgeApp(App):
             self._status_watcher = StatusWatcher(
                 status_dir=self._status_dir,
                 callback=self._on_status_file_event,
-                poll_interval=1.0,
+                poll_interval=5.0,  # 5-second polling fallback per ADR 0008
             )
             watcher_type = await self._status_watcher.start()
 
@@ -2400,61 +2492,121 @@ class ForgeApp(App):
             self.logs.append(log_entry)
 
     def _start_log_monitor(self) -> None:
-        """Start the log monitor for parsing api_call_completed events"""
-        async def start_monitor() -> None:
-            """Async task to start the log monitor"""
+        """Start the log watcher for parsing api_call_completed events with inotify + polling fallback"""
+        async def start_watcher() -> None:
+            """Async task to start the log watcher"""
             try:
-                LogMonitor = _get_log_monitor()
+                LogWatcher, _ = _get_log_watcher()
 
-                # Create callback for handling parsed log entries
-                def on_log_entry(entry: Any) -> None:
-                    """Handle parsed log entries"""
-                    # Check if this is an api_call_completed event
-                    if hasattr(entry, 'event') and entry.event == "api_call_completed":
-                        # Send to cost tracker
-                        if self._cost_tracker is not None:
-                            # Convert ParsedLogEntry to dict
-                            log_dict = entry.to_dict() if hasattr(entry, 'to_dict') else {
-                                "timestamp": entry.timestamp,
-                                "worker_id": entry.worker_id,
-                                "event": entry.event,
-                                "level": entry.level if hasattr(entry, 'level') else "info",
-                                "message": entry.message if hasattr(entry, 'message') else "",
-                            }
-                            # Add model and token data from extra fields
-                            if hasattr(entry, 'extra'):
-                                log_dict.update(entry.extra)
+                # Create callback for handling log file events
+                def on_log_event(event: Any) -> None:
+                    """Handle log file events (created, modified, deleted)"""
+                    # Process new log entries
+                    if event.entries:
+                        for entry in event.entries:
+                            # Check if this is an api_call_completed event
+                            if entry.event == "api_call_completed":
+                                # Send to cost tracker
+                                if self._cost_tracker is not None:
+                                    # Convert LogEntry to dict
+                                    log_dict = entry.to_dict()
 
-                            # Add event type explicitly
-                            log_dict["event"] = "api_call_completed"
+                                    # Add event type explicitly
+                                    log_dict["event"] = "api_call_completed"
 
-                            self._cost_tracker.add_event_from_log(log_dict)
+                                    self._cost_tracker.add_event_from_log(log_dict)
+
+                    # Log file creation/deletion events
+                    now = datetime.now()
+                    if event.event_type.value == "created":
+                        log_entry = LogEntry(now, "INFO", f"Log file created: {event.worker_id}", "📄")
+                        self.logs.append(log_entry)
+                    elif event.event_type.value == "deleted":
+                        log_entry = LogEntry(now, "INFO", f"Log file deleted: {event.worker_id}", "🗑")
+                        self.logs.append(log_entry)
 
                 # Ensure log directory exists
                 self._log_dir.mkdir(parents=True, exist_ok=True)
 
-                # Create and start log monitor
-                self._log_monitor = LogMonitor(
-                    log_dir=str(self._log_dir),
-                    callback=on_log_entry,
-                    pattern="*.log",
+                # Create and start log watcher with 5s polling fallback per ADR 0008
+                self._log_monitor = LogWatcher(
+                    log_dir=self._log_dir,
+                    callback=on_log_event,
+                    poll_interval=5.0,  # 5-second polling fallback per ADR 0008
                 )
 
-                await self._log_monitor.start()
+                watcher_type = await self._log_monitor.start()
 
-                # Log successful start
+                # Log successful start with watcher type
                 now = datetime.now()
-                log_entry = LogEntry(now, "INFO", f"Log monitor started: {self._log_dir}", "📊")
+                mode_label = "⚡" if watcher_type == "inotify" else "🔄"
+                log_entry = LogEntry(
+                    now,
+                    "INFO",
+                    f"Log watcher started ({watcher_type}): {self._log_dir}",
+                    mode_label
+                )
                 self.logs.append(log_entry)
 
             except Exception as e:
-                # Log error but continue without log monitor
+                # Log error but continue without log watcher
                 now = datetime.now()
-                log_entry = LogEntry(now, "WARN", f"Log monitor failed to start: {e}", "⚠")
+                log_entry = LogEntry(now, "WARN", f"Log watcher failed to start: {e}", "⚠")
                 self.logs.append(log_entry)
 
-        # Start monitor in background
-        asyncio.create_task(start_monitor())
+        # Start watcher in background
+        asyncio.create_task(start_watcher())
+
+    def _start_bead_watcher(self) -> None:
+        """Start the bead watcher for real-time task updates with inotify + polling fallback"""
+        async def start_watcher() -> None:
+            """Async task to start the bead watcher"""
+            try:
+                # Only start if we have workspaces configured
+                if not self._bead_workspaces:
+                    now = datetime.now()
+                    log_entry = LogEntry(now, "INFO", "No bead workspaces configured, skipping bead watcher", "📋")
+                    self.logs.append(log_entry)
+                    return
+
+                # Create and start bead watcher with 5s polling fallback per ADR 0008
+                self._bead_watcher = BeadWatcher(
+                    workspaces=self._bead_workspaces,
+                    callback=self._on_bead_workspace_change,
+                    poll_interval=5.0,  # 5-second polling fallback per ADR 0008
+                )
+
+                watcher_type = await self._bead_watcher.start()
+
+                # Log successful start with watcher type
+                now = datetime.now()
+                mode_label = "⚡" if watcher_type == "inotify" else "🔄"
+                log_entry = LogEntry(
+                    now,
+                    "INFO",
+                    f"Bead watcher started ({watcher_type}): {len(self._bead_workspaces)} workspace(s)",
+                    mode_label
+                )
+                self.logs.append(log_entry)
+
+                # Initial load of beads
+                for workspace_path in self._bead_workspaces:
+                    try:
+                        workspace = parse_workspace(workspace_path)
+                        self._on_bead_workspace_change(workspace)
+                    except Exception as e:
+                        now = datetime.now()
+                        log_entry = LogEntry(now, "WARN", f"Failed to load workspace {workspace_path}: {e}", "⚠")
+                        self.logs.append(log_entry)
+
+            except Exception as e:
+                # Log error but continue without bead watcher
+                now = datetime.now()
+                log_entry = LogEntry(now, "WARN", f"Bead watcher failed to start: {e}", "⚠")
+                self.logs.append(log_entry)
+
+        # Start watcher in background
+        asyncio.create_task(start_watcher())
 
     def _handle_command(self, command: str) -> None:
         """Handle chat command submission"""

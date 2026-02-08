@@ -756,13 +756,14 @@ class BeadWatcher:
     Watch bead JSONL files for changes using inotify with polling fallback.
 
     Triggers callback when .beads/*.jsonl files are modified.
+    Uses 5-second polling interval per ADR 0008.
     """
 
     def __init__(
         self,
         workspaces: list[Path],
         callback: Callable[[BeadWorkspace], None],
-        poll_interval: float = 1.0,
+        poll_interval: float = 5.0,
     ):
         """
         Initialize the bead watcher.
@@ -770,7 +771,7 @@ class BeadWatcher:
         Args:
             workspaces: List of workspace paths to watch
             callback: Function to call when bead files change
-            poll_interval: Seconds between polls for fallback
+            poll_interval: Seconds between polls for fallback (default 5.0 per ADR 0008)
         """
         self.workspaces = [Path(w).expanduser() for w in workspaces]
         self.callback = callback
