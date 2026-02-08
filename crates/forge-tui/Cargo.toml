@@ -1,0 +1,14 @@
+[package]
+name = "forge-tui"
+description = "Terminal UI for FORGE"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+forge-core = { path = "../forge-core" }
+ratatui.workspace = true
+crossterm.workspace = true

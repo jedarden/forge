@@ -1,0 +1,14 @@
+[package]
+name = "forge-config"
+description = "Configuration management for FORGE"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+forge-core = { path = "../forge-core" }
+serde.workspace = true
+serde_yaml.workspace = true

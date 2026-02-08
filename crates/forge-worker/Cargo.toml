@@ -1,0 +1,15 @@
+[package]
+name = "forge-worker"
+description = "Worker management for FORGE"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+forge-core = { path = "../forge-core" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
