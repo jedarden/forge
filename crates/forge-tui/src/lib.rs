@@ -9,6 +9,7 @@
 //! - Task queue visualization
 //! - Cost analytics display
 //! - Conversational chat interface
+//! - Log streaming with ring buffer
 //!
 //! ## Hotkeys
 //!
@@ -26,10 +27,12 @@
 
 pub mod app;
 pub mod event;
+pub mod log;
 pub mod status;
 pub mod view;
 pub mod widget;
 
 pub use app::{App, AppResult};
+pub use log::{LogBuffer, LogEntry, LogEvent, LogLevel, LogTailer, LogTailerConfig};
 pub use status::{StatusEvent, StatusWatcher, StatusWatcherConfig, WorkerStatusFile};
 pub use view::View;
