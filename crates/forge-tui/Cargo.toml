@@ -12,3 +12,4 @@ rust-version.workspace = true
 forge-core = { path = "../forge-core" }
 ratatui.workspace = true
 crossterm.workspace = true
+chrono.workspace = true
