@@ -83,6 +83,18 @@ def _get_log_watcher():
     return LogWatcher, LogFileEvent
 
 
+# Import error display patterns per ADR 0014
+from forge.error_display import (
+    ErrorDisplayManager,
+    ErrorSeverity,
+    ErrorAction,
+    NotificationOverlay,
+    ComponentErrorWidget,
+    FatalErrorScreen,
+    ErrorDialog,
+)
+
+
 # =============================================================================
 # Data Models
 # =============================================================================
@@ -839,6 +851,9 @@ class ForgeApp(App):
     _log_monitor: Any | None = None
     _log_dir: Path = Path.home() / ".forge" / "logs"
 
+    # Error display manager per ADR 0014
+    _error_display: ErrorDisplayManager | None = None
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         # Initialize storage
@@ -875,6 +890,9 @@ class ForgeApp(App):
         )
         # Initialize with sample data
         self._initialize_sample_data()
+
+        # Initialize error display manager per ADR 0014
+        self._error_display = ErrorDisplayManager(self)
 
     def _register_tool_safe(self, tool_name: str, callback) -> None:
         """Register a tool callback, handling missing tools gracefully"""
@@ -3233,6 +3251,152 @@ Type :help for more information
         log_entry = LogEntry(now, "INFO", "Dashboard refreshed", "🔄")
         self.logs.append(log_entry)
         self._update_all_panels()
+
+    # =============================================================================
+    # Error Display Methods (per ADR 0014)
+    # =============================================================================
+
+    def show_transient_error(
+        self,
+        message: str,
+        severity: str = "info",
+        timeout: float | None = None
+    ) -> None:
+        """
+        Show transient notification (non-blocking error).
+
+        Per ADR 0014: Shows notification, doesn't interrupt workflow.
+
+        Args:
+            message: Notification message
+            severity: info, warning, error, or success
+            timeout: Auto-dismiss timeout in seconds (None = manual dismiss)
+
+        Example:
+            self.show_transient_error("Cost update delayed", severity="warning", timeout=5)
+        """
+        if self._error_display:
+            self._error_display.transient(message, severity, timeout)
+
+    def show_component_error(
+        self,
+        component: str,
+        error: str,
+        fallback: str = "",
+        guidance: list[str] | None = None
+    ) -> None:
+        """
+        Show component error in panel (degrades component, app keeps running).
+
+        Per ADR 0014: Show error in component panel, degrade gracefully.
+
+        Args:
+            component: Component name (e.g., "chat", "workers", "logs")
+            error: Primary error message (clear, non-technical)
+            fallback: Fallback mode description
+            guidance: List of actionable guidance steps (3-5 items)
+
+        Example:
+            self.show_component_error(
+                "chat",
+                "Backend unavailable",
+                fallback="Using hotkey-only mode",
+                guidance=["Restart backend: :restart-backend", "Check logs: :logs backend"]
+            )
+        """
+        if self._error_display:
+            # Find panel widget for this component
+            panel_map = {
+                "workers": self._workers_panel,
+                "tasks": self._tasks_panel,
+                "costs": self._costs_panel,
+                "metrics": self._metrics_panel,
+                "logs": self._logs_panel,
+                "chat": self._chat_panel,
+            }
+            panel = panel_map.get(component)
+            self._error_display.component(component, error, fallback, guidance, panel)
+
+    def clear_component_error(self, component: str) -> None:
+        """
+        Clear component error (component recovered).
+
+        Args:
+            component: Component name to clear error for
+        """
+        if self._error_display:
+            self._error_display.clear_component(component)
+
+    def show_fatal_error(
+        self,
+        title: str,
+        errors: list[str],
+        guidance: list[str],
+        exit_on_dismiss: bool = True
+    ) -> None:
+        """
+        Show fatal error screen (blocks app).
+
+        Per ADR 0014: Show full-screen error, exit app.
+
+        Args:
+            title: Error title
+            errors: List of error messages
+            guidance: List of fix suggestions (3-5 items)
+            exit_on_dismiss: Whether to exit app on dismiss
+
+        Example:
+            self.show_fatal_error(
+                "Cannot Start FORGE",
+                ["Cannot write to ~/.forge (permission denied)"],
+                [
+                    "Check file permissions: ls -la ~/.forge",
+                    "Verify disk space: df -h",
+                    "Check directory ownership: ls -ld ~/.forge"
+                ]
+            )
+        """
+        if self._error_display:
+            self._error_display.fatal(title, errors, guidance, exit_on_dismiss)
+
+    def show_error_dialog(
+        self,
+        title: str,
+        message: str,
+        details: dict[str, Any] | None = None,
+        actions: list[tuple[str, Callable[[], None] | None]] | None = None
+    ) -> None:
+        """
+        Show error dialog with actionable buttons.
+
+        Per ADR 0014: Show dialog with actions, no automatic retry.
+
+        Args:
+            title: Error title
+            message: Error message
+            details: Additional context (e.g., launcher, model, workspace)
+            actions: List of (label, callback) tuples
+
+        Example:
+            self.show_error_dialog(
+                "Worker Spawn Failed",
+                "Launcher exited with code 1",
+                details={"Launcher": "~/.forge/launchers/claude-code", "Stderr": "..."},
+                actions=[
+                    ("View Logs", lambda: self.view_logs()),
+                    ("Edit Config", lambda: self.edit_config()),
+                    ("Retry", lambda: self.retry_spawn()),
+                    ("Dismiss", None),
+                ]
+            )
+        """
+        if self._error_display:
+            # Convert actions to ErrorAction objects
+            error_actions = []
+            if actions:
+                for label, callback in actions:
+                    error_actions.append(ErrorAction(label=label, callback=callback))
+            self._error_display.dialog(title, message, details, error_actions)
 
     async def on_unmount(self) -> None:
         """Cleanup when app is unmounted"""
