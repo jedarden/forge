@@ -16,6 +16,7 @@ path = "src/main.rs"
 forge-core = { path = "crates/forge-core" }
 forge-tui = { path = "crates/forge-tui" }
 clap.workspace = true
+crossterm.workspace = true
 tracing.workspace = true
 
 [workspace]
