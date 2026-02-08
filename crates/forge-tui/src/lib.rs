@@ -6,7 +6,7 @@
 //!
 //! - Multi-view dashboard with hotkey navigation
 //! - Real-time worker status monitoring
-//! - Task queue visualization
+//! - Task queue visualization with bead integration
 //! - Cost analytics display
 //! - Conversational chat interface
 //! - Log streaming with ring buffer
@@ -26,6 +26,7 @@
 //! - `Esc` - Cancel/back
 
 pub mod app;
+pub mod bead;
 pub mod data;
 pub mod event;
 #[cfg(test)]
@@ -36,6 +37,7 @@ pub mod view;
 pub mod widget;
 
 pub use app::{App, AppResult};
+pub use bead::{Bead, BeadManager, BeadStats};
 pub use data::{DataManager, WorkerData};
 pub use log::{LogBuffer, LogEntry, LogEvent, LogLevel, LogTailer, LogTailerConfig};
 pub use status::{StatusEvent, StatusWatcher, StatusWatcherConfig, WorkerStatusFile};
