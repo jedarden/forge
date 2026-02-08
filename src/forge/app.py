@@ -58,6 +58,8 @@ from forge.tools import (
     ToolDefinition,
     create_success_result,
     create_error_result,
+    initialize_tools,
+    get_default_tools_path,
 )
 
 # =============================================================================
@@ -636,9 +638,16 @@ class ForgeApp(App):
         self._split_left = None
         self._split_right = None
         self._view_history = []
-        # Initialize tool executor
-        self._tool_executor = ToolExecutor()
+        # Initialize tool executor with all tools
+        self._tool_executor = ToolExecutor(register_all=True)
         self._register_view_tools()
+        # Initialize tool definitions for chat backend
+        self._tools_path = get_default_tools_path()
+        self._tools_payload = initialize_tools(
+            output_path=self._tools_path,
+            format="openai",
+            force=False
+        )
         # Initialize with sample data
         self._initialize_sample_data()
 
