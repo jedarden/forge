@@ -1,3 +1,23 @@
+[package]
+name = "forge"
+description = "Agent Orchestration Dashboard for managing AI worker agents"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "forge"
+path = "src/main.rs"
+
+[dependencies]
+forge-core = { path = "crates/forge-core" }
+forge-tui = { path = "crates/forge-tui" }
+clap.workspace = true
+tracing.workspace = true
+
 [workspace]
 resolver = "2"
 members = [
