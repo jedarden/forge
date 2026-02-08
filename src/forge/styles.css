@@ -1,15 +1,24 @@
 /* FORGE Control Panel Styles
- * Optimized for 199×55 terminal layout
+ * Supports responsive layouts for different terminal sizes:
+ * - 199×38: Compact layout (-compact class)
+ * - 199×55: Standard layout (-standard class, default)
+ * - 199×70+: Large layout (-large class)
+ * - Other sizes: Responsive fallback (-responsive class)
  */
 
 /* =============================================================================
- * Dashboard Layout
+ * Dashboard Layout - Standard (199×55)
+ * Default layout when no modifier class is applied
  * ============================================================================= */
 
 #dashboard {
     height: 50;
     width: 1fr;
     padding: 0 1;
+}
+
+#dashboard.-standard {
+    height: 50;
 }
 
 /* Top row: Workers, Tasks, Costs panels */
@@ -43,6 +52,78 @@
 #bottom_row {
     height: 20;
     width: 1fr;
+}
+
+/* =============================================================================
+ * Dashboard Layout - Compact (199×38)
+ * Applied when terminal height < 45
+ * ============================================================================= */
+
+#dashboard.-compact {
+    height: 33;
+}
+
+#dashboard.-compact #top_row {
+    height: 12;
+}
+
+#dashboard.-compact #middle_row {
+    height: 6;
+}
+
+#dashboard.-compact #bottom_row {
+    height: 13;
+}
+
+/* Hide spacer in compact mode */
+#dashboard.-compact #spacer {
+    display: none;
+}
+
+/* =============================================================================
+ * Dashboard Layout - Large (199×70+)
+ * Applied when terminal height >= 65
+ * ============================================================================= */
+
+#dashboard.-large {
+    height: 65;
+}
+
+#dashboard.-large #top_row {
+    height: 22;
+}
+
+#dashboard.-large #middle_row {
+    height: 14;
+}
+
+#dashboard.-large #bottom_row {
+    height: 27;
+}
+
+/* =============================================================================
+ * Dashboard Layout - Responsive Fallback
+ * Uses flex units for unknown terminal sizes
+ * ============================================================================= */
+
+#dashboard.-responsive {
+    height: 1fr;
+}
+
+#dashboard.-responsive #top_row {
+    height: 35%;
+}
+
+#dashboard.-responsive #middle_row {
+    height: 20%;
+}
+
+#dashboard.-responsive #bottom_row {
+    height: 45%;
+}
+
+#dashboard.-responsive #spacer {
+    display: none;
 }
 
 /* Chat container */

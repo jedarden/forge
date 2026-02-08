@@ -479,7 +479,13 @@ class ForgeApp(App):
     """
     Main FORGE Control Panel Application
 
-    6-panel layout for 199×55 terminal:
+    Responsive 6-panel layout with support for multiple terminal sizes:
+    - 199×38: Compact layout (reduced panel heights)
+    - 199×55: Standard layout (default)
+    - 199×70+: Large layout (expanded panel heights)
+    - Other sizes: Responsive fallback using flex units
+
+    Layout:
     - Top-left: Workers panel
     - Top-center: Tasks panel
     - Top-right: Costs panel
@@ -804,6 +810,9 @@ class ForgeApp(App):
 
     def on_mount(self) -> None:
         """Initialize after mounting"""
+        # Apply responsive layout based on terminal size
+        self._apply_responsive_layout()
+
         # Set up chat command handler
         if self._chat_panel is not None:
             self._chat_panel.on_command_submit = self._handle_command
@@ -813,6 +822,9 @@ class ForgeApp(App):
 
         # Start background refresh task
         self.set_interval(2.0, self._refresh_data)
+
+        # Watch for terminal resize events
+        self.watch("size", self._on_terminal_resize)
 
     def _update_all_panels(self) -> None:
         """Update all panels with current data"""
@@ -891,6 +903,40 @@ class ForgeApp(App):
             self.logs.append(info_entry)
 
         self._update_all_panels()
+
+    # -------------------------------------------------------------------------
+    # Responsive Layout
+    # -------------------------------------------------------------------------
+
+    def _apply_responsive_layout(self) -> None:
+        """Apply appropriate CSS classes based on terminal size"""
+        dashboard = self.query_one("#dashboard", Container)
+        terminal_height = self.size.height
+
+        # Remove existing layout classes
+        dashboard.remove_class("-compact", "-large", "-responsive", "-standard")
+
+        # Apply layout class based on terminal height
+        if terminal_height < 45:
+            # Compact layout for 199×38 and similar
+            dashboard.add_class("-compact")
+            self._log_info(f"Applied compact layout for {self.size.width}×{terminal_height} terminal")
+        elif terminal_height >= 65:
+            # Large layout for tall terminals
+            dashboard.add_class("-large")
+            self._log_info(f"Applied large layout for {self.size.width}×{terminal_height} terminal")
+        elif 53 <= terminal_height <= 57:
+            # Standard 199×55 layout
+            dashboard.add_class("-standard")
+            self._log_info(f"Applied standard layout for {self.size.width}×{terminal_height} terminal")
+        else:
+            # Responsive fallback for non-standard sizes
+            dashboard.add_class("-responsive")
+            self._log_info(f"Applied responsive layout for {self.size.width}×{terminal_height} terminal")
+
+    def _on_terminal_resize(self) -> None:
+        """Handle terminal resize events"""
+        self._apply_responsive_layout()
 
     # -------------------------------------------------------------------------
     # Actions
