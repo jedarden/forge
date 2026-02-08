@@ -27,6 +27,8 @@
 
 pub mod app;
 pub mod event;
+#[cfg(test)]
+mod integration_tests;
 pub mod log;
 pub mod status;
 pub mod view;
