@@ -12,6 +12,7 @@
 //! - Track worker PIDs and session names
 //! - Parse JSON output from launchers
 //! - Manage worker lifecycle (start, stop, status check)
+//! - **Discover active workers** from existing tmux sessions
 //!
 //! # Architecture
 //!
@@ -32,6 +33,34 @@
 //! │   tmux Session       │
 //! │  (worker process)    │
 //! └──────────────────────┘
+//! ```
+//!
+//! # Session Discovery
+//!
+//! The [`discovery`] module provides utilities for discovering active worker sessions:
+//!
+//! ```no_run
+//! use forge_worker::discovery::{discover_workers, WorkerType};
+//!
+//! #[tokio::main]
+//! async fn main() -> forge_core::Result<()> {
+//!     let result = discover_workers().await?;
+//!
+//!     println!("Found {} workers:", result.workers.len());
+//!     for worker in &result.workers {
+//!         println!("  {} ({}) - {}",
+//!             worker.session_name,
+//!             worker.worker_type,
+//!             if worker.is_attached { "attached" } else { "detached" }
+//!         );
+//!     }
+//!
+//!     // Filter by type
+//!     let opus_workers = result.workers_of_type(WorkerType::Opus);
+//!     println!("Opus workers: {}", opus_workers.len());
+//!
+//!     Ok(())
+//! }
 //! ```
 //!
 //! # Example
@@ -104,10 +133,12 @@
 //! - `FORGE_MODEL`: Model to use
 //! - `FORGE_WORKSPACE`: Working directory path
 
+pub mod discovery;
 pub mod launcher;
 pub mod tmux;
 pub mod types;
 
 // Re-export main types for convenience
+pub use discovery::{discover_workers, DiscoveredWorker, DiscoveryResult, WorkerType};
 pub use launcher::WorkerLauncher;
 pub use types::{LaunchConfig, LauncherOutput, SpawnRequest, WorkerHandle};
