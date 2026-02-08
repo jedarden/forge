@@ -1,0 +1,205 @@
+/* FORGE Control Panel Styles
+ * Optimized for 199×55 terminal layout
+ */
+
+/* =============================================================================
+ * Dashboard Layout
+ * ============================================================================= */
+
+#dashboard {
+    height: 50;
+    width: 1fr;
+    padding: 0 1;
+}
+
+/* Top row: Workers, Tasks, Costs panels */
+#top_row {
+    height: 18;
+    width: 1fr;
+}
+
+#left_col, #center_col, #right_col {
+    height: 1fr;
+    width: 1fr;
+}
+
+/* Middle row: Metrics panel */
+#middle_row {
+    height: 10;
+    width: 1fr;
+}
+
+#metrics_col {
+    height: 1fr;
+    width: 1fr;
+}
+
+#spacer {
+    height: 1fr;
+    width: 1fr;
+}
+
+/* Bottom row: Logs panel */
+#bottom_row {
+    height: 20;
+    width: 1fr;
+}
+
+/* Chat container */
+#chat_container {
+    height: 3;
+    width: 1fr;
+    dock: top;
+}
+
+/* =============================================================================
+ * Panel Styles
+ * ============================================================================= */
+
+WorkersPanel, TasksPanel, CostsPanel, MetricsPanel, LogsPanel, ChatPanel {
+    background: $panel;
+    border: thick $primary;
+    border-title-align: left;
+    padding: 0;
+}
+
+/* Panel subtitles are set in code via border_title() */
+
+/* =============================================================================
+ * Data Tables
+ * ============================================================================= */
+
+DataTable {
+    height: 1fr;
+}
+
+DataTable > Header {
+    background: $primary;
+    text-style: bold;
+}
+
+DataTable > DataTableCursor {
+    background: $secondary;
+}
+
+/* =============================================================================
+ * Status Colors
+ * ============================================================================= */
+
+.status-active {
+    color: $success;
+    text-style: bold;
+}
+
+.status-idle {
+    color: $warning;
+}
+
+.status-unhealthy {
+    color: $error;
+    text-style: bold;
+}
+
+.priority-p0 {
+    color: $error;
+    text-style: bold;
+}
+
+.priority-p1 {
+    color: $warning;
+}
+
+.priority-p2 {
+    color: $warning;
+}
+
+.priority-p3 {
+    color: $text;
+}
+
+.priority-p4 {
+    color: $text-secondary;
+}
+
+/* =============================================================================
+ * Log Styles
+ * ============================================================================= */
+
+Log {
+    background: $panel;
+    scrollbar-size-vertical: 1;
+}
+
+.log-info {
+    color: $text;
+}
+
+.log-warn {
+    color: $warning;
+    text-style: bold;
+}
+
+.log-error {
+    color: $error;
+    text-style: bold;
+}
+
+.log-success {
+    color: $success;
+}
+
+/* =============================================================================
+ * Input Styles
+ * ============================================================================= */
+
+Input {
+    margin: 0 1;
+}
+
+Input.-focus {
+    border: thick $accent;
+}
+
+/* =============================================================================
+ * Progress Bars
+ * ============================================================================= */
+
+ProgressBar {
+    width: 1fr;
+}
+
+ProgressBar > .bar-complete {
+    background: $success;
+}
+
+ProgressBar > .bar-background {
+    background: $panel;
+}
+
+/* =============================================================================
+ * Utility Classes
+ * ============================================================================= */
+
+.text-green {
+    color: $success;
+}
+
+.text-yellow {
+    color: $warning;
+}
+
+.text-red {
+    color: $error;
+}
+
+.text-cyan {
+    color: $accent;
+}
+
+.text-dim {
+    color: $text-secondary;
+}
+
+.text-bold {
+    text-style: bold;
+}
