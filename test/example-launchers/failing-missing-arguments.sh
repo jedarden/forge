@@ -66,6 +66,7 @@ mkdir -p ~/.forge/logs ~/.forge/status
 # Use defaults if not provided (this is wrong - should fail)
 SESSION_NAME="${SESSION_NAME:-default-worker}"
 
+# Fix: Add output redirection to avoid subprocess capture issue
 (
   cd "${WORKSPACE:-/tmp}"
   while true; do
@@ -73,7 +74,7 @@ SESSION_NAME="${SESSION_NAME:-default-worker}"
       >> ~/.forge/logs/$SESSION_NAME.log
     sleep 10
   done
-) &
+) >/dev/null 2>&1 &
 
 PID=$!
 
@@ -85,6 +86,23 @@ cat << EOF
   "worker_id": "$SESSION_NAME",
   "pid": $PID,
   "status": "spawned"
+}
+EOF
+
+# =============================================================================
+# Status File Creation (creates file but uses wrong defaults)
+# =============================================================================
+cat > ~/.forge/status/$SESSION_NAME.json << EOF
+{
+  "worker_id": "$SESSION_NAME",
+  "status": "active",
+  "model": "${MODEL:-default-model}",
+  "workspace": "${WORKSPACE:-/tmp}",
+  "pid": $PID,
+  "started_at": "$(date -Iseconds)",
+  "last_activity": "$(date -Iseconds)",
+  "current_task": null,
+  "tasks_completed": 0
 }
 EOF
 
