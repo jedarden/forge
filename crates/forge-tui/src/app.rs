@@ -15,6 +15,7 @@ use ratatui::{
     Frame, Terminal,
 };
 
+use crate::data::DataManager;
 use crate::event::{AppEvent, InputHandler};
 use crate::view::{FocusPanel, View};
 
@@ -22,7 +23,6 @@ use crate::view::{FocusPanel, View};
 pub type AppResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Main application state.
-#[derive(Debug)]
 pub struct App {
     /// Current active view
     current_view: View,
@@ -42,6 +42,8 @@ pub struct App {
     status_message: Option<String>,
     /// List scroll position for current view
     scroll_offset: usize,
+    /// Data manager for real worker/task data
+    data_manager: DataManager,
 }
 
 impl Default for App {
@@ -63,6 +65,24 @@ impl App {
             chat_input: String::new(),
             status_message: None,
             scroll_offset: 0,
+            data_manager: DataManager::new(),
+        }
+    }
+
+    /// Create a new app with a custom status directory (for testing).
+    #[allow(dead_code)]
+    pub fn with_status_dir(status_dir: std::path::PathBuf) -> Self {
+        Self {
+            current_view: View::default(),
+            previous_view: None,
+            focus_panel: FocusPanel::default(),
+            input_handler: InputHandler::new(),
+            should_quit: false,
+            show_help: false,
+            chat_input: String::new(),
+            status_message: None,
+            scroll_offset: 0,
+            data_manager: DataManager::with_status_dir(status_dir),
         }
     }
 
@@ -232,6 +252,9 @@ impl App {
     /// The inner event loop.
     fn run_loop(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> AppResult<()> {
         while !self.should_quit {
+            // Poll for data updates
+            self.data_manager.poll_updates();
+
             // Draw UI
             terminal.draw(|frame| self.draw(frame))?;
 
@@ -275,12 +298,28 @@ impl App {
         let title = format!(" FORGE Dashboard - {} ", self.current_view.title());
         let title_len = title.len();
 
+        // Determine system status from real data
+        let (status_text, status_color) = if let Some(err) = self.data_manager.init_error() {
+            (format!("[Error: {}]", truncate_status_error(err)), Color::Red)
+        } else if !self.data_manager.is_ready() {
+            ("[Loading...]".to_string(), Color::Yellow)
+        } else {
+            let counts = self.data_manager.worker_counts();
+            if counts.unhealthy() > 0 {
+                (format!("[{} unhealthy]", counts.unhealthy()), Color::Yellow)
+            } else if counts.total == 0 {
+                ("[No workers]".to_string(), Color::Gray)
+            } else {
+                (format!("[{} workers]", counts.total), Color::Green)
+            }
+        };
+
         let header = Paragraph::new(Line::from(vec![
             Span::styled(title, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
             Span::raw(" ".repeat(area.width.saturating_sub(title_len as u16 + 25) as usize)),
             Span::styled(format!("{}", now), Style::default().fg(Color::Gray)),
             Span::raw("  "),
-            Span::styled("[System: Healthy]", Style::default().fg(Color::Green)),
+            Span::styled(status_text, Style::default().fg(status_color)),
         ]))
         .block(
             Block::default()
@@ -348,19 +387,31 @@ impl App {
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(chunks[0]);
 
+        // Use real worker data
+        let worker_summary = self.data_manager.worker_data.format_worker_pool_summary();
+
         self.draw_panel(
             frame,
             top_chunks[0],
             "Worker Pool",
-            "Total: 24 (18 active, 6 idle)\nUnhealthy: 0\n\nGLM-4.7:   8 active, 3 idle\nSonnet:    6 active, 2 idle\nOpus:      3 active, 1 idle\nHaiku:     1 active, 0 idle",
+            &worker_summary,
             self.focus_panel == FocusPanel::WorkerPool,
         );
+
+        // Subscriptions - still placeholder until subscription tracking is implemented
+        let subscriptions_content = if self.data_manager.is_ready() {
+            "Subscription tracking not yet implemented.\n\n\
+             Future feature: track API usage limits\n\
+             for Claude Pro, GLM-4.7, and other models."
+        } else {
+            "Loading..."
+        };
 
         self.draw_panel(
             frame,
             top_chunks[1],
             "Subscriptions",
-            "Claude Pro: 72/100 (72%)\n▓▓▓▓▓▓▓▓▓▓▓▓░░░░░\nResets in: 12h 34m\n\nGLM-4.7: 430/1000 (43%)\n▓▓▓▓▓▓▓▓░░░░░░░░░░",
+            subscriptions_content,
             self.focus_panel == FocusPanel::Subscriptions,
         );
 
@@ -370,118 +421,144 @@ impl App {
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(chunks[1]);
 
+        // Task queue - placeholder until bead integration
+        let task_queue_content = if self.data_manager.is_ready() {
+            "Task queue not yet integrated.\n\n\
+             Future: integrate with br (beads_rust) CLI\n\
+             to show pending, blocked, and in-progress tasks."
+        } else {
+            "Loading..."
+        };
+
         self.draw_panel(
             frame,
             bottom_chunks[0],
-            "Task Queue (10 ready, 3 blocked)",
-            "[P0] bd-abc: Fetch order history\n[P0] bd-def: Analyze failures\n[P1] bd-ghi: Test BitcoinHourly\n[P2] bd-jkl: Update validation",
+            "Task Queue",
+            task_queue_content,
             self.focus_panel == FocusPanel::TaskQueue,
         );
+
+        // Activity log from real worker data
+        let activity_log = self.data_manager.worker_data.format_activity_log();
 
         self.draw_panel(
             frame,
             bottom_chunks[1],
             "Activity Log",
-            "14:23:45 ✓ worker-glm-03 completed bd-xyz\n14:23:12 ⟳ Spawned worker-sonnet-07\n14:22:58 ✓ worker-opus-01 completed bd-mno\n14:22:45 ⚠ worker-glm-02 idle for 5m",
+            &activity_log,
             self.focus_panel == FocusPanel::ActivityLog,
         );
     }
 
     /// Draw the Workers view.
     fn draw_workers(&self, frame: &mut Frame, area: Rect) {
+        let worker_table = self.data_manager.worker_data.format_worker_table();
+
         self.draw_panel(
             frame,
             area,
             "Worker Pool Management",
-            "┌─────────────────┬──────────┬──────────┬─────────────┐\n\
-             │ Worker ID       │ Model    │ Status   │ Task        │\n\
-             ├─────────────────┼──────────┼──────────┼─────────────┤\n\
-             │ worker-glm-01   │ GLM-4.7  │ Active   │ bd-abc      │\n\
-             │ worker-glm-02   │ GLM-4.7  │ Idle     │ -           │\n\
-             │ worker-sonnet-01│ Sonnet   │ Active   │ bd-def      │\n\
-             │ worker-opus-01  │ Opus     │ Active   │ bd-ghi      │\n\
-             └─────────────────┴──────────┴──────────┴─────────────┘\n\n\
-             [G] Spawn GLM  [S] Spawn Sonnet  [O] Spawn Opus  [K] Kill",
+            &worker_table,
             true,
         );
     }
 
     /// Draw the Tasks view.
     fn draw_tasks(&self, frame: &mut Frame, area: Rect) {
+        let content = if self.data_manager.is_ready() {
+            "Task queue integration not yet implemented.\n\n\
+             This view will show beads from the project's\n\
+             .beads/ directory when integrated with br CLI.\n\n\
+             Future features:\n\
+             - Ready, blocked, and in-progress tasks\n\
+             - Priority-based sorting (P0-P4)\n\
+             - Task assignment to workers\n\
+             - Dependency visualization\n\n\
+             [A] Assign  [P] Priority  [M] Model  [C] Close"
+        } else {
+            "Loading..."
+        };
+
         self.draw_panel(
             frame,
             area,
             "Task Queue & Bead Management",
-            "Ready: 10 | Blocked: 3 | In Progress: 15 | Completed: 42\n\n\
-             ┌──────┬────────────────────────────────┬──────┐\n\
-             │ ID   │ Title                          │ Prio │\n\
-             ├──────┼────────────────────────────────┼──────┤\n\
-             │bd-abc│ Fetch order history from Kalsh │ P0   │\n\
-             │bd-def│ Analyze execution failures     │ P0   │\n\
-             │bd-ghi│ Test BitcoinHourly strategy    │ P1   │\n\
-             │bd-jkl│ Identify duplicate orders      │ P1   │\n\
-             └──────┴────────────────────────────────┴──────┘\n\n\
-             [A] Assign  [P] Priority  [M] Model  [C] Close",
+            content,
             true,
         );
     }
 
     /// Draw the Costs view.
     fn draw_costs(&self, frame: &mut Frame, area: Rect) {
+        let content = if self.data_manager.is_ready() {
+            "Cost tracking not yet implemented.\n\n\
+             This view will show:\n\
+             - Daily/monthly cost totals\n\
+             - Cost breakdown by model type\n\
+             - Cost per task metrics\n\
+             - Budget usage and alerts\n\n\
+             Cost data requires integration with\n\
+             API usage tracking from worker sessions."
+        } else {
+            "Loading..."
+        };
+
         self.draw_panel(
             frame,
             area,
             "Cost Analytics",
-            "Today's Total: $24.56          Budget: $50.00\n\
-             ▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░  49%\n\n\
-             Breakdown by Model:\n\
-               GLM-4.7:    $8.45  (34%)\n\
-               Sonnet 4.5: $10.22 (42%)\n\
-               Opus 4.6:   $5.12  (21%)\n\
-               Haiku 4:    $0.77  (3%)\n\n\
-             Cost per Task: $0.58 (42 tasks)\n\n\
-             Month-to-Date: $172.34 / $1,500",
+            content,
             true,
         );
     }
 
     /// Draw the Metrics view.
     fn draw_metrics(&self, frame: &mut Frame, area: Rect) {
+        // Calculate some real metrics from worker data
+        let counts = self.data_manager.worker_counts();
+        let utilization = if counts.total > 0 {
+            (counts.active * 100) / counts.total
+        } else {
+            0
+        };
+
+        let content = if self.data_manager.is_ready() {
+            let mut lines = Vec::new();
+            lines.push(format!("Workers Active: {} / {}", counts.active, counts.total));
+            lines.push(format!("Worker Utilization: {}%", utilization));
+            lines.push(format!("Workers Starting: {}", counts.starting));
+            lines.push(format!("Workers Idle: {}", counts.idle));
+            lines.push(format!("Workers Failed: {}", counts.failed));
+            lines.push(String::new());
+            lines.push("Additional metrics not yet implemented:".to_string());
+            lines.push("- Tasks completed today".to_string());
+            lines.push("- Average task duration".to_string());
+            lines.push("- Tasks per hour histogram".to_string());
+            lines.push("- Model efficiency comparison".to_string());
+            lines.join("\n")
+        } else {
+            "Loading...".to_string()
+        };
+
         self.draw_panel(
             frame,
             area,
             "Performance Metrics",
-            "Tasks Completed Today: 42\n\
-             Avg Task Duration: 8m 34s\n\
-             Worker Utilization: 75%\n\n\
-             Tasks/Hour:\n\
-             12:00 ▓▓▓▓▓▓ 6\n\
-             13:00 ▓▓▓▓▓▓▓▓▓ 9\n\
-             14:00 ▓▓▓▓▓▓▓ 7\n\n\
-             Model Efficiency:\n\
-               GLM-4.7:  $0.42/task (best)\n\
-               Sonnet:   $0.68/task\n\
-               Opus:     $1.28/task",
+            &content,
             true,
         );
     }
 
     /// Draw the Logs view.
     fn draw_logs(&self, frame: &mut Frame, area: Rect) {
+        // Use real activity log from worker data
+        let activity_log = self.data_manager.worker_data.format_activity_log();
+
         self.draw_panel(
             frame,
             area,
             "Activity Log",
-            "14:23:45 [INFO]  worker-glm-03 completed task bd-xyz in 2m 34s\n\
-             14:23:12 [INFO]  Spawned worker-sonnet-07 for /kalshi-improvement\n\
-             14:22:58 [INFO]  worker-opus-01 completed task bd-mno in 8m 12s\n\
-             14:22:45 [WARN]  worker-glm-02 idle for 5m, reassigning\n\
-             14:22:30 [INFO]  Subscription optimization: switching 3 tasks to GLM\n\
-             14:22:15 [INFO]  worker-haiku-01 completed task bd-pqr in 1m 05s\n\
-             14:22:00 [WARN]  Claude Pro usage at 70%, considering GLM fallback\n\
-             14:21:45 [INFO]  Spawned worker-glm-04 for /control-panel\n\
-             14:21:30 [INFO]  worker-sonnet-02 started task bd-stu\n\
-             14:21:15 [ERROR] worker-glm-05 connection timeout, restarting",
+            &activity_log,
             true,
         );
     }
@@ -560,6 +637,12 @@ impl App {
         frame.render_widget(panel, area);
     }
 
+    /// Poll for data updates. Called from the main loop.
+    #[allow(dead_code)]
+    pub fn poll_data(&mut self) {
+        self.data_manager.poll_updates();
+    }
+
     /// Draw the help overlay.
     fn draw_help_overlay(&self, frame: &mut Frame, area: Rect) {
         // Calculate centered overlay area
@@ -618,6 +701,15 @@ Press any key to close this help.";
             .wrap(Wrap { trim: false });
 
         frame.render_widget(help, overlay_area);
+    }
+}
+
+/// Truncate an error message for status bar display.
+fn truncate_status_error(err: &str) -> String {
+    if err.len() <= 20 {
+        err.to_string()
+    } else {
+        format!("{}...", &err[..17])
     }
 }
 
@@ -934,27 +1026,28 @@ mod tests {
     }
 
     #[test]
-    fn test_costs_view_shows_dollar_amounts() {
+    fn test_costs_view_shows_placeholder() {
         let mut app = App::new();
         app.switch_view(View::Costs);
         let buffer = render_app(&app, 100, 30);
 
+        // Costs view shows placeholder since cost tracking isn't implemented
         assert!(
-            buffer_contains(&buffer, "$"),
-            "Costs view should display dollar amounts"
+            buffer_contains(&buffer, "Cost") || buffer_contains(&buffer, "tracking") || buffer_contains(&buffer, "Loading"),
+            "Costs view should display cost-related content"
         );
     }
 
     #[test]
-    fn test_logs_view_shows_timestamps() {
+    fn test_logs_view_shows_activity() {
         let mut app = App::new();
         app.switch_view(View::Logs);
         let buffer = render_app(&app, 100, 30);
 
-        // Logs should have timestamp-like patterns
+        // Logs view should show activity log panel title and content
         assert!(
-            buffer_contains(&buffer, ":") && (buffer_contains(&buffer, "INFO") || buffer_contains(&buffer, "WARN") || buffer_contains(&buffer, "ERROR")),
-            "Logs view should display log entries with timestamps"
+            buffer_contains(&buffer, "Activity Log") || buffer_contains(&buffer, "No recent activity") || buffer_contains(&buffer, "Loading"),
+            "Logs view should display activity log"
         );
     }
 

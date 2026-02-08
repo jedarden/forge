@@ -26,6 +26,7 @@
 //! - `Esc` - Cancel/back
 
 pub mod app;
+pub mod data;
 pub mod event;
 #[cfg(test)]
 mod integration_tests;
@@ -35,6 +36,7 @@ pub mod view;
 pub mod widget;
 
 pub use app::{App, AppResult};
+pub use data::{DataManager, WorkerData};
 pub use log::{LogBuffer, LogEntry, LogEvent, LogLevel, LogTailer, LogTailerConfig};
 pub use status::{StatusEvent, StatusWatcher, StatusWatcherConfig, WorkerStatusFile};
 pub use view::View;
