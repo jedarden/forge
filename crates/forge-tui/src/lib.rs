@@ -41,4 +41,4 @@ pub use bead::{Bead, BeadManager, BeadStats};
 pub use data::{DataManager, WorkerData};
 pub use log::{LogBuffer, LogEntry, LogEvent, LogLevel, LogTailer, LogTailerConfig};
 pub use status::{StatusEvent, StatusWatcher, StatusWatcherConfig, WorkerStatusFile};
-pub use view::View;
+pub use view::{LayoutMode, View};
