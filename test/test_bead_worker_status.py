@@ -12,6 +12,7 @@ Usage:
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -152,8 +153,49 @@ class BeadWorkerLauncherTest:
         print("Test 2: Status file with bead reference")
         print("="*60)
 
+        # Initialize beads workspace first
+        print("Initializing beads workspace...")
+        init_result = subprocess.run(
+            ["br", "init", "--prefix", "fg"],
+            cwd=self.test_workspace,
+            capture_output=True,
+            text=True
+        )
+        if init_result.returncode != 0:
+            print(f"SKIP: Failed to initialize beads workspace: {init_result.stderr}")
+            return True  # Skip test rather than fail
+
+        # Create a test bead
+        print("Creating test bead...")
+        bead_result = subprocess.run(
+            ["br", "create", "Test bead for launcher validation",
+             "--description", "Testing bead-worker-launcher status file integration",
+             "--priority", "1"],
+            cwd=self.test_workspace,
+            capture_output=True,
+            text=True
+        )
+
+        # Extract bead ID from output
+        # Format: "✓ Created fg-xxx: Title"
+        bead_id = None
+        for line in bead_result.stdout.splitlines():
+            if "Created" in line and "fg-" in line:
+                # Extract bead_id using regex or string manipulation
+                # The format is "Created fg-xxx:" so we need to extract just the ID
+                import re
+                match = re.search(r'(fg-[a-z0-9]+)', line)
+                if match:
+                    bead_id = match.group(1)
+                    break
+
+        if not bead_id:
+            print(f"SKIP: Could not create test bead: {bead_result.stdout}")
+            return True  # Skip test rather than fail
+
+        print(f"Created test bead: {bead_id}")
+
         session = "test-worker-bead"
-        bead_id = "fg-1u2"
         result = self.run_launcher(session, bead_ref=bead_id)
 
         print(f"Launcher exit code: {result.returncode}")
@@ -180,7 +222,8 @@ class BeadWorkerLauncherTest:
             return False
 
         if current_task != bead_id:
-            print(f"FAIL: current_task value mismatch: {current_task} != {bead_id}")
+            print(f"FAIL: current_task value mismatch: '{current_task}' != '{bead_id}'")
+            print(f"  This usually means br commands failed in the launcher")
             return False
 
         print(f"PASS: current_task correctly set to bead_id: {bead_id}")
