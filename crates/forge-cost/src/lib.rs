@@ -6,6 +6,7 @@
 //! - [`LogParser`] - Parse API usage events from worker log files
 //! - [`CostDatabase`] - SQLite storage with efficient aggregation
 //! - [`CostQuery`] - Query functions for cost analysis
+//! - [`Aggregator`] - Background aggregation for performance metrics
 //!
 //! ## Supported API Formats
 //!
@@ -40,6 +41,7 @@
 //! }
 //! ```
 
+pub mod aggregator;
 pub mod db;
 pub mod error;
 pub mod models;
@@ -47,11 +49,13 @@ pub mod parser;
 pub mod query;
 
 // Re-export main types
+pub use aggregator::{Aggregator, AggregatorBuilder, AggregatorConfig, DEFAULT_AGGREGATION_INTERVAL_SECS};
 pub use db::CostDatabase;
 pub use error::{CostError, Result};
 pub use models::{
-    ApiCall, CostBreakdown, DailyCost, ModelCost, ProjectedCost, QuotaStatus, Subscription,
-    SubscriptionSummary, SubscriptionType, SubscriptionUsageRecord,
+    ApiCall, CostBreakdown, DailyCost, DailyStat, HourlyStat, ModelCost, ModelPerformance,
+    PerformanceSummary, ProjectedCost, QuotaStatus, Subscription, SubscriptionSummary,
+    SubscriptionType, SubscriptionUsageRecord, WorkerEfficiency,
 };
 pub use parser::LogParser;
 pub use query::{CostQuery, SubscriptionOptimizationReport};

@@ -527,6 +527,469 @@ impl From<&Subscription> for SubscriptionSummary {
     }
 }
 
+// ============ Performance Metrics Models ============
+
+/// Hourly statistics for performance tracking.
+///
+/// Aggregated metrics for a specific hour, providing granular performance data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HourlyStat {
+    /// Unique identifier
+    pub id: Option<i64>,
+
+    /// Hour timestamp (truncated to hour)
+    pub hour: DateTime<Utc>,
+
+    /// Total API calls in this hour
+    pub total_calls: i64,
+
+    /// Total cost in USD for this hour
+    pub total_cost_usd: f64,
+
+    /// Total input tokens
+    pub total_input_tokens: i64,
+
+    /// Total output tokens
+    pub total_output_tokens: i64,
+
+    /// Number of tasks started
+    pub tasks_started: i64,
+
+    /// Number of tasks completed
+    pub tasks_completed: i64,
+
+    /// Number of tasks failed
+    pub tasks_failed: i64,
+
+    /// Number of active workers (max during the hour)
+    pub active_workers: i64,
+
+    /// Average response time in milliseconds (if tracked)
+    pub avg_response_time_ms: Option<f64>,
+
+    /// Tokens per minute throughput
+    pub tokens_per_minute: f64,
+
+    /// When this stat was last updated
+    pub last_updated: DateTime<Utc>,
+}
+
+impl HourlyStat {
+    /// Create a new hourly stat for the given hour.
+    pub fn new(hour: DateTime<Utc>) -> Self {
+        Self {
+            id: None,
+            hour,
+            total_calls: 0,
+            total_cost_usd: 0.0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            tasks_started: 0,
+            tasks_completed: 0,
+            tasks_failed: 0,
+            active_workers: 0,
+            avg_response_time_ms: None,
+            tokens_per_minute: 0.0,
+            last_updated: Utc::now(),
+        }
+    }
+
+    /// Calculate tokens per minute based on total tokens.
+    pub fn calculate_throughput(&mut self) {
+        let total_tokens = self.total_input_tokens + self.total_output_tokens;
+        // Assuming this represents a full hour (60 minutes)
+        self.tokens_per_minute = total_tokens as f64 / 60.0;
+    }
+
+    /// Task success rate (0.0 - 1.0).
+    pub fn success_rate(&self) -> f64 {
+        let total = self.tasks_completed + self.tasks_failed;
+        if total == 0 {
+            1.0
+        } else {
+            self.tasks_completed as f64 / total as f64
+        }
+    }
+
+    /// Average cost per task.
+    pub fn cost_per_task(&self) -> f64 {
+        let total_tasks = self.tasks_completed + self.tasks_failed;
+        if total_tasks == 0 {
+            0.0
+        } else {
+            self.total_cost_usd / total_tasks as f64
+        }
+    }
+}
+
+/// Daily statistics for performance tracking.
+///
+/// Aggregated metrics for a specific day, providing high-level performance overview.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyStat {
+    /// Unique identifier
+    pub id: Option<i64>,
+
+    /// Date of the statistics
+    pub date: NaiveDate,
+
+    /// Total API calls for the day
+    pub total_calls: i64,
+
+    /// Total cost in USD for the day
+    pub total_cost_usd: f64,
+
+    /// Total input tokens
+    pub total_input_tokens: i64,
+
+    /// Total output tokens
+    pub total_output_tokens: i64,
+
+    /// Total cache creation tokens
+    pub total_cache_creation_tokens: i64,
+
+    /// Total cache read tokens
+    pub total_cache_read_tokens: i64,
+
+    /// Number of tasks started
+    pub tasks_started: i64,
+
+    /// Number of tasks completed
+    pub tasks_completed: i64,
+
+    /// Number of tasks failed
+    pub tasks_failed: i64,
+
+    /// Peak number of concurrent workers
+    pub peak_workers: i64,
+
+    /// Average tokens per minute throughput
+    pub avg_tokens_per_minute: f64,
+
+    /// Task success rate (0.0 - 1.0)
+    pub success_rate: f64,
+
+    /// Average cost per completed task
+    pub avg_cost_per_task: f64,
+
+    /// When this stat was last updated
+    pub last_updated: DateTime<Utc>,
+}
+
+impl DailyStat {
+    /// Create a new daily stat for the given date.
+    pub fn new(date: NaiveDate) -> Self {
+        Self {
+            id: None,
+            date,
+            total_calls: 0,
+            total_cost_usd: 0.0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            total_cache_creation_tokens: 0,
+            total_cache_read_tokens: 0,
+            tasks_started: 0,
+            tasks_completed: 0,
+            tasks_failed: 0,
+            peak_workers: 0,
+            avg_tokens_per_minute: 0.0,
+            success_rate: 1.0,
+            avg_cost_per_task: 0.0,
+            last_updated: Utc::now(),
+        }
+    }
+
+    /// Calculate derived metrics.
+    pub fn calculate_derived_metrics(&mut self) {
+        // Success rate
+        let total_tasks = self.tasks_completed + self.tasks_failed;
+        self.success_rate = if total_tasks == 0 {
+            1.0
+        } else {
+            self.tasks_completed as f64 / total_tasks as f64
+        };
+
+        // Average cost per task
+        self.avg_cost_per_task = if self.tasks_completed == 0 {
+            0.0
+        } else {
+            self.total_cost_usd / self.tasks_completed as f64
+        };
+
+        // Tokens per minute (assuming 24 hours of activity, normalized)
+        let total_tokens = self.total_input_tokens
+            + self.total_output_tokens
+            + self.total_cache_creation_tokens
+            + self.total_cache_read_tokens;
+        // Divide by 1440 (minutes in a day) for average throughput
+        self.avg_tokens_per_minute = total_tokens as f64 / 1440.0;
+    }
+
+    /// Total tokens including cache tokens.
+    pub fn total_tokens(&self) -> i64 {
+        self.total_input_tokens
+            + self.total_output_tokens
+            + self.total_cache_creation_tokens
+            + self.total_cache_read_tokens
+    }
+}
+
+/// Worker efficiency statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkerEfficiency {
+    /// Worker identifier
+    pub worker_id: String,
+
+    /// Date of the statistics
+    pub date: NaiveDate,
+
+    /// Total API calls made by this worker
+    pub total_calls: i64,
+
+    /// Total cost incurred by this worker
+    pub total_cost_usd: f64,
+
+    /// Total tokens used
+    pub total_tokens: i64,
+
+    /// Number of tasks completed
+    pub tasks_completed: i64,
+
+    /// Number of tasks failed
+    pub tasks_failed: i64,
+
+    /// Average cost per task
+    pub avg_cost_per_task: f64,
+
+    /// Success rate (0.0 - 1.0)
+    pub success_rate: f64,
+
+    /// Model used by this worker
+    pub model: Option<String>,
+
+    /// Total active time in seconds
+    pub active_time_secs: i64,
+}
+
+impl WorkerEfficiency {
+    /// Create a new worker efficiency record.
+    pub fn new(worker_id: impl Into<String>, date: NaiveDate) -> Self {
+        Self {
+            worker_id: worker_id.into(),
+            date,
+            total_calls: 0,
+            total_cost_usd: 0.0,
+            total_tokens: 0,
+            tasks_completed: 0,
+            tasks_failed: 0,
+            avg_cost_per_task: 0.0,
+            success_rate: 1.0,
+            model: None,
+            active_time_secs: 0,
+        }
+    }
+
+    /// Calculate derived metrics.
+    pub fn calculate_derived_metrics(&mut self) {
+        let total_tasks = self.tasks_completed + self.tasks_failed;
+        self.success_rate = if total_tasks == 0 {
+            1.0
+        } else {
+            self.tasks_completed as f64 / total_tasks as f64
+        };
+
+        self.avg_cost_per_task = if self.tasks_completed == 0 {
+            0.0
+        } else {
+            self.total_cost_usd / self.tasks_completed as f64
+        };
+    }
+
+    /// Cost efficiency score (lower is better).
+    ///
+    /// Calculated as cost per task adjusted for success rate.
+    pub fn efficiency_score(&self) -> f64 {
+        if self.success_rate == 0.0 {
+            f64::MAX
+        } else {
+            self.avg_cost_per_task / self.success_rate
+        }
+    }
+}
+
+/// Model performance statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelPerformance {
+    /// Model identifier
+    pub model: String,
+
+    /// Date of the statistics
+    pub date: NaiveDate,
+
+    /// Total API calls for this model
+    pub total_calls: i64,
+
+    /// Total cost for this model
+    pub total_cost_usd: f64,
+
+    /// Total input tokens
+    pub total_input_tokens: i64,
+
+    /// Total output tokens
+    pub total_output_tokens: i64,
+
+    /// Total cache creation tokens
+    pub total_cache_creation_tokens: i64,
+
+    /// Total cache read tokens
+    pub total_cache_read_tokens: i64,
+
+    /// Number of tasks completed with this model
+    pub tasks_completed: i64,
+
+    /// Number of tasks failed with this model
+    pub tasks_failed: i64,
+
+    /// Average cost per task
+    pub avg_cost_per_task: f64,
+
+    /// Success rate (0.0 - 1.0)
+    pub success_rate: f64,
+
+    /// Average tokens per call
+    pub avg_tokens_per_call: f64,
+
+    /// Cache hit rate (cache_read / total_input)
+    pub cache_hit_rate: f64,
+}
+
+impl ModelPerformance {
+    /// Create a new model performance record.
+    pub fn new(model: impl Into<String>, date: NaiveDate) -> Self {
+        Self {
+            model: model.into(),
+            date,
+            total_calls: 0,
+            total_cost_usd: 0.0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            total_cache_creation_tokens: 0,
+            total_cache_read_tokens: 0,
+            tasks_completed: 0,
+            tasks_failed: 0,
+            avg_cost_per_task: 0.0,
+            success_rate: 1.0,
+            avg_tokens_per_call: 0.0,
+            cache_hit_rate: 0.0,
+        }
+    }
+
+    /// Calculate derived metrics.
+    pub fn calculate_derived_metrics(&mut self) {
+        // Success rate
+        let total_tasks = self.tasks_completed + self.tasks_failed;
+        self.success_rate = if total_tasks == 0 {
+            1.0
+        } else {
+            self.tasks_completed as f64 / total_tasks as f64
+        };
+
+        // Average cost per task
+        self.avg_cost_per_task = if self.tasks_completed == 0 {
+            0.0
+        } else {
+            self.total_cost_usd / self.tasks_completed as f64
+        };
+
+        // Average tokens per call
+        let total_tokens = self.total_input_tokens
+            + self.total_output_tokens
+            + self.total_cache_creation_tokens
+            + self.total_cache_read_tokens;
+        self.avg_tokens_per_call = if self.total_calls == 0 {
+            0.0
+        } else {
+            total_tokens as f64 / self.total_calls as f64
+        };
+
+        // Cache hit rate
+        let total_input = self.total_input_tokens + self.total_cache_read_tokens;
+        self.cache_hit_rate = if total_input == 0 {
+            0.0
+        } else {
+            self.total_cache_read_tokens as f64 / total_input as f64
+        };
+    }
+
+    /// Total tokens.
+    pub fn total_tokens(&self) -> i64 {
+        self.total_input_tokens
+            + self.total_output_tokens
+            + self.total_cache_creation_tokens
+            + self.total_cache_read_tokens
+    }
+}
+
+/// Performance summary for display.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerformanceSummary {
+    /// Time period start
+    pub period_start: DateTime<Utc>,
+
+    /// Time period end
+    pub period_end: DateTime<Utc>,
+
+    /// Total API calls
+    pub total_calls: i64,
+
+    /// Total cost
+    pub total_cost_usd: f64,
+
+    /// Total tokens
+    pub total_tokens: i64,
+
+    /// Tasks completed
+    pub tasks_completed: i64,
+
+    /// Tasks failed
+    pub tasks_failed: i64,
+
+    /// Overall success rate
+    pub success_rate: f64,
+
+    /// Average cost per task
+    pub avg_cost_per_task: f64,
+
+    /// Average tokens per minute
+    pub avg_tokens_per_minute: f64,
+
+    /// Most used model
+    pub top_model: Option<String>,
+
+    /// Most efficient worker
+    pub top_worker: Option<String>,
+}
+
+impl PerformanceSummary {
+    /// Create a new performance summary.
+    pub fn new(period_start: DateTime<Utc>, period_end: DateTime<Utc>) -> Self {
+        Self {
+            period_start,
+            period_end,
+            total_calls: 0,
+            total_cost_usd: 0.0,
+            total_tokens: 0,
+            tasks_completed: 0,
+            tasks_failed: 0,
+            success_rate: 1.0,
+            avg_cost_per_task: 0.0,
+            avg_tokens_per_minute: 0.0,
+            top_model: None,
+            top_worker: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -712,5 +1175,91 @@ mod tests {
         assert_eq!(record.worker_id, Some("glm-alpha".to_string()));
         assert_eq!(record.bead_id, Some("bd-123".to_string()));
         assert_eq!(record.api_call_id, Some(42));
+    }
+
+    // ============ Performance Metrics Tests ============
+
+    #[test]
+    fn test_hourly_stat_new() {
+        let now = Utc::now();
+        let stat = HourlyStat::new(now);
+
+        assert_eq!(stat.hour, now);
+        assert_eq!(stat.total_calls, 0);
+        assert_eq!(stat.total_cost_usd, 0.0);
+        assert_eq!(stat.tasks_completed, 0);
+    }
+
+    #[test]
+    fn test_hourly_stat_success_rate() {
+        let mut stat = HourlyStat::new(Utc::now());
+
+        // No tasks = 100% success rate
+        assert!((stat.success_rate() - 1.0).abs() < 0.001);
+
+        // 8 completed, 2 failed = 80% success rate
+        stat.tasks_completed = 8;
+        stat.tasks_failed = 2;
+        assert!((stat.success_rate() - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_hourly_stat_throughput() {
+        let mut stat = HourlyStat::new(Utc::now());
+        stat.total_input_tokens = 30000;
+        stat.total_output_tokens = 30000;
+        stat.calculate_throughput();
+
+        // 60000 tokens / 60 minutes = 1000 tokens/min
+        assert!((stat.tokens_per_minute - 1000.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_daily_stat_derived_metrics() {
+        let today = Utc::now().date_naive();
+        let mut stat = DailyStat::new(today);
+
+        stat.total_cost_usd = 10.0;
+        stat.tasks_completed = 5;
+        stat.tasks_failed = 0;
+        stat.total_input_tokens = 100000;
+        stat.total_output_tokens = 50000;
+        stat.calculate_derived_metrics();
+
+        assert!((stat.success_rate - 1.0).abs() < 0.001);
+        assert!((stat.avg_cost_per_task - 2.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_worker_efficiency_score() {
+        let today = Utc::now().date_naive();
+        let mut eff = WorkerEfficiency::new("worker-1", today);
+
+        eff.total_cost_usd = 10.0;
+        eff.tasks_completed = 10;
+        eff.tasks_failed = 0;
+        eff.calculate_derived_metrics();
+
+        // Cost per task = 1.0, success rate = 1.0, score = 1.0
+        assert!((eff.efficiency_score() - 1.0).abs() < 0.001);
+
+        // With 50% failure rate
+        eff.tasks_failed = 10;
+        eff.calculate_derived_metrics();
+        // Cost per task = 1.0, success rate = 0.5, score = 2.0
+        assert!((eff.efficiency_score() - 2.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_model_performance_cache_hit_rate() {
+        let today = Utc::now().date_naive();
+        let mut perf = ModelPerformance::new("claude-opus", today);
+
+        perf.total_input_tokens = 80000;
+        perf.total_cache_read_tokens = 20000;
+        perf.calculate_derived_metrics();
+
+        // cache_read / (input + cache_read) = 20000 / 100000 = 0.2
+        assert!((perf.cache_hit_rate - 0.2).abs() < 0.001);
     }
 }
