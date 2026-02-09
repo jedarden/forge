@@ -63,6 +63,8 @@ pub enum AppEvent {
     OpenBudgetConfig,
     /// Open worker configuration
     OpenWorkerConfig,
+    /// Cycle to the next theme
+    CycleTheme,
     /// No action needed
     None,
 }
@@ -200,10 +202,13 @@ impl InputHandler {
             // Quick Actions - Configure
             KeyCode::Char('M') => AppEvent::OpenConfig,
             KeyCode::Char('b') | KeyCode::Char('B') => AppEvent::OpenBudgetConfig,
-            // Note: 'c' lowercase is still Costs view, uppercase is WorkerConfig
-            KeyCode::Char('C') => AppEvent::OpenWorkerConfig,
+            // Note: 'c' lowercase is Costs view, uppercase is now CycleTheme
+            // Worker config moved to 'U' (uppercase U)
+            KeyCode::Char('U') => AppEvent::OpenWorkerConfig,
+            // Cycle theme (uppercase C)
+            KeyCode::Char('C') => AppEvent::CycleTheme,
 
-            // Costs view (only lowercase, uppercase is config)
+            // Costs view (only lowercase)
             KeyCode::Char('c') => AppEvent::SwitchView(View::Costs),
 
             // Metrics view (lowercase, uppercase is OpenConfig)
@@ -422,6 +427,29 @@ mod tests {
         assert_eq!(
             handler.handle_key(key_event(KeyCode::Char('Q'))),
             AppEvent::Quit
+        );
+    }
+
+    #[test]
+    fn test_theme_cycle_hotkey() {
+        let mut handler = InputHandler::new();
+
+        // Uppercase 'C' cycles theme
+        assert_eq!(
+            handler.handle_key(key_event(KeyCode::Char('C'))),
+            AppEvent::CycleTheme
+        );
+
+        // Lowercase 'c' is still Costs view
+        assert_eq!(
+            handler.handle_key(key_event(KeyCode::Char('c'))),
+            AppEvent::SwitchView(View::Costs)
+        );
+
+        // 'U' is now OpenWorkerConfig (was 'C')
+        assert_eq!(
+            handler.handle_key(key_event(KeyCode::Char('U'))),
+            AppEvent::OpenWorkerConfig
         );
     }
 }
