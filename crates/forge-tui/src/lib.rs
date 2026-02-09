@@ -39,7 +39,10 @@ pub mod subscription_panel;
 pub mod view;
 pub mod widget;
 
-pub use widget::{QuickAction, QuickActionsPanel, QuickActionType};
+pub use widget::{
+    render_sparkline, render_sparkline_i64, QuickAction, QuickActionsPanel, QuickActionType,
+    SparklineDirection, SparklineWidget,
+};
 
 pub use app::{App, AppResult};
 pub use bead::{Bead, BeadManager, BeadStats};
