@@ -2,7 +2,9 @@
 
 Complete reference for all tools available in the conversational interface.
 
-**Total Tools: 45** across 11 categories
+**Total Tools: 50+** across 12 categories
+
+**New in v0.3**: Chat-based tools with confirmation prompts, rate limiting, and audit logging
 
 ---
 
@@ -694,6 +696,166 @@ Analyze potential bottlenecks in the workflow.
 **Examples**:
 ```
 "Find bottlenecks"                             → analyze_bottlenecks()
+```
+
+---
+
+## Chat Interface Tools
+
+The following tools are available through the conversational chat interface with AI-powered intent understanding:
+
+### Read-Only Tools (No confirmation required)
+
+#### `worker_status()`
+Get current worker pool state and statistics.
+
+**Returns**:
+- Active workers count by model
+- Worker health status
+- Current task assignments
+
+**Examples**:
+```
+"Show worker status"           → worker_status()
+"How many workers are running?" → worker_status()
+```
+
+#### `task_queue()`
+Get ready tasks/beads from the queue.
+
+**Parameters**:
+- `limit` (integer, optional): Maximum tasks to return (default: 10)
+- `priority` (string, optional): Filter by priority (P0-P4)
+
+**Examples**:
+```
+"Show ready tasks"        → task_queue()
+"What P0 tasks are ready?" → task_queue(priority="P0")
+```
+
+#### `cost_analytics()`
+Get spending data and cost breakdown.
+
+**Parameters**:
+- `period` (string, optional): Time period - `today`, `week`, `month` (default: `today`)
+- `by_provider` (boolean): Break down by API provider
+
+**Examples**:
+```
+"What did I spend today?"   → cost_analytics(period="today")
+"Show weekly costs"          → cost_analytics(period="week")
+"Break down by provider"     → cost_analytics(by_provider=true)
+```
+
+#### `subscription_usage()`
+Get quota tracking for all configured subscriptions.
+
+**Returns**:
+- Current usage per subscription
+- Remaining quota
+- Reset countdown
+- Budget alert status
+
+**Examples**:
+```
+"Show subscription status"    → subscription_usage()
+"How much quota is left?"      → subscription_usage()
+"Which subscription is closest to limit?" → subscription_usage()
+```
+
+### Action Tools (Require confirmation)
+
+#### `spawn_worker()`
+Spawn new AI coding workers.
+
+**Parameters**:
+- `model` (string): Model type - `sonnet`, `opus`, `haiku`, `glm`, `gpt4`, etc.
+- `count` (integer): Number of workers (1-10)
+- `workspace` (string, optional): Workspace path
+
+**Requires confirmation if**: `count > 3`
+
+**Examples**:
+```
+"Spawn 2 sonnet workers"       → spawn_worker(model="sonnet", count=2)
+"Start a haiku worker"         → spawn_worker(model="haiku", count=1)
+"Launch 5 opus workers"        → [Confirmation required]
+```
+
+#### `kill_worker()`
+Kill existing workers.
+
+**Parameters**:
+- `worker_id` (string): Worker ID or `all` for all idle workers
+- `filter` (string, optional): Filter - `idle`, `failed`, `stuck`
+
+**Requires confirmation**: Always
+
+**Examples**:
+```
+"Kill sonnet-alpha"              → kill_worker(worker_id="sonnet-alpha")
+"Kill all idle workers"          → kill_worker(worker_id="all", filter="idle")
+"Terminate stuck workers"        → kill_worker(worker_id="all", filter="stuck")
+```
+
+#### `assign_task()`
+Reassign task to a different model or worker.
+
+**Parameters**:
+- `task_id` (string): Bead/task ID
+- `model` (string): Target model type
+
+**Requires confirmation**: Always
+
+**Examples**:
+```
+"Reassign bd-123 to opus"     → assign_task(task_id="bd-123", model="opus")
+"Move this task to haiku"     → assign_task(task_id="bd-456", model="haiku")
+```
+
+### Theme Tools
+
+#### `switch_theme()`
+Switch to a different color theme.
+
+**Parameters**:
+- `theme` (string, optional): Theme name - `default`, `dark`, `light`, `cyberpunk`
+  - If omitted, cycles to next theme
+
+**Examples**:
+```
+"Switch to dark theme"    → switch_theme(theme="dark")
+"Change theme"            → switch_theme()  # Cycles to next
+"Use cyberpunk theme"     → switch_theme(theme="cyberpunk")
+```
+
+---
+
+## Chat Features
+
+### Rate Limiting
+- **Default limit**: 10 commands per minute
+- **Window**: Rolling 60-second window
+- **Response**: Returns 429 status when exceeded
+
+### Audit Logging
+All commands are logged to `~/.forge/audit.jsonl`:
+```jsonl
+{"timestamp":"2025-01-15T10:30:00Z","command":"spawn_worker","params":{"model":"sonnet","count":2},"result":"success"}
+{"timestamp":"2025-01-15T10:30:15Z","command":"cost_analytics","params":{},"result":"success","data":{"today":12.34}}
+```
+
+### Confirmation Prompts
+Destructive actions require confirmation:
+```
+┌─ CONFIRMATION REQUIRED ─────────────────────┐
+│ Action: kill_worker                        │
+│ Target: sonnet-alpha (Active)              │
+│                                            │
+│ This will terminate the worker.            │
+│                                            │
+│ [Y] Yes, kill it  [N] No, cancel  [Esc]    │
+└────────────────────────────────────────────┘
 ```
 
 ---

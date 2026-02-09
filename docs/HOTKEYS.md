@@ -48,6 +48,7 @@ After using chat a few times, you'll naturally learn shortcuts for actions you r
 | `:` | Activate chat input | N/A (primary interface) |
 | `?` or `h` | Show help overlay | "help" |
 | `q` | Quit FORGE | "quit" or "exit" |
+| `C` | Cycle to next theme | "switch theme" |
 | `Esc` | Cancel current operation | N/A |
 | `Ctrl+C` | Force quit | N/A |
 | `Ctrl+L` | Clear screen/refresh | "refresh" |
@@ -114,6 +115,7 @@ After using chat a few times, you'll naturally learn shortcuts for actions you r
 | `]` | Load saved layout | "load layout" |
 | `Ctrl+O` | Optimize routing | "optimize costs" |
 | `Ctrl+F` | Forecast costs | "forecast costs" |
+| `C` | Cycle theme (Default → Dark → Light → Cyberpunk) | "switch theme" |
 
 ---
 
@@ -241,8 +243,8 @@ Global:        View Navigation:    Worker Mgmt:
 :  Chat        W  Workers          S  Spawn
 ?  Help        T  Tasks            K  Kill
 q  Quit        C  Costs            R  Restart
-Esc Cancel     M  Metrics
-               L  Logs             Task Mgmt:
+C  Theme       M  Metrics
+Esc Cancel     L  Logs             Task Mgmt:
                O  Overview         N  New task
                                    F  Filter
                                    A  Assign
