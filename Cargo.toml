@@ -24,6 +24,7 @@ resolver = "2"
 members = [
     "crates/forge-core",
     "crates/forge-config",
+    "crates/forge-cost",
     "crates/forge-worker",
     "crates/forge-tui",
 ]
