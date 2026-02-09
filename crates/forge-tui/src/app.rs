@@ -17,7 +17,7 @@ use ratatui::{
 
 use crate::data::DataManager;
 use crate::event::{AppEvent, InputHandler};
-use crate::view::{FocusPanel, View};
+use crate::view::{FocusPanel, LayoutMode, View};
 
 /// Result type for app operations.
 pub type AppResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -381,7 +381,118 @@ impl App {
     }
 
     /// Draw the Overview/Dashboard view.
+    ///
+    /// Layout adapts based on terminal width:
+    /// - Ultra-wide (199+): 3-column layout with all 6 panels
+    /// - Wide (120-198): 2-column layout with 4 panels
+    /// - Narrow (<120): Single-column with stacked panels
     fn draw_overview(&self, frame: &mut Frame, area: Rect) {
+        let layout_mode = LayoutMode::from_width(area.width);
+
+        match layout_mode {
+            LayoutMode::UltraWide => self.draw_overview_ultrawide(frame, area),
+            LayoutMode::Wide => self.draw_overview_wide(frame, area),
+            LayoutMode::Narrow => self.draw_overview_narrow(frame, area),
+        }
+    }
+
+    /// Draw ultra-wide 3-column layout (199+ cols).
+    ///
+    /// Layout: 66 | 66 | 65 columns (with borders accounting for 2 chars each)
+    /// Left: Workers + Subscriptions (stacked)
+    /// Middle: Tasks + Activity (stacked)
+    /// Right: Costs + Actions (stacked)
+    fn draw_overview_ultrawide(&self, frame: &mut Frame, area: Rect) {
+        // Calculate column widths: 66 + 66 + 65 = 197, borders use remaining
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(66),
+                Constraint::Length(66),
+                Constraint::Min(65),
+            ])
+            .split(area);
+
+        // Each column has 2 panels stacked vertically (50/50)
+        let left_panels = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(columns[0]);
+
+        let middle_panels = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(columns[1]);
+
+        let right_panels = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(columns[2]);
+
+        // Left column: Workers + Subscriptions/Utilization
+        let worker_summary = self.data_manager.worker_data.format_worker_pool_summary();
+        self.draw_panel(
+            frame,
+            left_panels[0],
+            "Worker Pool",
+            &worker_summary,
+            self.focus_panel == FocusPanel::WorkerPool,
+        );
+
+        let subscriptions_content = if self.data_manager.is_ready() {
+            self.format_utilization_panel()
+        } else {
+            "Loading...".to_string()
+        };
+        self.draw_panel(
+            frame,
+            left_panels[1],
+            "Utilization",
+            &subscriptions_content,
+            self.focus_panel == FocusPanel::Subscriptions,
+        );
+
+        // Middle column: Tasks + Activity
+        let task_queue_content = self.data_manager.bead_manager.format_task_queue_summary();
+        self.draw_panel(
+            frame,
+            middle_panels[0],
+            "Task Queue",
+            &task_queue_content,
+            self.focus_panel == FocusPanel::TaskQueue,
+        );
+
+        let activity_log = self.data_manager.worker_data.format_activity_log();
+        self.draw_panel(
+            frame,
+            middle_panels[1],
+            "Activity Log",
+            &activity_log,
+            self.focus_panel == FocusPanel::ActivityLog,
+        );
+
+        // Right column: Costs + Actions
+        let costs_content = self.format_costs_panel();
+        self.draw_panel(
+            frame,
+            right_panels[0],
+            "Cost Breakdown",
+            &costs_content,
+            self.focus_panel == FocusPanel::CostBreakdown,
+        );
+
+        let actions_content = self.format_actions_panel();
+        self.draw_panel(
+            frame,
+            right_panels[1],
+            "Quick Actions",
+            &actions_content,
+            self.focus_panel == FocusPanel::MetricsCharts,
+        );
+    }
+
+    /// Draw wide 2-column layout (120-198 cols).
+    fn draw_overview_wide(&self, frame: &mut Frame, area: Rect) {
         // Split into top and bottom sections
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -422,7 +533,7 @@ impl App {
 
         // Bottom section: Task Queue and Activity Log
         let bottom_chunks = Layout::default()
-            .direction(Direction::Vertical)
+            .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(chunks[1]);
 
@@ -447,6 +558,89 @@ impl App {
             &activity_log,
             self.focus_panel == FocusPanel::ActivityLog,
         );
+    }
+
+    /// Draw narrow single-column layout (<120 cols).
+    fn draw_overview_narrow(&self, frame: &mut Frame, area: Rect) {
+        // Stack panels vertically, show fewer in constrained space
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(35),
+                Constraint::Percentage(35),
+                Constraint::Percentage(30),
+            ])
+            .split(area);
+
+        // Worker Pool (primary focus)
+        let worker_summary = self.data_manager.worker_data.format_worker_pool_summary();
+        self.draw_panel(
+            frame,
+            chunks[0],
+            "Worker Pool",
+            &worker_summary,
+            self.focus_panel == FocusPanel::WorkerPool,
+        );
+
+        // Task Queue (secondary focus)
+        let task_queue_content = self.data_manager.bead_manager.format_task_queue_summary();
+        self.draw_panel(
+            frame,
+            chunks[1],
+            "Task Queue",
+            &task_queue_content,
+            self.focus_panel == FocusPanel::TaskQueue,
+        );
+
+        // Activity Log (compact)
+        let activity_log = self.data_manager.worker_data.format_activity_log();
+        self.draw_panel(
+            frame,
+            chunks[2],
+            "Activity Log",
+            &activity_log,
+            self.focus_panel == FocusPanel::ActivityLog,
+        );
+    }
+
+    /// Format the costs panel for the right column in ultra-wide mode.
+    fn format_costs_panel(&self) -> String {
+        if !self.data_manager.is_ready() {
+            return "Loading...".to_string();
+        }
+
+        let mut lines = Vec::new();
+        lines.push("Today's Costs:".to_string());
+        lines.push("  API calls: $---.--".to_string());
+        lines.push("  Tokens:    $---.--".to_string());
+        lines.push("  Total:     $---.--".to_string());
+        lines.push(String::new());
+        lines.push("Monthly Budget:".to_string());
+        lines.push("  Used:  $----.-- / $----.--".to_string());
+        lines.push("  Remaining: $----.--".to_string());
+        lines.push(String::new());
+        lines.push("(Cost tracking not yet active)".to_string());
+
+        lines.join("\n")
+    }
+
+    /// Format the actions panel for the right column in ultra-wide mode.
+    fn format_actions_panel(&self) -> String {
+        let mut lines = Vec::new();
+        lines.push("Worker Actions:".to_string());
+        lines.push("  [G] Spawn GLM worker".to_string());
+        lines.push("  [S] Spawn Sonnet worker".to_string());
+        lines.push("  [O] Spawn Opus worker".to_string());
+        lines.push("  [K] Kill selected worker".to_string());
+        lines.push(String::new());
+        lines.push("Task Actions:".to_string());
+        lines.push("  [P] Prioritize task".to_string());
+        lines.push("  [D] Defer task".to_string());
+        lines.push("  [X] Cancel task".to_string());
+        lines.push(String::new());
+        lines.push("Press ? for help".to_string());
+
+        lines.join("\n")
     }
 
     /// Draw the Workers view.
@@ -829,11 +1023,12 @@ mod tests {
     #[test]
     fn test_overview_renders_utilization_panel() {
         let app = App::new();
-        let buffer = render_app(&app, 100, 30);
+        // Use wide layout (120+ cols) to ensure Utilization panel is visible
+        let buffer = render_app(&app, 140, 30);
 
         assert!(
             buffer_contains(&buffer, "Utilization"),
-            "Overview should render Utilization panel"
+            "Overview should render Utilization panel in wide layout"
         );
     }
 
@@ -893,10 +1088,11 @@ mod tests {
         app.switch_view(View::Workers);
         app.switch_view(View::Overview);
         assert_eq!(app.focus_panel(), FocusPanel::WorkerPool);
-        let buffer = render_app(&app, 100, 30);
+        // Use ultra-wide layout (199+ cols) to ensure all 6 panels are visible
+        let buffer = render_app(&app, 199, 38);
         assert!(buffer_contains(&buffer, "Worker Pool"));
 
-        // 2. Utilization (part of Overview, was Subscriptions)
+        // 2. Utilization (part of Overview) - visible in ultra-wide layout
         assert!(buffer_contains(&buffer, "Utilization"));
 
         // 3. Task Queue (Tasks view)
@@ -1343,5 +1539,229 @@ mod tests {
 
         app.handle_app_event(AppEvent::PageDown);
         assert_eq!(app.scroll_offset, 10);
+    }
+
+    // ============================================================
+    // 3-Column Layout Tests (Ultra-Wide Mode)
+    // ============================================================
+
+    #[test]
+    fn test_ultrawide_layout_renders_all_six_panels() {
+        let app = App::new();
+        // Ultra-wide: 199x38 terminal
+        let buffer = render_app(&app, 199, 38);
+
+        // All 6 panels should be visible in ultra-wide mode
+        assert!(
+            buffer_contains(&buffer, "Worker Pool"),
+            "Ultra-wide layout should show Worker Pool panel"
+        );
+        assert!(
+            buffer_contains(&buffer, "Utilization"),
+            "Ultra-wide layout should show Utilization panel"
+        );
+        assert!(
+            buffer_contains(&buffer, "Task Queue"),
+            "Ultra-wide layout should show Task Queue panel"
+        );
+        assert!(
+            buffer_contains(&buffer, "Activity Log"),
+            "Ultra-wide layout should show Activity Log panel"
+        );
+        assert!(
+            buffer_contains(&buffer, "Cost Breakdown"),
+            "Ultra-wide layout should show Cost Breakdown panel"
+        );
+        assert!(
+            buffer_contains(&buffer, "Quick Actions"),
+            "Ultra-wide layout should show Quick Actions panel"
+        );
+    }
+
+    #[test]
+    fn test_ultrawide_layout_at_exact_boundary() {
+        let app = App::new();
+        // Exactly 199 cols - should trigger ultra-wide
+        let buffer = render_app(&app, 199, 38);
+
+        assert!(
+            buffer_contains(&buffer, "Cost Breakdown"),
+            "At 199 cols, should use ultra-wide layout with Cost Breakdown panel"
+        );
+        assert!(
+            buffer_contains(&buffer, "Quick Actions"),
+            "At 199 cols, should use ultra-wide layout with Quick Actions panel"
+        );
+    }
+
+    #[test]
+    fn test_wide_layout_at_boundary_below_ultrawide() {
+        let app = App::new();
+        // 198 cols - should NOT trigger ultra-wide, just wide
+        let buffer = render_app(&app, 198, 38);
+
+        // Should have 4 panels (wide mode)
+        assert!(
+            buffer_contains(&buffer, "Worker Pool"),
+            "Wide layout should show Worker Pool"
+        );
+        assert!(
+            buffer_contains(&buffer, "Utilization"),
+            "Wide layout should show Utilization"
+        );
+        assert!(
+            buffer_contains(&buffer, "Task Queue"),
+            "Wide layout should show Task Queue"
+        );
+        assert!(
+            buffer_contains(&buffer, "Activity Log"),
+            "Wide layout should show Activity Log"
+        );
+
+        // Should NOT have the right column panels
+        assert!(
+            !buffer_contains(&buffer, "Cost Breakdown"),
+            "Wide layout should NOT show Cost Breakdown panel"
+        );
+        assert!(
+            !buffer_contains(&buffer, "Quick Actions"),
+            "Wide layout should NOT show Quick Actions panel"
+        );
+    }
+
+    #[test]
+    fn test_narrow_layout_below_wide_threshold() {
+        let app = App::new();
+        // 119 cols - should trigger narrow mode
+        let buffer = render_app(&app, 119, 30);
+
+        // Should still show essential panels
+        assert!(
+            buffer_contains(&buffer, "Worker Pool"),
+            "Narrow layout should show Worker Pool"
+        );
+        assert!(
+            buffer_contains(&buffer, "Task Queue"),
+            "Narrow layout should show Task Queue"
+        );
+        assert!(
+            buffer_contains(&buffer, "Activity Log"),
+            "Narrow layout should show Activity Log"
+        );
+
+        // Should NOT show secondary panels
+        assert!(
+            !buffer_contains(&buffer, "Cost Breakdown"),
+            "Narrow layout should NOT show Cost Breakdown"
+        );
+    }
+
+    #[test]
+    fn test_wide_layout_at_wide_threshold() {
+        let app = App::new();
+        // 120 cols - exactly at wide threshold
+        let buffer = render_app(&app, 120, 30);
+
+        // Should have 4 panels (wide mode)
+        assert!(
+            buffer_contains(&buffer, "Worker Pool"),
+            "Wide layout at threshold should show Worker Pool"
+        );
+        assert!(
+            buffer_contains(&buffer, "Utilization"),
+            "Wide layout at threshold should show Utilization"
+        );
+    }
+
+    #[test]
+    fn test_layout_mode_detection() {
+        use crate::view::LayoutMode;
+
+        // Ultra-wide: 199+
+        assert_eq!(LayoutMode::from_width(199), LayoutMode::UltraWide);
+        assert_eq!(LayoutMode::from_width(250), LayoutMode::UltraWide);
+
+        // Wide: 120-198
+        assert_eq!(LayoutMode::from_width(198), LayoutMode::Wide);
+        assert_eq!(LayoutMode::from_width(150), LayoutMode::Wide);
+        assert_eq!(LayoutMode::from_width(120), LayoutMode::Wide);
+
+        // Narrow: <120
+        assert_eq!(LayoutMode::from_width(119), LayoutMode::Narrow);
+        assert_eq!(LayoutMode::from_width(80), LayoutMode::Narrow);
+        assert_eq!(LayoutMode::from_width(40), LayoutMode::Narrow);
+    }
+
+    #[test]
+    fn test_layout_min_height_requirements() {
+        use crate::view::LayoutMode;
+
+        assert_eq!(LayoutMode::UltraWide.min_height(), 38);
+        assert_eq!(LayoutMode::Wide.min_height(), 30);
+        assert_eq!(LayoutMode::Narrow.min_height(), 20);
+    }
+
+    #[test]
+    fn test_ultrawide_renders_without_panic_at_various_heights() {
+        let app = App::new();
+
+        // Test various heights with ultra-wide width
+        for height in [20, 30, 38, 50, 60, 100] {
+            let buffer = render_app(&app, 199, height);
+            assert_eq!(buffer.area.height, height);
+            // Should render something without panic
+            assert!(buffer_contains(&buffer, "FORGE Dashboard"));
+        }
+    }
+
+    #[test]
+    fn test_ultrawide_shows_action_hints() {
+        let app = App::new();
+        let buffer = render_app(&app, 199, 38);
+
+        // Quick Actions panel should show worker action hints
+        let content = buffer_to_string(&buffer);
+        assert!(
+            content.contains("Spawn") || content.contains("[G]") || content.contains("Worker"),
+            "Quick Actions panel should show action hints"
+        );
+    }
+
+    #[test]
+    fn test_ultrawide_shows_cost_placeholders() {
+        let app = App::new();
+        let buffer = render_app(&app, 199, 38);
+
+        // Cost Breakdown panel should show cost placeholders
+        let content = buffer_to_string(&buffer);
+        assert!(
+            content.contains("Cost") || content.contains("Budget") || content.contains("$"),
+            "Cost Breakdown panel should show cost-related content"
+        );
+    }
+
+    #[test]
+    fn test_graceful_degradation_sequence() {
+        let app = App::new();
+
+        // Test the degradation sequence: ultra-wide -> wide -> narrow
+        // Each step down should still render without errors and show appropriate panels
+
+        // Ultra-wide (199): 6 panels
+        let buffer_ultrawide = render_app(&app, 199, 38);
+        assert!(buffer_contains(&buffer_ultrawide, "Cost Breakdown"));
+        assert!(buffer_contains(&buffer_ultrawide, "Quick Actions"));
+
+        // Wide (150): 4 panels
+        let buffer_wide = render_app(&app, 150, 30);
+        assert!(buffer_contains(&buffer_wide, "Worker Pool"));
+        assert!(buffer_contains(&buffer_wide, "Task Queue"));
+        assert!(!buffer_contains(&buffer_wide, "Cost Breakdown"));
+
+        // Narrow (80): 3 panels stacked
+        let buffer_narrow = render_app(&app, 80, 25);
+        assert!(buffer_contains(&buffer_narrow, "Worker Pool"));
+        assert!(buffer_contains(&buffer_narrow, "Task Queue"));
+        assert!(buffer_contains(&buffer_narrow, "Activity Log"));
     }
 }

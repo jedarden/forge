@@ -138,6 +138,53 @@ impl FocusPanel {
     }
 }
 
+/// Layout mode based on terminal dimensions.
+///
+/// The TUI adapts its layout based on available screen real estate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutMode {
+    /// Ultra-wide layout (199+ cols): 3-column with all 6 panels visible.
+    /// Left (66 cols): Workers + Subscriptions
+    /// Middle (66 cols): Tasks + Activity
+    /// Right (65 cols): Costs + Actions
+    UltraWide,
+    /// Wide layout (120-198 cols): 2-column with 4 panels visible.
+    Wide,
+    /// Narrow layout (<120 cols): single-view mode.
+    Narrow,
+}
+
+impl LayoutMode {
+    /// Determine the layout mode based on terminal width.
+    pub fn from_width(width: u16) -> Self {
+        if width >= 199 {
+            LayoutMode::UltraWide
+        } else if width >= 120 {
+            LayoutMode::Wide
+        } else {
+            LayoutMode::Narrow
+        }
+    }
+
+    /// Get the minimum terminal height for this layout mode.
+    pub fn min_height(&self) -> u16 {
+        match self {
+            LayoutMode::UltraWide => 38,
+            LayoutMode::Wide => 30,
+            LayoutMode::Narrow => 20,
+        }
+    }
+
+    /// Check if the terminal dimensions meet the layout requirements.
+    pub fn meets_requirements(&self, width: u16, height: u16) -> bool {
+        let required_mode = Self::from_width(width);
+        let height_ok = height >= self.min_height();
+
+        // Mode is valid if it matches width requirement and height is sufficient
+        *self == required_mode && height_ok
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,5 +232,69 @@ mod tests {
     #[test]
     fn test_default_view() {
         assert_eq!(View::default(), View::Overview);
+    }
+
+    // ============================================================
+    // LayoutMode Tests
+    // ============================================================
+
+    #[test]
+    fn test_layout_mode_from_width_ultrawide() {
+        assert_eq!(LayoutMode::from_width(199), LayoutMode::UltraWide);
+        assert_eq!(LayoutMode::from_width(200), LayoutMode::UltraWide);
+        assert_eq!(LayoutMode::from_width(300), LayoutMode::UltraWide);
+    }
+
+    #[test]
+    fn test_layout_mode_from_width_wide() {
+        assert_eq!(LayoutMode::from_width(120), LayoutMode::Wide);
+        assert_eq!(LayoutMode::from_width(150), LayoutMode::Wide);
+        assert_eq!(LayoutMode::from_width(198), LayoutMode::Wide);
+    }
+
+    #[test]
+    fn test_layout_mode_from_width_narrow() {
+        assert_eq!(LayoutMode::from_width(119), LayoutMode::Narrow);
+        assert_eq!(LayoutMode::from_width(80), LayoutMode::Narrow);
+        assert_eq!(LayoutMode::from_width(40), LayoutMode::Narrow);
+        assert_eq!(LayoutMode::from_width(0), LayoutMode::Narrow);
+    }
+
+    #[test]
+    fn test_layout_mode_min_height() {
+        assert_eq!(LayoutMode::UltraWide.min_height(), 38);
+        assert_eq!(LayoutMode::Wide.min_height(), 30);
+        assert_eq!(LayoutMode::Narrow.min_height(), 20);
+    }
+
+    #[test]
+    fn test_layout_mode_meets_requirements() {
+        // Ultra-wide mode requirements
+        assert!(LayoutMode::UltraWide.meets_requirements(199, 38));
+        assert!(LayoutMode::UltraWide.meets_requirements(250, 50));
+        assert!(!LayoutMode::UltraWide.meets_requirements(199, 37)); // Height too short
+        assert!(!LayoutMode::UltraWide.meets_requirements(198, 38)); // Width too narrow
+
+        // Wide mode requirements
+        assert!(LayoutMode::Wide.meets_requirements(150, 30));
+        assert!(LayoutMode::Wide.meets_requirements(120, 35));
+        assert!(!LayoutMode::Wide.meets_requirements(150, 29)); // Height too short
+        assert!(!LayoutMode::Wide.meets_requirements(199, 30)); // Width triggers UltraWide
+
+        // Narrow mode requirements
+        assert!(LayoutMode::Narrow.meets_requirements(80, 20));
+        assert!(LayoutMode::Narrow.meets_requirements(100, 25));
+        assert!(!LayoutMode::Narrow.meets_requirements(80, 19)); // Height too short
+        assert!(!LayoutMode::Narrow.meets_requirements(120, 20)); // Width triggers Wide
+    }
+
+    #[test]
+    fn test_layout_mode_boundary_conditions() {
+        // Test exact boundary values
+        assert_eq!(LayoutMode::from_width(198), LayoutMode::Wide);
+        assert_eq!(LayoutMode::from_width(199), LayoutMode::UltraWide);
+
+        assert_eq!(LayoutMode::from_width(119), LayoutMode::Narrow);
+        assert_eq!(LayoutMode::from_width(120), LayoutMode::Wide);
     }
 }
