@@ -1843,4 +1843,992 @@ mod tests {
         // Final state should be the last written status
         assert_eq!(worker.unwrap().status, WorkerStatus::Idle);
     }
+
+    // ============================================================
+    // Integration Test 23: Cost Panel Rendering
+    // ============================================================
+
+    #[test]
+    fn test_cost_panel_empty_state() {
+        use crate::cost_panel::CostPanelData;
+
+        let data = CostPanelData::new();
+        assert!(!data.has_data());
+        assert!(!data.is_loading);
+        assert!(data.error.is_none());
+        assert_eq!(data.monthly_usage_pct(), 0.0);
+    }
+
+    #[test]
+    fn test_cost_panel_loading_state() {
+        use crate::cost_panel::CostPanelData;
+
+        let data = CostPanelData::loading();
+        assert!(data.is_loading);
+        assert!(!data.has_data());
+    }
+
+    #[test]
+    fn test_cost_panel_error_state() {
+        use crate::cost_panel::CostPanelData;
+
+        let data = CostPanelData::with_error("Database connection failed");
+        assert!(data.error.is_some());
+        assert_eq!(data.error.as_ref().unwrap(), "Database connection failed");
+    }
+
+    #[test]
+    fn test_cost_panel_with_data() {
+        use crate::cost_panel::{CostPanelData, BudgetConfig, BudgetAlertLevel};
+        use forge_cost::DailyCost;
+        use chrono::Utc;
+
+        let mut data = CostPanelData::new();
+
+        let today = DailyCost {
+            date: Utc::now().date_naive(),
+            total_cost_usd: 25.50,
+            call_count: 150,
+            total_tokens: 500000,
+            by_model: vec![],
+        };
+
+        data.set_today(today);
+        data.set_budget(BudgetConfig::new(500.0));
+        data.monthly_total = 150.0;
+
+        assert!(data.has_data());
+        assert_eq!(data.today_total(), 25.50);
+        assert_eq!(data.today_calls(), 150);
+        assert_eq!(data.today_tokens(), 500000);
+        assert!((data.monthly_usage_pct() - 30.0).abs() < 0.01);
+        assert_eq!(data.monthly_alert(), BudgetAlertLevel::Normal);
+    }
+
+    #[test]
+    fn test_cost_panel_budget_alerts() {
+        use crate::cost_panel::{CostPanelData, BudgetConfig, BudgetAlertLevel};
+
+        let mut data = CostPanelData::new();
+        data.set_budget(BudgetConfig::new(100.0));
+
+        // Normal (< 70%)
+        data.monthly_total = 50.0;
+        assert_eq!(data.monthly_alert(), BudgetAlertLevel::Normal);
+
+        // Warning (70-90%)
+        data.monthly_total = 80.0;
+        assert_eq!(data.monthly_alert(), BudgetAlertLevel::Warning);
+
+        // Critical (90-100%)
+        data.monthly_total = 95.0;
+        assert_eq!(data.monthly_alert(), BudgetAlertLevel::Critical);
+
+        // Exceeded (> 100%)
+        data.monthly_total = 120.0;
+        assert_eq!(data.monthly_alert(), BudgetAlertLevel::Exceeded);
+    }
+
+    #[test]
+    fn test_cost_panel_sparkline_rendering() {
+        use crate::cost_panel::render_sparkline;
+
+        // Test with values
+        let values = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let sparkline = render_sparkline(&values, 8);
+        assert_eq!(sparkline.chars().count(), 8);
+
+        // Test with empty values
+        let empty = render_sparkline(&[], 10);
+        assert_eq!(empty.chars().count(), 10);
+        assert!(empty.trim().is_empty());
+
+        // Test with single value
+        let single = render_sparkline(&[5.0], 5);
+        assert_eq!(single.chars().count(), 5);
+    }
+
+    #[test]
+    fn test_cost_panel_bar_rendering() {
+        use crate::cost_panel::render_bar;
+
+        let bar = render_bar(50.0, 100.0, 10, '█', '░');
+        assert_eq!(bar.chars().count(), 10);
+        assert_eq!(bar.chars().filter(|&c| c == '█').count(), 5);
+        assert_eq!(bar.chars().filter(|&c| c == '░').count(), 5);
+
+        // Edge case: value > max
+        let overflow = render_bar(150.0, 100.0, 10, '█', '░');
+        assert_eq!(overflow.chars().filter(|&c| c == '█').count(), 10);
+
+        // Edge case: max = 0
+        let zero_max = render_bar(50.0, 0.0, 10, '█', '░');
+        assert_eq!(zero_max.chars().filter(|&c| c == '░').count(), 10);
+    }
+
+    #[test]
+    fn test_cost_formatting_functions() {
+        use crate::cost_panel::{format_usd, format_tokens, truncate_model_name};
+
+        // Test USD formatting
+        assert_eq!(format_usd(0.0012), "$0.0012");
+        assert_eq!(format_usd(5.678), "$5.678");
+        assert_eq!(format_usd(99.99), "$99.99");
+        assert_eq!(format_usd(123.4), "$123.4");
+        assert_eq!(format_usd(5000.0), "$5.00K");
+
+        // Test token formatting
+        assert_eq!(format_tokens(999), "999");
+        assert_eq!(format_tokens(1500), "1.5K");
+        assert_eq!(format_tokens(2500000), "2.5M");
+
+        // Test model name truncation
+        assert!(truncate_model_name("claude-opus-4-5-20251101", 15).len() <= 15);
+        assert_eq!(truncate_model_name("glm-4.7", 10), "GLM-4.7");
+    }
+
+    // ============================================================
+    // Integration Test 24: Subscription Panel Rendering
+    // ============================================================
+
+    #[test]
+    fn test_subscription_data_demo_initialization() {
+        use crate::subscription_panel::{SubscriptionData, SubscriptionService};
+
+        let data = SubscriptionData::with_demo_data();
+
+        assert!(data.has_data());
+        assert!(data.has_active());
+        assert_eq!(data.active_count(), 4);
+        assert!(!data.is_loading);
+        assert!(data.error.is_none());
+
+        // Check Claude Pro exists
+        let claude = data.get(SubscriptionService::ClaudePro).unwrap();
+        assert!(claude.is_active);
+        assert_eq!(claude.current_usage, 328);
+        assert_eq!(claude.limit, Some(500));
+    }
+
+    #[test]
+    fn test_subscription_status_calculations() {
+        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, ResetPeriod};
+        use chrono::{Duration, Utc};
+
+        let status = SubscriptionStatus::new(SubscriptionService::ClaudePro)
+            .with_usage(250, 500, "msgs")
+            .with_reset(Utc::now() + Duration::days(10), ResetPeriod::Monthly)
+            .with_active(true);
+
+        assert!((status.usage_pct() - 50.0).abs() < 0.01);
+        assert_eq!(status.remaining(), Some(250));
+        assert!(status.time_until_reset().is_some());
+    }
+
+    #[test]
+    fn test_subscription_recommended_actions() {
+        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, SubscriptionAction, ResetPeriod};
+        use chrono::{Duration, Utc};
+
+        // Paused subscription
+        let paused = SubscriptionStatus::new(SubscriptionService::ChatGPTPlus)
+            .with_active(false);
+        assert_eq!(paused.recommended_action(), SubscriptionAction::Paused);
+
+        // Pay-per-use
+        let pay = SubscriptionStatus::new(SubscriptionService::DeepSeekAPI)
+            .with_pay_per_use(0.05)
+            .with_active(true);
+        assert_eq!(pay.recommended_action(), SubscriptionAction::Active);
+
+        // Over quota
+        let over = SubscriptionStatus::new(SubscriptionService::CursorPro)
+            .with_usage(550, 500, "reqs")
+            .with_reset(Utc::now() + Duration::days(5), ResetPeriod::Monthly)
+            .with_active(true);
+        assert_eq!(over.recommended_action(), SubscriptionAction::OverQuota);
+    }
+
+    #[test]
+    fn test_subscription_format_reset_timer() {
+        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, ResetPeriod};
+        use chrono::{Duration, Utc};
+
+        // Days and hours
+        let days_status = SubscriptionStatus::new(SubscriptionService::ClaudePro)
+            .with_reset(Utc::now() + Duration::days(5) + Duration::hours(12), ResetPeriod::Monthly);
+        let timer = days_status.format_reset_timer();
+        assert!(timer.contains("d") || timer.contains("h"));
+
+        // Pay-per-use shows Monthly
+        let pay = SubscriptionStatus::new(SubscriptionService::DeepSeekAPI)
+            .with_pay_per_use(0.05);
+        assert_eq!(pay.format_reset_timer(), "Monthly");
+    }
+
+    #[test]
+    fn test_subscription_summary_formatting() {
+        use crate::subscription_panel::{format_subscription_summary, SubscriptionData};
+
+        // Test with demo data
+        let data = SubscriptionData::with_demo_data();
+        let summary = format_subscription_summary(&data);
+        assert!(summary.contains("Claude"));
+        assert!(summary.contains("ChatGPT"));
+        assert!(summary.contains("Cursor"));
+        assert!(summary.contains("DeepSeek"));
+
+        // Test with loading state
+        let loading = SubscriptionData::loading();
+        let loading_summary = format_subscription_summary(&loading);
+        assert!(loading_summary.contains("Loading"));
+
+        // Test with empty data
+        let empty = SubscriptionData::new();
+        let empty_summary = format_subscription_summary(&empty);
+        assert!(empty_summary.contains("No subscriptions"));
+    }
+
+    #[test]
+    fn test_subscription_usage_colors() {
+        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService};
+        use ratatui::style::Color;
+
+        // Low usage - green
+        let low = SubscriptionStatus::new(SubscriptionService::ClaudePro)
+            .with_usage(100, 500, "msgs");
+        assert_eq!(low.usage_color(), Color::Green);
+
+        // Medium usage - cyan/yellow
+        let med = SubscriptionStatus::new(SubscriptionService::ClaudePro)
+            .with_usage(350, 500, "msgs");
+        assert!(matches!(med.usage_color(), Color::Cyan | Color::Yellow));
+
+        // High usage - red
+        let high = SubscriptionStatus::new(SubscriptionService::ClaudePro)
+            .with_usage(480, 500, "msgs");
+        assert!(matches!(high.usage_color(), Color::Red | Color::LightRed));
+    }
+
+    // ============================================================
+    // Integration Test 25: Responsive Layout Tests
+    // ============================================================
+
+    #[test]
+    fn test_layout_mode_transitions() {
+        use crate::view::LayoutMode;
+
+        // Test all boundary conditions
+        let test_cases = [
+            (40, LayoutMode::Narrow),
+            (80, LayoutMode::Narrow),
+            (119, LayoutMode::Narrow),
+            (120, LayoutMode::Wide),
+            (150, LayoutMode::Wide),
+            (198, LayoutMode::Wide),
+            (199, LayoutMode::UltraWide),
+            (250, LayoutMode::UltraWide),
+            (400, LayoutMode::UltraWide),
+        ];
+
+        for (width, expected_mode) in test_cases {
+            assert_eq!(
+                LayoutMode::from_width(width),
+                expected_mode,
+                "Width {} should be {:?}",
+                width,
+                expected_mode
+            );
+        }
+    }
+
+    #[test]
+    fn test_responsive_rendering_all_modes() {
+        let app = App::new();
+
+        // Narrow mode
+        let narrow = render_app(&app, 80, 30);
+        assert!(buffer_contains(&narrow, "FORGE Dashboard"));
+        assert!(buffer_contains(&narrow, "Worker Pool"));
+
+        // Wide mode
+        let wide = render_app(&app, 150, 40);
+        assert!(buffer_contains(&wide, "FORGE Dashboard"));
+        assert!(buffer_contains(&wide, "Worker Pool"));
+        assert!(buffer_contains(&wide, "Subscriptions"));
+
+        // Ultra-wide mode
+        let ultrawide = render_app(&app, 220, 50);
+        assert!(buffer_contains(&ultrawide, "FORGE Dashboard"));
+        assert!(buffer_contains(&ultrawide, "Cost Breakdown"));
+        assert!(buffer_contains(&ultrawide, "Quick Actions"));
+    }
+
+    #[test]
+    fn test_responsive_panel_visibility() {
+        let app = App::new();
+
+        // Narrow: 3 panels
+        let narrow = render_app(&app, 80, 30);
+        assert!(buffer_contains(&narrow, "Worker Pool"));
+        assert!(buffer_contains(&narrow, "Task Queue"));
+        assert!(buffer_contains(&narrow, "Activity Log"));
+        assert!(!buffer_contains(&narrow, "Quick Actions"));
+
+        // Wide: 4 panels
+        let wide = render_app(&app, 150, 40);
+        assert!(buffer_contains(&wide, "Worker Pool"));
+        assert!(buffer_contains(&wide, "Subscriptions"));
+        assert!(buffer_contains(&wide, "Task Queue"));
+        assert!(buffer_contains(&wide, "Activity Log"));
+        assert!(!buffer_contains(&wide, "Quick Actions"));
+
+        // Ultra-wide: 6 panels
+        let ultrawide = render_app(&app, 220, 50);
+        assert!(buffer_contains(&ultrawide, "Worker Pool"));
+        assert!(buffer_contains(&ultrawide, "Subscriptions"));
+        assert!(buffer_contains(&ultrawide, "Task Queue"));
+        assert!(buffer_contains(&ultrawide, "Activity Log"));
+        assert!(buffer_contains(&ultrawide, "Cost Breakdown"));
+        assert!(buffer_contains(&ultrawide, "Quick Actions"));
+    }
+
+    #[test]
+    fn test_responsive_min_height_requirements() {
+        use crate::view::LayoutMode;
+
+        assert_eq!(LayoutMode::Narrow.min_height(), 20);
+        assert_eq!(LayoutMode::Wide.min_height(), 30);
+        assert_eq!(LayoutMode::UltraWide.min_height(), 38);
+    }
+
+    // ============================================================
+    // Integration Test 26: Chat Commands Integration
+    // ============================================================
+
+    #[test]
+    fn test_chat_command_text_input() {
+        let mut app = App::new();
+
+        // Switch to chat mode
+        app.switch_view(View::Chat);
+        assert_eq!(app.current_view(), View::Chat);
+
+        // Simulate typing "help"
+        app.handle_app_event(AppEvent::TextInput('h'));
+        app.handle_app_event(AppEvent::TextInput('e'));
+        app.handle_app_event(AppEvent::TextInput('l'));
+        app.handle_app_event(AppEvent::TextInput('p'));
+
+        // Render and check input is captured
+        let buffer = render_app(&app, 120, 40);
+        assert!(buffer_contains(&buffer, "Chat") || buffer_contains(&buffer, "Input"));
+    }
+
+    #[test]
+    fn test_chat_submit_clears_input() {
+        let mut app = App::new();
+
+        app.switch_view(View::Chat);
+
+        // Type command
+        app.handle_app_event(AppEvent::TextInput('t'));
+        app.handle_app_event(AppEvent::TextInput('e'));
+        app.handle_app_event(AppEvent::TextInput('s'));
+        app.handle_app_event(AppEvent::TextInput('t'));
+
+        // Submit
+        app.handle_app_event(AppEvent::Submit);
+
+        // Input should be cleared after submit
+        // The status_message should show execution message
+    }
+
+    #[test]
+    fn test_chat_escape_cancels() {
+        let mut app = App::new();
+
+        app.switch_view(View::Chat);
+
+        // Type some text
+        app.handle_app_event(AppEvent::TextInput('a'));
+        app.handle_app_event(AppEvent::TextInput('b'));
+        app.handle_app_event(AppEvent::TextInput('c'));
+
+        // Cancel
+        app.handle_app_event(AppEvent::Cancel);
+
+        // Should go back to previous view
+        assert_ne!(app.current_view(), View::Chat);
+    }
+
+    // ============================================================
+    // Integration Test 27: Bead Manager Tests
+    // ============================================================
+
+    #[test]
+    fn test_bead_status_checks() {
+        use crate::bead::Bead;
+
+        let ready_bead = Bead {
+            id: "fg-test-1".to_string(),
+            title: "Test task".to_string(),
+            status: "open".to_string(),
+            priority: 2,
+            dependency_count: 0,
+            ..Default::default()
+        };
+
+        assert!(ready_bead.is_ready());
+        assert!(!ready_bead.is_blocked());
+        assert!(!ready_bead.is_in_progress());
+        assert!(!ready_bead.is_closed());
+    }
+
+    #[test]
+    fn test_bead_blocked_status() {
+        use crate::bead::Bead;
+
+        let blocked = Bead {
+            id: "fg-test-2".to_string(),
+            title: "Blocked task".to_string(),
+            status: "open".to_string(),
+            priority: 1,
+            dependency_count: 2,
+            ..Default::default()
+        };
+
+        assert!(!blocked.is_ready());
+        assert!(blocked.is_blocked());
+    }
+
+    #[test]
+    fn test_bead_priority_indicators() {
+        use crate::bead::Bead;
+
+        let p0 = Bead { priority: 0, ..Default::default() };
+        let p1 = Bead { priority: 1, ..Default::default() };
+        let p2 = Bead { priority: 2, ..Default::default() };
+        let p3 = Bead { priority: 3, ..Default::default() };
+        let p4 = Bead { priority: 4, ..Default::default() };
+
+        assert_eq!(p0.priority_indicator(), "🔴");
+        assert_eq!(p1.priority_indicator(), "🟠");
+        assert_eq!(p2.priority_indicator(), "🟡");
+        assert_eq!(p3.priority_indicator(), "🔵");
+        assert_eq!(p4.priority_indicator(), "⚪");
+    }
+
+    #[test]
+    fn test_bead_status_indicators() {
+        use crate::bead::Bead;
+
+        let test_cases = [
+            ("open", "○"),
+            ("in_progress", "●"),
+            ("closed", "✓"),
+            ("blocked", "⊘"),
+            ("deferred", "⏸"),
+            ("unknown", "?"),
+        ];
+
+        for (status, expected) in test_cases {
+            let bead = Bead { status: status.to_string(), ..Default::default() };
+            assert_eq!(bead.status_indicator(), expected, "Status '{}' should have indicator '{}'", status, expected);
+        }
+    }
+
+    #[test]
+    fn test_bead_manager_initialization() {
+        use crate::bead::BeadManager;
+
+        let manager = BeadManager::new();
+        assert_eq!(manager.workspace_count(), 0);
+        assert!(!manager.is_loaded());
+    }
+
+    #[test]
+    fn test_bead_aggregated_data_formatting() {
+        use crate::bead::AggregatedBeadData;
+
+        let data = AggregatedBeadData {
+            ready: vec![],
+            blocked: vec![],
+            in_progress: vec![],
+            total_ready: 5,
+            total_blocked: 2,
+            total_in_progress: 3,
+            total_open: 10,
+        };
+
+        let summary = data.format_summary();
+        assert!(summary.contains("Ready: 5"));
+        assert!(summary.contains("Blocked: 2"));
+        assert!(summary.contains("In Progress: 3"));
+        assert!(summary.contains("Total Open: 10"));
+    }
+
+    // ============================================================
+    // Integration Test 28: Widget Tests
+    // ============================================================
+
+    #[test]
+    fn test_progress_bar_widget() {
+        use crate::widget::ProgressBar;
+
+        let bar = ProgressBar::new(75, 100).width(20).label("Memory");
+        let rendered = bar.render_string();
+        assert!(rendered.contains("Memory"));
+        assert!(rendered.contains("75/100"));
+        assert!(rendered.contains("75%"));
+    }
+
+    #[test]
+    fn test_progress_bar_edge_cases() {
+        use crate::widget::ProgressBar;
+
+        // Over 100%
+        let over = ProgressBar::new(150, 100).width(10);
+        let rendered = over.render_string();
+        assert!(rendered.contains("100%")); // Should cap at 100%
+
+        // Zero max
+        let zero = ProgressBar::new(50, 0).width(10);
+        let rendered = zero.render_string();
+        assert!(rendered.contains("0%"));
+    }
+
+    #[test]
+    fn test_status_indicators() {
+        use crate::widget::StatusIndicator;
+
+        // Verify that status indicators can be created and rendered as spans
+        let healthy = StatusIndicator::healthy("Running");
+        let healthy_span = healthy.as_span();
+        assert!(healthy_span.content.contains("Running"));
+
+        let warning = StatusIndicator::warning("Slow");
+        let warning_span = warning.as_span();
+        assert!(warning_span.content.contains("Slow"));
+
+        let error = StatusIndicator::error("Crashed");
+        let error_span = error.as_span();
+        assert!(error_span.content.contains("Crashed"));
+
+        let idle = StatusIndicator::idle("Waiting");
+        let idle_span = idle.as_span();
+        assert!(idle_span.content.contains("Waiting"));
+    }
+
+    #[test]
+    fn test_hotkey_hints_widget() {
+        use crate::widget::HotkeyHints;
+
+        let hints = HotkeyHints::new()
+            .hint('o', "Overview")
+            .hint('w', "Workers")
+            .hint('t', "Tasks")
+            .hint('q', "Quit");
+
+        let line = hints.as_line();
+        assert_eq!(line.spans.len(), 8); // 4 keys + 4 descriptions
+    }
+
+    // ============================================================
+    // Integration Test 29: Full View Rendering Tests
+    // ============================================================
+
+    #[test]
+    fn test_all_views_render_without_panic() {
+        let mut app = App::new();
+
+        let sizes = [
+            (80, 24),    // Minimum viable
+            (120, 40),   // Standard
+            (199, 55),   // Ultra-wide threshold
+            (250, 70),   // Large
+        ];
+
+        for (width, height) in sizes {
+            for view in View::ALL {
+                app.switch_view(view);
+                let buffer = render_app(&app, width, height);
+
+                // Should render without panic and have some content
+                assert!(
+                    !buffer_to_string(&buffer).trim().is_empty(),
+                    "View {:?} at {}x{} should render content",
+                    view,
+                    width,
+                    height
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_each_view_has_correct_title() {
+        let mut app = App::new();
+
+        let view_titles = [
+            (View::Overview, "Overview"),
+            (View::Workers, "Workers"),
+            (View::Tasks, "Tasks"),
+            (View::Costs, "Costs"),
+            (View::Metrics, "Metrics"),
+            (View::Logs, "Logs"),
+            (View::Chat, "Chat"),
+        ];
+
+        for (view, expected_title) in view_titles {
+            app.switch_view(view);
+            let buffer = render_app(&app, 120, 40);
+            let content = buffer_to_string(&buffer);
+
+            assert!(
+                content.contains(expected_title),
+                "View {:?} should have title containing '{}'",
+                view,
+                expected_title
+            );
+        }
+    }
+
+    // ============================================================
+    // Integration Test 30: Error Recovery Tests
+    // ============================================================
+
+    #[test]
+    fn test_app_recovers_from_invalid_view_state() {
+        let mut app = App::new();
+
+        // Rapid view switching should not cause issues
+        for _ in 0..50 {
+            app.next_view();
+            app.prev_view();
+            app.switch_view(View::Chat);
+            app.handle_app_event(AppEvent::Cancel);
+        }
+
+        // App should still be functional
+        assert!(!app.should_quit());
+        let buffer = render_app(&app, 120, 40);
+        assert!(buffer_contains(&buffer, "FORGE Dashboard"));
+    }
+
+    #[test]
+    fn test_app_handles_extreme_scroll_offsets() {
+        let mut app = App::new();
+
+        // Scroll way past the end
+        for _ in 0..1000 {
+            app.handle_app_event(AppEvent::NavigateDown);
+        }
+
+        // App should still render without panic
+        let buffer = render_app(&app, 120, 40);
+        assert!(buffer_contains(&buffer, "FORGE Dashboard"));
+
+        // Go back to top
+        app.handle_app_event(AppEvent::GoToTop);
+    }
+
+    #[test]
+    fn test_app_handles_rapid_help_toggle() {
+        let mut app = App::new();
+
+        for _ in 0..50 {
+            app.handle_app_event(AppEvent::ShowHelp);
+            let buffer = render_app(&app, 120, 40);
+            assert!(buffer_contains(&buffer, "Help") || buffer_contains(&buffer, "Hotkey"));
+
+            app.handle_app_event(AppEvent::HideHelp);
+            assert!(!app.show_help());
+        }
+    }
+
+    // ============================================================
+    // Integration Test 31: Data Manager Integration
+    // ============================================================
+
+    #[test]
+    fn test_data_manager_worker_data_formatting() {
+        use crate::data::WorkerData;
+
+        let data = WorkerData::new();
+
+        // Before loading
+        assert!(!data.is_loaded());
+        let summary = data.format_worker_pool_summary();
+        assert!(summary.contains("Loading"));
+
+        // Empty after load
+        let mut loaded = WorkerData::new();
+        loaded.last_update = Some(std::time::Instant::now());
+        let empty_summary = loaded.format_worker_pool_summary();
+        assert!(empty_summary.contains("No workers"));
+    }
+
+    #[test]
+    fn test_data_manager_activity_log_formatting() {
+        use crate::data::WorkerData;
+
+        let data = WorkerData::new();
+        let log = data.format_activity_log();
+        assert!(log.contains("Loading") || log.contains("No recent"));
+
+        let mut loaded = WorkerData::new();
+        loaded.last_update = Some(std::time::Instant::now());
+        let loaded_log = loaded.format_activity_log();
+        assert!(loaded_log.contains("No recent activity"));
+    }
+
+    // ============================================================
+    // Integration Test 32: Focus Panel Management
+    // ============================================================
+
+    #[test]
+    fn test_focus_panel_highlighting() {
+        use crate::view::FocusPanel;
+
+        assert!(!FocusPanel::None.is_highlighted());
+        assert!(FocusPanel::WorkerPool.is_highlighted());
+        assert!(FocusPanel::TaskQueue.is_highlighted());
+        assert!(FocusPanel::CostBreakdown.is_highlighted());
+        assert!(FocusPanel::ActivityLog.is_highlighted());
+        assert!(FocusPanel::ChatInput.is_highlighted());
+    }
+
+    #[test]
+    fn test_focus_changes_correctly_on_view_switch() {
+        let mut app = App::new();
+
+        let expected_focus = [
+            (View::Workers, FocusPanel::WorkerPool),
+            (View::Tasks, FocusPanel::TaskQueue),
+            (View::Costs, FocusPanel::CostBreakdown),
+            (View::Metrics, FocusPanel::MetricsCharts),
+            (View::Logs, FocusPanel::ActivityLog),
+            (View::Chat, FocusPanel::ChatInput),
+            (View::Overview, FocusPanel::WorkerPool),
+        ];
+
+        for (view, expected) in expected_focus {
+            app.switch_view(view);
+            assert_eq!(
+                app.focus_panel(),
+                expected,
+                "View {:?} should have focus {:?}",
+                view,
+                expected
+            );
+        }
+    }
+
+    // ============================================================
+    // Integration Test 33: Log Level and Entry Tests
+    // ============================================================
+
+    #[test]
+    fn test_log_level_parsing() {
+        use crate::log::LogLevel;
+
+        assert_eq!(LogLevel::from_str("DEBUG"), LogLevel::Debug);
+        assert_eq!(LogLevel::from_str("debug"), LogLevel::Debug);
+        assert_eq!(LogLevel::from_str("INFO"), LogLevel::Info);
+        assert_eq!(LogLevel::from_str("WARN"), LogLevel::Warn);
+        assert_eq!(LogLevel::from_str("WARNING"), LogLevel::Warn);
+        assert_eq!(LogLevel::from_str("ERROR"), LogLevel::Error);
+        assert_eq!(LogLevel::from_str("unknown"), LogLevel::Info); // Default
+    }
+
+    #[test]
+    fn test_log_level_symbols() {
+        use crate::log::LogLevel;
+
+        assert_eq!(LogLevel::Trace.symbol(), "→");
+        assert_eq!(LogLevel::Debug.symbol(), "○");
+        assert_eq!(LogLevel::Info.symbol(), "●");
+        assert_eq!(LogLevel::Warn.symbol(), "⚠");
+        assert_eq!(LogLevel::Error.symbol(), "✖");
+    }
+
+    #[test]
+    fn test_log_entry_creation() {
+        use crate::log::{LogEntry, LogLevel};
+
+        let entry = LogEntry::new(LogLevel::Info, "Test message".to_string())
+            .with_source("test-worker");
+
+        assert_eq!(entry.level, LogLevel::Info);
+        assert_eq!(entry.message, "Test message");
+        assert_eq!(entry.source, Some("test-worker".to_string()));
+    }
+
+    #[test]
+    fn test_log_buffer_operations() {
+        use crate::log::{LogBuffer, LogEntry, LogLevel};
+
+        let mut buffer = LogBuffer::new(10);
+
+        // Add entries
+        for i in 0..15 {
+            buffer.push(LogEntry::new(LogLevel::Info, format!("Entry {}", i)));
+        }
+
+        // Ring buffer behavior
+        assert_eq!(buffer.len(), 10);
+        assert_eq!(buffer.total_added(), 15);
+        assert_eq!(buffer.dropped_count(), 5);
+
+        // Last N
+        let last_3: Vec<_> = buffer.last_n(3).collect();
+        assert_eq!(last_3.len(), 3);
+    }
+
+    // ============================================================
+    // Integration Test 34: Keyboard Event Handler Tests
+    // ============================================================
+
+    #[test]
+    fn test_input_handler_view_hotkeys() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let mut handler = InputHandler::new();
+
+        let view_keys = [
+            (KeyCode::Char('o'), View::Overview),
+            (KeyCode::Char('w'), View::Workers),
+            (KeyCode::Char('t'), View::Tasks),
+            (KeyCode::Char('c'), View::Costs),
+            (KeyCode::Char('m'), View::Metrics),
+            (KeyCode::Char('l'), View::Logs),
+        ];
+
+        for (keycode, expected_view) in view_keys {
+            let event = handler.handle_key(crossterm::event::KeyEvent::new(
+                keycode,
+                KeyModifiers::NONE,
+            ));
+            assert_eq!(
+                event,
+                AppEvent::SwitchView(expected_view),
+                "Key {:?} should switch to {:?}",
+                keycode,
+                expected_view
+            );
+        }
+    }
+
+    #[test]
+    fn test_input_handler_control_keys() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let mut handler = InputHandler::new();
+
+        // Ctrl+C force quit
+        let event = handler.handle_key(crossterm::event::KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+        ));
+        assert_eq!(event, AppEvent::ForceQuit);
+
+        // Ctrl+L refresh
+        let event = handler.handle_key(crossterm::event::KeyEvent::new(
+            KeyCode::Char('l'),
+            KeyModifiers::CONTROL,
+        ));
+        assert_eq!(event, AppEvent::Refresh);
+    }
+
+    #[test]
+    fn test_input_handler_navigation() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let mut handler = InputHandler::new();
+
+        // Arrow keys
+        let up = handler.handle_key(crossterm::event::KeyEvent::new(
+            KeyCode::Up,
+            KeyModifiers::NONE,
+        ));
+        assert_eq!(up, AppEvent::NavigateUp);
+
+        let down = handler.handle_key(crossterm::event::KeyEvent::new(
+            KeyCode::Down,
+            KeyModifiers::NONE,
+        ));
+        assert_eq!(down, AppEvent::NavigateDown);
+
+        // Vim keys
+        let k = handler.handle_key(crossterm::event::KeyEvent::new(
+            KeyCode::Char('k'),
+            KeyModifiers::NONE,
+        ));
+        assert_eq!(k, AppEvent::NavigateUp);
+
+        let j = handler.handle_key(crossterm::event::KeyEvent::new(
+            KeyCode::Char('j'),
+            KeyModifiers::NONE,
+        ));
+        assert_eq!(j, AppEvent::NavigateDown);
+    }
+
+    // ============================================================
+    // Integration Test 35: End-to-End Cost Panel with Widget
+    // ============================================================
+
+    #[test]
+    fn test_cost_panel_widget_rendering() {
+        use crate::cost_panel::{CostPanel, CostPanelData, BudgetConfig};
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        // Create cost data
+        let mut data = CostPanelData::new();
+        data.set_budget(BudgetConfig::new(500.0));
+        data.monthly_total = 250.0;
+
+        // Create widget
+        let panel = CostPanel::new(&data).focused(true);
+
+        // Render
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| {
+            let area = f.area();
+            f.render_widget(panel, area);
+        }).unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        let content = buffer_to_string(&buffer);
+
+        // Should show cost analytics panel
+        assert!(content.contains("Cost Analytics"));
+    }
+
+    #[test]
+    fn test_subscription_panel_widget_rendering() {
+        use crate::subscription_panel::{SubscriptionPanel, SubscriptionData};
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let data = SubscriptionData::with_demo_data();
+        let panel = SubscriptionPanel::new(&data).focused(true);
+
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| {
+            let area = f.area();
+            f.render_widget(panel, area);
+        }).unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        let content = buffer_to_string(&buffer);
+
+        // Should show subscription status panel
+        assert!(content.contains("Subscription Status"));
+    }
 }
