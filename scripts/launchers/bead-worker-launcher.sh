@@ -312,7 +312,15 @@ fi
 # =============================================================================
 STATUS_FILE=~/.forge/status/$SESSION_NAME.json
 
-# Build status JSON
+# Determine current_task value (string format per ADR 0005)
+CURRENT_TASK_VALUE=""
+if [[ -n "$BEAD_REF" ]]; then
+  CURRENT_TASK_VALUE="$BEAD_REF"
+else
+  CURRENT_TASK_VALUE=""
+fi
+
+# Build status JSON (per ADR 0005 specification)
 cat > "$STATUS_FILE" << EOF
 {
   "worker_id": "$SESSION_NAME",
@@ -322,41 +330,9 @@ cat > "$STATUS_FILE" << EOF
   "pid": $TMUX_PID,
   "started_at": "$(date -Iseconds)",
   "last_activity": "$(date -Iseconds)",
-  "current_task": {
-EOF
-
-if [[ -n "$BEAD_REF" ]]; then
-  cat >> "$STATUS_FILE" << EOF
-    "bead_id": "$BEAD_REF",
-    "bead_title": "$(echo "$BEAD_TITLE" | sed 's/"/\\"/g')",
-    "bead_priority": "$BEAD_PRIO"
-EOF
-else
-  cat >> "$STATUS_FILE" << EOF
-    "type": "generic",
-    "description": "No specific bead assigned"
-EOF
-fi
-
-cat >> "$STATUS_FILE" << EOF
-  },
-  "tasks_completed": 0,
-  "metadata": {
-EOF
-
-if [[ -n "$BEAD_REF" ]]; then
-  cat >> "$STATUS_FILE" << EOF
-    "type": "bead_worker",
-    "bead_id": "$BEAD_REF"
-EOF
-else
-  cat >> "$STATUS_FILE" << EOF
-    "type": "generic_worker"
-EOF
-fi
-
-cat >> "$STATUS_FILE" << EOF
-  }
+  "uptime_seconds": 0,
+  "current_task": "${CURRENT_TASK_VALUE}",
+  "tasks_completed": 0
 }
 EOF
 

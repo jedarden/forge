@@ -46,15 +46,20 @@ pub mod backend;
 pub mod config;
 pub mod context;
 pub mod error;
+pub mod provider;
 pub mod rate_limit;
 pub mod tools;
 
 // Re-export main types
 pub use audit::{AuditEntry, AuditLogger};
 pub use backend::{ChatBackend, ChatResponse};
-pub use config::ChatConfig;
+pub use config::{ChatConfig, ProviderType};
 pub use context::{ContextProvider, DashboardContext};
 pub use error::{ChatError, Result};
+pub use provider::{
+    ChatProvider, ClaudeApiProvider, ClaudeCliConfig, ClaudeCliProvider, MockProvider,
+    ProviderResponse, ProviderTool,
+};
 pub use rate_limit::RateLimiter;
 pub use tools::{
     ActionConfirmation, ChatTool, ToolCall, ToolRegistry, ToolResult,

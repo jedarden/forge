@@ -29,6 +29,55 @@ pub struct ChatConfig {
 
     /// Response timeout in seconds
     pub timeout_secs: u64,
+
+    /// Provider type (claude-api, claude-cli, mock)
+    /// Defaults to claude-api if not specified.
+    /// Can also be set via FORGE_CHAT_PROVIDER environment variable.
+    #[serde(default)]
+    pub provider: ProviderType,
+}
+
+/// Provider type for the chat backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderType {
+    /// Claude API via direct HTTP requests
+    ClaudeApi,
+
+    /// Claude CLI via stdin/stdout
+    ClaudeCli,
+
+    /// Mock provider for testing
+    Mock,
+}
+
+impl Default for ProviderType {
+    fn default() -> Self {
+        Self::ClaudeApi
+    }
+}
+
+impl std::fmt::Display for ProviderType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ClaudeApi => write!(f, "claude-api"),
+            Self::ClaudeCli => write!(f, "claude-cli"),
+            Self::Mock => write!(f, "mock"),
+        }
+    }
+}
+
+impl std::str::FromStr for ProviderType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "claude-api" | "claude_api" | "api" => Ok(Self::ClaudeApi),
+            "claude-cli" | "claude_cli" | "cli" => Ok(Self::ClaudeCli),
+            "mock" => Ok(Self::Mock),
+            _ => Err(format!("Unknown provider type: {}", s)),
+        }
+    }
 }
 
 impl Default for ChatConfig {
@@ -42,6 +91,7 @@ impl Default for ChatConfig {
             confirmations: ConfirmationConfig::default(),
             api_base_url: None,
             timeout_secs: 30,
+            provider: ProviderType::default(),
         }
     }
 }
