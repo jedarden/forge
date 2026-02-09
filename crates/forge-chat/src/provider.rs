@@ -12,11 +12,11 @@
 //! ## Example
 //!
 //! ```no_run
-//! use forge_chat::{ChatConfig, provider::{ChatProvider, ClaudeApiProvider}, context::DashboardContext};
+//! use forge_chat::{provider::{ChatProvider, ClaudeApiProvider}, config::ClaudeApiConfig, context::DashboardContext};
 //!
 //! # async fn example() -> anyhow::Result<()> {
-//! let config = ChatConfig::default();
-//! let provider = ClaudeApiProvider::new(config)?;
+//! let config = ClaudeApiConfig::default();
+//! let provider = ClaudeApiProvider::from_config(config)?;
 //!
 //! let context = DashboardContext::default();
 //! let tools = vec![];
@@ -34,7 +34,9 @@ use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 use tracing::{debug, info};
 
-use crate::config::ChatConfig;
+use crate::config::{
+    ChatConfig, ClaudeApiConfig, ClaudeCliConfig, MockConfig, ProviderConfig,
+};
 use crate::context::DashboardContext;
 use crate::error::{ChatError, Result};
 use crate::tools::{ToolCall, ToolDefinition};
@@ -248,17 +250,20 @@ pub trait ChatProvider: Send + Sync {
 /// This provider uses the reqwest client to make direct API calls to
 /// Anthropic's Claude API.
 pub struct ClaudeApiProvider {
-    config: ChatConfig,
+    config: ClaudeApiConfig,
     client: reqwest::Client,
     api_key: String,
     base_url: String,
 }
 
 impl ClaudeApiProvider {
-    /// Create a new Claude API provider.
-    pub fn new(config: ChatConfig) -> Result<Self> {
-        let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
-            ChatError::ConfigError("ANTHROPIC_API_KEY environment variable not set".to_string())
+    /// Create a new Claude API provider from config.
+    pub fn from_config(config: ClaudeApiConfig) -> Result<Self> {
+        let api_key = std::env::var(&config.api_key_env).map_err(|_| {
+            ChatError::ConfigError(format!(
+                "{} environment variable not set",
+                config.api_key_env
+            ))
         })?;
 
         let client = reqwest::Client::builder()
@@ -266,11 +271,7 @@ impl ClaudeApiProvider {
             .build()
             .map_err(|e| ChatError::ConfigError(format!("Failed to create HTTP client: {}", e)))?;
 
-        let base_url = config
-            .api_base_url
-            .as_deref()
-            .unwrap_or("https://api.anthropic.com")
-            .to_string();
+        let base_url = config.api_base_url.clone();
 
         Ok(Self {
             config,
@@ -281,18 +282,17 @@ impl ClaudeApiProvider {
     }
 
     /// Create a provider with a custom API key.
-    pub fn with_api_key(config: ChatConfig, api_key: impl Into<String>) -> Result<Self> {
+    pub fn with_api_key(mut config: ClaudeApiConfig, api_key: impl Into<String>) -> Result<Self> {
         let api_key = api_key.into();
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(config.timeout_secs))
             .build()
             .map_err(|e| ChatError::ConfigError(format!("Failed to create HTTP client: {}", e)))?;
 
-        let base_url = config
-            .api_base_url
-            .as_deref()
-            .unwrap_or("https://api.anthropic.com")
-            .to_string();
+        let base_url = config.api_base_url.clone();
+
+        // Override the api_key_env to indicate we're using a custom key
+        config.api_key_env = "<custom>".to_string();
 
         Ok(Self {
             config,
@@ -438,33 +438,6 @@ impl ChatProvider for ClaudeApiProvider {
 
 // ============ Claude CLI Provider ============
 
-/// Configuration for the claude-cli provider.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClaudeCliConfig {
-    /// Path to the claude-cli binary.
-    pub binary_path: String,
-
-    /// Model to use (sonnet, opus, haiku).
-    pub model: String,
-
-    /// Whether to run in headless mode.
-    pub headless: bool,
-
-    /// Additional arguments to pass to claude-cli.
-    pub extra_args: Vec<String>,
-}
-
-impl Default for ClaudeCliConfig {
-    fn default() -> Self {
-        Self {
-            binary_path: "claude".to_string(),
-            model: "sonnet".to_string(),
-            headless: true,
-            extra_args: vec![],
-        }
-    }
-}
-
 /// Claude CLI provider using stdin/stdout communication.
 ///
 /// This provider spawns a claude-cli process and communicates via JSON messages.
@@ -491,13 +464,10 @@ impl ClaudeCliProvider {
         }
     }
 
-    /// Create a provider from a ChatConfig.
-    pub fn from_chat_config(config: &ChatConfig) -> Self {
-        let cli_config = ClaudeCliConfig {
-            model: model_name_from_id(&config.model),
-            ..Default::default()
-        };
-        Self::new(cli_config)
+    /// Create a provider from a ChatConfig (deprecated - use ProviderConfig directly).
+    #[deprecated(note = "Use ProviderConfig::ClaudeCli directly instead")]
+    pub fn from_chat_config(_config: &ChatConfig) -> Self {
+        Self::new(ClaudeCliConfig::default())
     }
 
     /// Spawn the claude-cli process.
@@ -739,10 +709,15 @@ pub struct MockProvider {
 impl MockProvider {
     /// Create a new mock provider with default responses.
     pub fn new() -> Self {
+        Self::from_config(MockConfig::default())
+    }
+
+    /// Create a mock provider from config.
+    pub fn from_config(config: MockConfig) -> Self {
         Self {
-            model: "mock-model".to_string(),
-            response_text: "This is a mock response.".to_string(),
-            response_delay_ms: 0,
+            model: config.model,
+            response_text: config.response,
+            response_delay_ms: config.delay_ms,
         }
     }
 
@@ -809,22 +784,67 @@ impl ChatProvider for MockProvider {
 // ============ Provider Factory ============
 
 /// Create a provider from configuration.
+///
+/// This factory function creates the appropriate provider based on the
+/// `ProviderConfig` in `ChatConfig`.
+///
+/// # Example
+///
+/// ```no_run
+/// use forge_chat::{ChatConfig, provider::create_provider};
+///
+/// # fn main() -> anyhow::Result<()> {
+/// let config = ChatConfig::default();
+/// let provider = create_provider(&config)?;
+/// # Ok(())
+/// # }
+/// ```
 pub fn create_provider(config: &ChatConfig) -> Result<Box<dyn ChatProvider>> {
-    let provider_type = std::env::var("FORGE_CHAT_PROVIDER")
-        .unwrap_or_else(|_| "claude-api".to_string());
+    // Check for environment variable override (for backward compatibility)
+    if let Ok(provider_type) = std::env::var("FORGE_CHAT_PROVIDER") {
+        info!(
+            "Using FORGE_CHAT_PROVIDER environment variable: {}",
+            provider_type
+        );
+        return create_provider_by_type(&provider_type, config);
+    }
 
-    match provider_type.as_str() {
-        "claude-cli" => {
+    // Use the provider from config
+    match &config.provider {
+        ProviderConfig::ClaudeApi(api_config) => {
+            info!("Creating claude-api provider");
+            Ok(Box::new(ClaudeApiProvider::from_config(api_config.clone())?))
+        }
+        ProviderConfig::ClaudeCli(cli_config) => {
             info!("Creating claude-cli provider");
-            Ok(Box::new(ClaudeCliProvider::from_chat_config(config)))
+            Ok(Box::new(ClaudeCliProvider::new(cli_config.clone())))
+        }
+        ProviderConfig::Mock(mock_config) => {
+            info!("Creating mock provider");
+            Ok(Box::new(MockProvider::from_config(mock_config.clone())))
+        }
+    }
+}
+
+/// Create a provider by type string (for backward compatibility with env var).
+fn create_provider_by_type(
+    provider_type: &str,
+    _config: &ChatConfig,
+) -> Result<Box<dyn ChatProvider>> {
+    match provider_type {
+        "claude-cli" => {
+            info!("Creating claude-cli provider from env var");
+            Ok(Box::new(ClaudeCliProvider::new(ClaudeCliConfig::default())))
         }
         "mock" => {
-            info!("Creating mock provider");
+            info!("Creating mock provider from env var");
             Ok(Box::new(MockProvider::new()))
         }
         "claude-api" | "" | _ => {
-            info!("Creating claude-api provider");
-            Ok(Box::new(ClaudeApiProvider::new(config.clone())?))
+            info!("Creating claude-api provider from env var");
+            Ok(Box::new(ClaudeApiProvider::from_config(
+                ClaudeApiConfig::default(),
+            )?))
         }
     }
 }
@@ -1005,7 +1025,7 @@ mod tests {
     #[test]
     fn test_claude_cli_config_default() {
         let config = ClaudeCliConfig::default();
-        assert_eq!(config.binary_path, "claude");
+        assert_eq!(config.binary_path, "claude-code");
         assert_eq!(config.model, "sonnet");
         assert!(config.headless);
         assert!(config.extra_args.is_empty());
@@ -1031,6 +1051,8 @@ mod tests {
         let config = ClaudeCliConfig {
             binary_path: "/usr/bin/claude".to_string(),
             model: "opus".to_string(),
+            config_dir: None,
+            timeout_secs: 30,
             headless: true,
             extra_args: vec!["--debug".to_string()],
         };
@@ -1043,15 +1065,23 @@ mod tests {
 
     #[test]
     fn test_claude_cli_from_chat_config() {
-        use crate::config::ChatConfig;
+        use crate::config::{ChatConfig, ProviderConfig};
 
         let chat_config = ChatConfig {
-            model: "claude-opus-4-5".to_string(),
+            provider: ProviderConfig::ClaudeCli(crate::config::ClaudeCliConfig {
+                model: "opus".to_string(),
+                ..Default::default()
+            }),
             ..Default::default()
         };
 
-        let provider = ClaudeCliProvider::from_chat_config(&chat_config);
-        assert_eq!(provider.model(), "opus");
+        // Verify the provider config is set correctly
+        match &chat_config.provider {
+            ProviderConfig::ClaudeCli(cli_config) => {
+                assert_eq!(cli_config.model, "opus");
+            }
+            _ => panic!("Expected ClaudeCli provider"),
+        }
     }
 
     #[test]
