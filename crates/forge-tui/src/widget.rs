@@ -532,6 +532,247 @@ impl Default for HotkeyHints {
     }
 }
 
+/// Sparkline widget for displaying trend data using Unicode block characters.
+///
+/// Uses 8-level Unicode blocks (▁▂▃▄▅▆▇█) to render compact trend visualizations.
+/// Automatically scales values to fit the display area.
+#[derive(Debug, Clone)]
+pub struct SparklineWidget<'a> {
+    /// Data values to render
+    data: &'a [u64],
+    /// Widget style
+    style: Style,
+    /// Direction of rendering
+    direction: SparklineDirection,
+    /// Optional label/title
+    label: Option<&'a str>,
+    /// Whether to show min/max values
+    show_range: bool,
+}
+
+/// Direction for sparkline rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SparklineDirection {
+    /// Render left to right
+    LeftToRight,
+    /// Render right to left
+    RightToLeft,
+}
+
+impl Default for SparklineDirection {
+    fn default() -> Self {
+        Self::LeftToRight
+    }
+}
+
+impl<'a> SparklineWidget<'a> {
+    /// Create a new sparkline widget.
+    pub fn new(data: &'a [u64]) -> Self {
+        Self {
+            data,
+            style: Style::default().fg(Color::Green),
+            direction: SparklineDirection::default(),
+            label: None,
+            show_range: false,
+        }
+    }
+
+    /// Set the style (color, modifiers).
+    pub fn style(mut self, style: Style) -> Self {
+        self.style = style;
+        self
+    }
+
+    /// Set the foreground color.
+    pub fn color(mut self, color: Color) -> Self {
+        self.style = self.style.fg(color);
+        self
+    }
+
+    /// Set the rendering direction.
+    pub fn direction(mut self, direction: SparklineDirection) -> Self {
+        self.direction = direction;
+        self
+    }
+
+    /// Set the label text.
+    pub fn label(mut self, label: &'a str) -> Self {
+        self.label = Some(label);
+        self
+    }
+
+    /// Show min/max range below the sparkline.
+    pub fn show_range(mut self, show: bool) -> Self {
+        self.show_range = show;
+        self
+    }
+
+    /// Render the sparkline as a string for use in text contexts.
+    ///
+    /// This is useful when you need the sparkline as plain text rather than
+    /// rendering it directly to a buffer.
+    pub fn render_string(&self, width: usize) -> String {
+        if self.data.is_empty() {
+            return " ".repeat(width);
+        }
+
+        // Unicode block characters for 8 levels
+        const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+        let max_val = *self.data.iter().max().unwrap_or(&1);
+        let min_val = *self.data.iter().min().unwrap_or(&0);
+        let range = if max_val > min_val {
+            (max_val - min_val) as f64
+        } else {
+            1.0
+        };
+
+        // Sample data to fit width
+        let step = if width > 1 {
+            self.data.len() as f64 / width as f64
+        } else {
+            0.0
+        };
+
+        let mut result = String::with_capacity(width);
+
+        match self.direction {
+            SparklineDirection::LeftToRight => {
+                for i in 0..width {
+                    let idx = if step > 0.0 {
+                        ((i as f64) * step).floor() as usize
+                    } else {
+                        0
+                    };
+                    let idx = idx.min(self.data.len().saturating_sub(1));
+                    let val = self.data[idx];
+
+                    let normalized = if range > 0.0 {
+                        ((val - min_val) as f64 / range).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+
+                    let block_idx = (normalized * 7.0).round() as usize;
+                    let block_idx = block_idx.min(7);
+                    result.push(BLOCKS[block_idx]);
+                }
+            }
+            SparklineDirection::RightToLeft => {
+                for i in (0..width).rev() {
+                    let idx = if step > 0.0 {
+                        ((i as f64) * step).floor() as usize
+                    } else {
+                        0
+                    };
+                    let idx = idx.min(self.data.len().saturating_sub(1));
+                    let val = self.data[idx];
+
+                    let normalized = if range > 0.0 {
+                        ((val - min_val) as f64 / range).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+
+                    let block_idx = (normalized * 7.0).round() as usize;
+                    let block_idx = block_idx.min(7);
+                    result.push(BLOCKS[block_idx]);
+                }
+                result = result.chars().rev().collect();
+            }
+        }
+
+        result
+    }
+
+    /// Get the range (min, max) of the data.
+    pub fn range(&self) -> (u64, u64) {
+        if self.data.is_empty() {
+            return (0, 0);
+        }
+        let min = *self.data.iter().min().unwrap_or(&0);
+        let max = *self.data.iter().max().unwrap_or(&0);
+        (min, max)
+    }
+}
+
+impl<'a> Widget for SparklineWidget<'a> {
+    fn render(self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+        if area.width < 2 || area.height == 0 {
+            return;
+        }
+
+        let width = area.width.saturating_sub(2) as usize; // Leave space for border
+        let sparkline_str = self.render_string(width);
+
+        let mut lines = Vec::new();
+
+        // Add label if present
+        if let Some(label) = self.label {
+            lines.push(Line::from(vec![
+                Span::styled(label, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            ]));
+            lines.push(Line::from(Span::styled(
+                &sparkline_str,
+                self.style,
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                &sparkline_str,
+                self.style,
+            )));
+        }
+
+        // Add range if enabled
+        if self.show_range && !self.data.is_empty() {
+            let (min, max) = self.range();
+            lines.push(Line::from(vec![
+                Span::styled(format!("{}", min), Style::default().fg(Color::DarkGray)),
+                Span::raw(" - "),
+                Span::styled(format!("{}", max), Style::default().fg(Color::White)),
+            ]));
+        }
+
+        let paragraph = Paragraph::new(lines);
+        paragraph.render(area, buf);
+    }
+}
+
+/// Convenience function to render a sparkline as a string.
+///
+/// This is a simpler API for quick sparkline rendering when you don't need
+/// the full widget functionality.
+///
+/// # Arguments
+///
+/// * `values` - Slice of values to render
+/// * `width` - Target width in characters
+///
+/// # Returns
+///
+/// A string containing the sparkline using Unicode block characters.
+///
+/// # Example
+///
+/// ```
+/// use forge_tui::widget::render_sparkline;
+///
+/// let data = vec![1, 5, 3, 8, 4, 7, 2, 6];
+/// let sparkline = render_sparkline(&data, 8);
+/// assert_eq!(sparkline.chars().count(), 8);
+/// ```
+pub fn render_sparkline(values: &[u64], width: usize) -> String {
+    SparklineWidget::new(values).render_string(width)
+}
+
+/// Convenience function to render a sparkline from signed integers.
+///
+/// Converts i64 values to u64 for rendering. Negative values are treated as zero.
+pub fn render_sparkline_i64(values: &[i64], width: usize) -> String {
+    let unsigned: Vec<u64> = values.iter().map(|&v| v.max(0) as u64).collect();
+    SparklineWidget::new(&unsigned).render_string(width)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -591,5 +832,112 @@ mod tests {
 
         let line = hints.as_line();
         assert_eq!(line.spans.len(), 4); // 2 keys + 2 descriptions
+    }
+
+    // Sparkline widget tests
+    #[test]
+    fn test_sparkline_render_empty() {
+        let data: Vec<u64> = vec![];
+        let sparkline = SparklineWidget::new(&data).render_string(10);
+        assert_eq!(sparkline.len(), 10);
+        assert!(sparkline.chars().all(|c| c == ' '));
+    }
+
+    #[test]
+    fn test_sparkline_render_basic() {
+        let data = vec![1, 2, 3, 4, 5];
+        let sparkline = SparklineWidget::new(&data).render_string(5);
+        assert_eq!(sparkline.chars().count(), 5);
+        // Should contain some block characters
+        assert!(sparkline.contains('▁'));
+        assert!(sparkline.contains('█'));
+    }
+
+    #[test]
+    fn test_sparkline_width_limit() {
+        let data = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        let sparkline = SparklineWidget::new(&data).render_string(3);
+        assert_eq!(sparkline.chars().count(), 3);
+    }
+
+    #[test]
+    fn test_sparkline_all_same_values() {
+        let data = vec![5, 5, 5, 5, 5];
+        let sparkline = SparklineWidget::new(&data).render_string(5);
+        assert_eq!(sparkline.chars().count(), 5);
+        // All same values should still render something
+    }
+
+    #[test]
+    fn test_sparkline_range() {
+        let data = vec![10, 20, 30, 40, 50];
+        let widget = SparklineWidget::new(&data);
+        let (min, max) = widget.range();
+        assert_eq!(min, 10);
+        assert_eq!(max, 50);
+    }
+
+    #[test]
+    fn test_sparkline_empty_range() {
+        let data: Vec<u64> = vec![];
+        let widget = SparklineWidget::new(&data);
+        let (min, max) = widget.range();
+        assert_eq!(min, 0);
+        assert_eq!(max, 0);
+    }
+
+    #[test]
+    fn test_sparkline_color() {
+        let data = vec![1, 2, 3];
+        let widget = SparklineWidget::new(&data).color(Color::Cyan);
+        assert_eq!(widget.style.fg, Some(Color::Cyan));
+    }
+
+    #[test]
+    fn test_sparkline_label() {
+        let data = vec![1, 2, 3];
+        let widget = SparklineWidget::new(&data).label("Trend");
+        assert_eq!(widget.label, Some("Trend"));
+    }
+
+    #[test]
+    fn test_sparkline_direction() {
+        let data = vec![1, 2, 3, 4, 5];
+        let widget_ltr = SparklineWidget::new(&data).direction(SparklineDirection::LeftToRight);
+        let widget_rtl = SparklineWidget::new(&data).direction(SparklineDirection::RightToLeft);
+        assert_eq!(widget_ltr.direction, SparklineDirection::LeftToRight);
+        assert_eq!(widget_rtl.direction, SparklineDirection::RightToLeft);
+    }
+
+    #[test]
+    fn test_render_sparkline_convenience() {
+        let data = vec![1, 5, 3, 8, 4, 7, 2, 6];
+        let sparkline = render_sparkline(&data, 10);
+        assert_eq!(sparkline.chars().count(), 10);
+    }
+
+    #[test]
+    fn test_render_sparkline_i64_convenience() {
+        let data = vec![1i64, 5, 3, 8, 4, 7, 2, 6];
+        let sparkline = render_sparkline_i64(&data, 8);
+        assert_eq!(sparkline.chars().count(), 8);
+    }
+
+    #[test]
+    fn test_render_sparkline_i64_negative() {
+        let data = vec![-1i64, -5, 0, 3, 5];
+        let sparkline = render_sparkline_i64(&data, 5);
+        // Negative values should be treated as zero, so we should still get a valid sparkline
+        assert_eq!(sparkline.chars().count(), 5);
+    }
+
+    #[test]
+    fn test_sparkline_wide_range() {
+        let data = vec![0, 100, 1000, 10000, 100000];
+        let sparkline = SparklineWidget::new(&data).render_string(10);
+        assert_eq!(sparkline.chars().count(), 10);
+        // Should contain both empty and full blocks
+        assert!(sparkline.contains('▁'));
+        assert!(sparkline.contains('█'));
     }
 }
