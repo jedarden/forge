@@ -425,9 +425,35 @@ pub struct DataManager {
     last_metrics_poll: Option<std::time::Instant>,
     /// Tokio runtime for async tmux discovery
     runtime: Option<tokio::runtime::Runtime>,
+    /// Dirty flag - whether data changed since last check
+    dirty: bool,
+    /// Cached worker count for quick comparison
+    cached_worker_count: usize,
+    /// Cached bead count for quick comparison
+    cached_bead_count: usize,
 }
 
 impl DataManager {
+    /// Check if data changed since last poll.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Clear the dirty flag.
+    pub fn clear_dirty(&mut self) {
+        self.dirty = false;
+    }
+
+    /// Take and clear the dirty flag.
+    pub fn take_dirty(&mut self) -> bool {
+        if self.dirty {
+            self.dirty = false;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Create a new DataManager, initializing the StatusWatcher, BeadManager, and CostDatabase.
     pub fn new() -> Self {
         let (watcher, init_error) = match StatusWatcher::new(StatusWatcherConfig::default()) {
@@ -469,6 +495,9 @@ impl DataManager {
             last_cost_poll: None,
             last_metrics_poll: None,
             runtime,
+            dirty: false,
+            cached_worker_count: 0,
+            cached_bead_count: 0,
         };
 
         // Initial data load
@@ -534,6 +563,9 @@ impl DataManager {
             last_cost_poll: None,
             last_metrics_poll: None,
             runtime,
+            dirty: false,
+            cached_worker_count: 0,
+            cached_bead_count: 0,
         };
 
         manager.poll_updates();
@@ -543,18 +575,32 @@ impl DataManager {
     /// Poll for updates from the StatusWatcher, BeadManager, CostDatabase, and tmux discovery.
     ///
     /// This should be called regularly (e.g., in the event loop).
-    pub fn poll_updates(&mut self) {
+    /// Returns true if any data changed.
+    pub fn poll_updates(&mut self) -> bool {
+        let mut changed = false;
+        let previous_worker_count = self.cached_worker_count;
+        let previous_bead_count = self.cached_bead_count;
+
         // Poll status watcher
         if let Some(ref mut watcher) = self.watcher {
-            // Drain all available events
-            while watcher.try_recv().is_some() {}
+            // Drain all available events and check if any were received
+            let mut events_received = false;
+            while watcher.try_recv().is_some() {
+                events_received = true;
+            }
 
-            // Update worker data from watcher state
-            self.worker_data.update_from_watcher(watcher);
+            // Only update if events were received
+            if events_received {
+                self.worker_data.update_from_watcher(watcher);
+                changed = true;
+            }
         }
 
         // Poll bead manager for task queue updates
-        self.bead_manager.poll_updates();
+        let beads_changed = self.bead_manager.poll_updates();
+        if beads_changed {
+            changed = true;
+        }
 
         // Periodically poll tmux discovery (less frequently)
         let should_poll_tmux = self
@@ -585,6 +631,17 @@ impl DataManager {
             self.poll_metrics_data();
             self.last_metrics_poll = Some(std::time::Instant::now());
         }
+
+        // Update cached counts and mark dirty if changed
+        self.cached_worker_count = self.worker_data.total_worker_count();
+        self.cached_bead_count = self.bead_manager.total_bead_count();
+
+        if changed || previous_worker_count != self.cached_worker_count ||
+           previous_bead_count != self.cached_bead_count {
+            self.dirty = true;
+        }
+
+        self.dirty
     }
 
     /// Poll cost database for updates.

@@ -40,7 +40,7 @@ mod tests {
     }
 
     /// Helper to render app and get the buffer.
-    fn render_app(app: &App, width: u16, height: u16) -> Buffer {
+    fn render_app(app: &mut App, width: u16, height: u16) -> Buffer {
         let mut terminal = test_terminal(width, height);
         terminal.draw(|frame| app.draw(frame)).unwrap();
         terminal.backend().buffer().clone()
@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn test_e2e_application_startup() {
         // Test that the application starts correctly and renders the default view
-        let app = App::new();
+        let mut app = App::new();
 
         // Verify initial state
         assert_eq!(app.current_view(), View::Overview);
@@ -122,7 +122,7 @@ mod tests {
         assert!(!app.show_help());
 
         // Render the application
-        let buffer = render_app(&app, 120, 40);
+        let buffer = render_app(&mut app, 120, 40);
 
         // Verify the header is rendered
         assert!(
@@ -160,7 +160,7 @@ mod tests {
 
         for (view, expected_content) in views {
             app.switch_view(view);
-            let buffer = render_app(&app, 120, 40);
+            let buffer = render_app(&mut app, 120, 40);
 
             assert!(
                 buffer_contains(&buffer, expected_content),
@@ -429,7 +429,7 @@ mod tests {
         }
 
         // Verify the input was captured (checking internal state via rendering)
-        let buffer = render_app(&app, 120, 40);
+        let buffer = render_app(&mut app, 120, 40);
         // The chat input should be visible in the rendered output
         assert!(
             buffer_contains(&buffer, "Chat") || buffer_contains(&buffer, "Input"),
@@ -462,7 +462,7 @@ mod tests {
         assert!(app.show_help());
 
         // Render with help overlay
-        let buffer = render_app(&app, 120, 40);
+        let buffer = render_app(&mut app, 120, 40);
         assert!(
             buffer_contains(&buffer, "Help") || buffer_contains(&buffer, "Hotkey"),
             "Help overlay should be visible"
@@ -597,7 +597,7 @@ mod tests {
             for view in View::ALL {
                 app.switch_view(view);
                 // Render each view to ensure no crashes
-                let _ = render_app(&app, 80, 24);
+                let _ = render_app(&mut app, 80, 24);
             }
         }
 
@@ -635,7 +635,7 @@ mod tests {
 
     #[test]
     fn test_e2e_stability_large_terminal_sizes() {
-        let app = App::new();
+        let mut app = App::new();
 
         // Test various terminal sizes including extreme cases
         let sizes = [
@@ -647,7 +647,7 @@ mod tests {
         ];
 
         for (width, height) in sizes {
-            let buffer = render_app(&app, width, height);
+            let buffer = render_app(&mut app, width, height);
             assert_eq!(buffer.area.width, width);
             assert_eq!(buffer.area.height, height);
         }
@@ -698,13 +698,13 @@ mod tests {
 
         // 1. Verify initial state
         assert_eq!(app.current_view(), View::Overview);
-        let buffer = render_app(&app, 120, 40);
+        let buffer = render_app(&mut app, 120, 40);
         assert!(buffer_contains(&buffer, "FORGE Dashboard"));
 
         // 2. Navigate through views
         app.switch_view(View::Workers);
         assert_eq!(app.current_view(), View::Workers);
-        let buffer = render_app(&app, 120, 40);
+        let buffer = render_app(&mut app, 120, 40);
         assert!(buffer_contains(&buffer, "Worker"));
 
         app.switch_view(View::Tasks);
@@ -712,14 +712,14 @@ mod tests {
 
         app.switch_view(View::Costs);
         assert_eq!(app.current_view(), View::Costs);
-        let buffer = render_app(&app, 120, 40);
+        let buffer = render_app(&mut app, 120, 40);
         // Costs view shows placeholder content since cost tracking isn't yet implemented
         assert!(buffer_contains(&buffer, "Cost") || buffer_contains(&buffer, "Loading"));
 
         // 3. Open help overlay
         app.handle_app_event(AppEvent::ShowHelp);
         assert!(app.show_help());
-        let buffer = render_app(&app, 120, 40);
+        let buffer = render_app(&mut app, 120, 40);
         assert!(buffer_contains(&buffer, "Help"));
 
         // Close help
@@ -1066,10 +1066,10 @@ mod tests {
         fs::write(status_dir.join("ui-test-worker.json"), worker_json).unwrap();
 
         // Initialize app with custom status dir
-        let app = App::with_status_dir(status_dir.clone());
+        let mut app = App::with_status_dir(status_dir.clone());
 
         // Render the app and verify UI shows the worker
-        let buffer = render_app(&app, 120, 40);
+        let buffer = render_app(&mut app, 120, 40);
 
         // The worker should appear in the worker pool display
         // When starting, the UI should show "Starting" or the starting indicator
@@ -1740,12 +1740,12 @@ mod tests {
         }
 
         // Create app with custom status dir
-        let app = App::with_status_dir(status_dir);
+        let mut app = App::with_status_dir(status_dir);
 
         // Render Workers view
         let mut app = app;
         app.switch_view(View::Workers);
-        let buffer = render_app(&app, 120, 40);
+        let buffer = render_app(&mut app, 120, 40);
 
         // UI should show worker information
         let content = buffer_to_string(&buffer);
@@ -2144,21 +2144,21 @@ mod tests {
 
     #[test]
     fn test_responsive_rendering_all_modes() {
-        let app = App::new();
+        let mut app = App::new();
 
         // Narrow mode
-        let narrow = render_app(&app, 80, 30);
+        let narrow = render_app(&mut app, 80, 30);
         assert!(buffer_contains(&narrow, "FORGE Dashboard"));
         assert!(buffer_contains(&narrow, "Worker Pool"));
 
         // Wide mode
-        let wide = render_app(&app, 150, 40);
+        let wide = render_app(&mut app, 150, 40);
         assert!(buffer_contains(&wide, "FORGE Dashboard"));
         assert!(buffer_contains(&wide, "Worker Pool"));
         assert!(buffer_contains(&wide, "Subscriptions"));
 
         // Ultra-wide mode
-        let ultrawide = render_app(&app, 220, 50);
+        let ultrawide = render_app(&mut app, 220, 50);
         assert!(buffer_contains(&ultrawide, "FORGE Dashboard"));
         assert!(buffer_contains(&ultrawide, "Cost Breakdown"));
         assert!(buffer_contains(&ultrawide, "Quick Actions"));
@@ -2166,17 +2166,17 @@ mod tests {
 
     #[test]
     fn test_responsive_panel_visibility() {
-        let app = App::new();
+        let mut app = App::new();
 
         // Narrow: 3 panels
-        let narrow = render_app(&app, 80, 30);
+        let narrow = render_app(&mut app, 80, 30);
         assert!(buffer_contains(&narrow, "Worker Pool"));
         assert!(buffer_contains(&narrow, "Task Queue"));
         assert!(buffer_contains(&narrow, "Activity Log"));
         assert!(!buffer_contains(&narrow, "Quick Actions"));
 
         // Wide: 4 panels
-        let wide = render_app(&app, 150, 40);
+        let wide = render_app(&mut app, 150, 40);
         assert!(buffer_contains(&wide, "Worker Pool"));
         assert!(buffer_contains(&wide, "Subscriptions"));
         assert!(buffer_contains(&wide, "Task Queue"));
@@ -2184,7 +2184,7 @@ mod tests {
         assert!(!buffer_contains(&wide, "Quick Actions"));
 
         // Ultra-wide: 6 panels
-        let ultrawide = render_app(&app, 220, 50);
+        let ultrawide = render_app(&mut app, 220, 50);
         assert!(buffer_contains(&ultrawide, "Worker Pool"));
         assert!(buffer_contains(&ultrawide, "Subscriptions"));
         assert!(buffer_contains(&ultrawide, "Task Queue"));
@@ -2221,7 +2221,7 @@ mod tests {
         app.handle_app_event(AppEvent::TextInput('p'));
 
         // Render and check input is captured
-        let buffer = render_app(&app, 120, 40);
+        let buffer = render_app(&mut app, 120, 40);
         assert!(buffer_contains(&buffer, "Chat") || buffer_contains(&buffer, "Input"));
     }
 
@@ -2452,7 +2452,7 @@ mod tests {
         for (width, height) in sizes {
             for view in View::ALL {
                 app.switch_view(view);
-                let buffer = render_app(&app, width, height);
+                let buffer = render_app(&mut app, width, height);
 
                 // Should render without panic and have some content
                 assert!(
@@ -2482,7 +2482,7 @@ mod tests {
 
         for (view, expected_title) in view_titles {
             app.switch_view(view);
-            let buffer = render_app(&app, 120, 40);
+            let buffer = render_app(&mut app, 120, 40);
             let content = buffer_to_string(&buffer);
 
             assert!(
@@ -2512,7 +2512,7 @@ mod tests {
 
         // App should still be functional
         assert!(!app.should_quit());
-        let buffer = render_app(&app, 120, 40);
+        let buffer = render_app(&mut app, 120, 40);
         assert!(buffer_contains(&buffer, "FORGE Dashboard"));
     }
 
@@ -2526,7 +2526,7 @@ mod tests {
         }
 
         // App should still render without panic
-        let buffer = render_app(&app, 120, 40);
+        let buffer = render_app(&mut app, 120, 40);
         assert!(buffer_contains(&buffer, "FORGE Dashboard"));
 
         // Go back to top
@@ -2539,7 +2539,7 @@ mod tests {
 
         for _ in 0..50 {
             app.handle_app_event(AppEvent::ShowHelp);
-            let buffer = render_app(&app, 120, 40);
+            let buffer = render_app(&mut app, 120, 40);
             assert!(buffer_contains(&buffer, "Help") || buffer_contains(&buffer, "Hotkey"));
 
             app.handle_app_event(AppEvent::HideHelp);
@@ -3166,10 +3166,10 @@ mod tests {
 
     #[test]
     fn test_responsive_rendering_ultrawide() {
-        let app = App::new();
+        let mut app = App::new();
 
         // Ultra-wide: 200x50
-        let buffer = render_app(&app, 200, 50);
+        let buffer = render_app(&mut app, 200, 50);
 
         assert!(buffer_contains(&buffer, "FORGE Dashboard"));
         assert!(buffer_contains(&buffer, "Worker Pool"));
@@ -3177,10 +3177,10 @@ mod tests {
 
     #[test]
     fn test_responsive_rendering_wide() {
-        let app = App::new();
+        let mut app = App::new();
 
         // Wide: 150x35
-        let buffer = render_app(&app, 150, 35);
+        let buffer = render_app(&mut app, 150, 35);
 
         assert!(buffer_contains(&buffer, "FORGE Dashboard"));
         assert!(buffer_contains(&buffer, "Worker Pool"));
@@ -3188,10 +3188,10 @@ mod tests {
 
     #[test]
     fn test_responsive_rendering_narrow() {
-        let app = App::new();
+        let mut app = App::new();
 
         // Narrow: 80x25
-        let buffer = render_app(&app, 80, 25);
+        let buffer = render_app(&mut app, 80, 25);
 
         // Should still render header
         assert!(buffer_contains(&buffer, "FORGE"));
@@ -3199,10 +3199,10 @@ mod tests {
 
     #[test]
     fn test_responsive_rendering_minimum() {
-        let app = App::new();
+        let mut app = App::new();
 
         // Minimum viable size: 40x15
-        let buffer = render_app(&app, 40, 15);
+        let buffer = render_app(&mut app, 40, 15);
 
         // Should not crash
         assert_eq!(buffer.area.width, 40);
@@ -3211,10 +3211,10 @@ mod tests {
 
     #[test]
     fn test_responsive_rendering_extreme_wide() {
-        let app = App::new();
+        let mut app = App::new();
 
         // Extreme wide: 400x100
-        let buffer = render_app(&app, 400, 100);
+        let buffer = render_app(&mut app, 400, 100);
 
         // Should handle gracefully
         assert_eq!(buffer.area.width, 400);
@@ -3231,7 +3231,7 @@ mod tests {
         for (width, height) in sizes {
             for view in &views {
                 app.switch_view(*view);
-                let buffer = render_app(&app, width, height);
+                let buffer = render_app(&mut app, width, height);
 
                 // Should render without panic
                 assert_eq!(buffer.area.width, width);
@@ -3385,34 +3385,34 @@ mod tests {
 
         // 1. Start in Overview
         assert_eq!(app.current_view(), View::Overview);
-        let buffer = render_app(&app, 120, 40);
+        let buffer = render_app(&mut app, 120, 40);
         assert!(buffer_contains(&buffer, "FORGE"));
 
         // 2. Check Workers view
         app.switch_view(View::Workers);
-        let buffer = render_app(&app, 120, 40);
+        let buffer = render_app(&mut app, 120, 40);
         assert!(buffer_contains(&buffer, "Worker"));
 
         // 3. View Costs
         app.switch_view(View::Costs);
-        let buffer = render_app(&app, 120, 40);
+        let buffer = render_app(&mut app, 120, 40);
         assert!(buffer_contains(&buffer, "Cost"));
 
         // 4. View Metrics (includes subscription-related info)
         app.switch_view(View::Metrics);
-        let buffer = render_app(&app, 120, 40);
+        let buffer = render_app(&mut app, 120, 40);
         assert!(buffer_contains(&buffer, "Metrics") || buffer_contains(&buffer, "Performance"));
 
         // 5. Cycle through remaining views
         for _ in 0..3 {
             app.next_view();
-            let _ = render_app(&app, 120, 40);
+            let _ = render_app(&mut app, 120, 40);
         }
 
         // 6. Open help
         app.handle_app_event(AppEvent::ShowHelp);
         assert!(app.show_help());
-        let buffer = render_app(&app, 120, 40);
+        let buffer = render_app(&mut app, 120, 40);
         assert!(buffer_contains(&buffer, "Help") || buffer_contains(&buffer, "Hotkey"));
         app.handle_app_event(AppEvent::Cancel);
         assert!(!app.show_help());

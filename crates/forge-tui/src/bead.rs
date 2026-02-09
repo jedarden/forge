@@ -51,7 +51,7 @@ pub enum BeadError {
 pub type BeadResult<T> = Result<T, BeadError>;
 
 /// A bead/issue as returned by the `br` CLI.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Bead {
     /// Unique bead identifier (e.g., "fg-1r1")
     pub id: String,
@@ -363,37 +363,50 @@ impl BeadManager {
     }
 
     /// Poll for bead updates if the polling interval has elapsed.
-    pub fn poll_updates(&mut self) {
+    /// Returns true if any bead data changed.
+    pub fn poll_updates(&mut self) -> bool {
         // Check if it's time to poll
         if let Some(last_poll) = self.last_poll {
             if last_poll.elapsed() < self.poll_interval {
-                return;
+                return false;
             }
         }
 
         // Don't poll if br is not available
         if !self.is_br_available() {
-            return;
+            return false;
         }
 
         self.last_poll = Some(Instant::now());
 
+        let mut changed = false;
+
         // Poll each workspace
         for workspace in self.workspaces.clone() {
-            self.poll_workspace(&workspace);
+            if self.poll_workspace(&workspace) {
+                changed = true;
+            }
         }
+
+        changed
     }
 
     /// Poll a single workspace for bead updates.
-    fn poll_workspace(&mut self, workspace: &PathBuf) {
+    /// Returns true if data changed.
+    fn poll_workspace(&mut self, workspace: &PathBuf) -> bool {
         let cache = self.cache.entry(workspace.clone()).or_insert_with(|| {
             WorkspaceBeads::new(workspace.clone())
         });
 
+        let mut changed = false;
+
         // Query ready beads
         match Self::query_beads(workspace, "ready") {
             Ok(beads) => {
-                cache.ready = beads;
+                if cache.ready != beads {
+                    cache.ready = beads;
+                    changed = true;
+                }
                 cache.last_error = None;
             }
             Err(e) => {
@@ -405,7 +418,10 @@ impl BeadManager {
         // Query blocked beads
         match Self::query_beads(workspace, "blocked") {
             Ok(beads) => {
-                cache.blocked = beads;
+                if cache.blocked != beads {
+                    cache.blocked = beads;
+                    changed = true;
+                }
             }
             Err(e) => {
                 debug!(workspace = ?workspace, error = %e, "Failed to query blocked beads");
@@ -415,7 +431,10 @@ impl BeadManager {
         // Query in-progress beads
         match Self::query_beads_filtered(workspace, Some("in_progress")) {
             Ok(beads) => {
-                cache.in_progress = beads;
+                if cache.in_progress != beads {
+                    cache.in_progress = beads;
+                    changed = true;
+                }
             }
             Err(e) => {
                 debug!(workspace = ?workspace, error = %e, "Failed to query in-progress beads");
@@ -433,6 +452,14 @@ impl BeadManager {
         }
 
         cache.last_update = Some(Instant::now());
+        changed
+    }
+
+    /// Get total bead count across all workspaces.
+    pub fn total_bead_count(&self) -> usize {
+        self.cache.values()
+            .map(|w| w.ready.len() + w.blocked.len() + w.in_progress.len())
+            .sum()
     }
 
     /// Query beads using the `br ready` or `br blocked` command.
