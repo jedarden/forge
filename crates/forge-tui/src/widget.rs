@@ -282,7 +282,84 @@ impl<'a> Widget for QuickActionsPanel<'a> {
     }
 }
 
+/// Unicode fill style for progress bars.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgressFillStyle {
+    /// Classic block style (▓░)
+    Blocks,
+    /// Smooth block style (█░)
+    Smooth,
+    /// Fine-grained (█▓▒░)
+    Fine,
+    /// Minimal (━ )
+    Minimal,
+    /// Heavy (■□)
+    Heavy,
+    /// Rounded (●○)
+    Rounded,
+    /// Vertical (▇▆▅▄▃▂▁ )
+    Vertical,
+}
+
+impl Default for ProgressFillStyle {
+    fn default() -> Self {
+        Self::Blocks
+    }
+}
+
+impl ProgressFillStyle {
+    /// Returns the (filled, empty) characters for this style.
+    pub fn chars(self) -> (char, char) {
+        match self {
+            ProgressFillStyle::Blocks => ('▓', '░'),
+            ProgressFillStyle::Smooth => ('█', '░'),
+            ProgressFillStyle::Fine => ('█', '░'),
+            ProgressFillStyle::Minimal => ('━', ' '),
+            ProgressFillStyle::Heavy => ('■', '□'),
+            ProgressFillStyle::Rounded => ('●', '○'),
+            ProgressFillStyle::Vertical => ('▇', ' '),
+        }
+    }
+
+    /// Returns the partial fill characters for fine-grained rendering.
+    /// Returns 8 levels from empty to full.
+    pub fn partial_chars(self) -> Option<[char; 8]> {
+        match self {
+            ProgressFillStyle::Fine => Some(['░', '▒', '▓', '█', '█', '█', '█', '█']),
+            ProgressFillStyle::Vertical => Some([' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇']),
+            _ => None,
+        }
+    }
+}
+
+/// Color mode for progress bars.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgressColorMode {
+    /// Single color for the entire bar
+    Solid,
+    /// Auto-color based on percentage (green < 70%, yellow < 90%, red >= 90%)
+    Auto,
+    /// Gradient from green to yellow to red based on fill position
+    Gradient,
+    /// Custom gradient between two colors
+    CustomGradient(Color, Color),
+}
+
+impl Default for ProgressColorMode {
+    fn default() -> Self {
+        Self::Solid
+    }
+}
+
 /// A progress bar widget for displaying usage metrics.
+///
+/// Features:
+/// - Horizontal display with customizable width
+/// - Color-coded by percentage (auto, solid, or gradient modes)
+/// - Optional labels with value/max display
+/// - Multiple Unicode fill styles (blocks, smooth, fine, minimal, heavy, rounded, vertical)
+/// - Fine-grained rendering for smooth progress visualization
+/// - Flicker-free rendering via Widget trait
 #[derive(Debug, Clone)]
 pub struct ProgressBar {
     /// Current value
@@ -291,10 +368,20 @@ pub struct ProgressBar {
     max: u64,
     /// Label to display
     label: String,
-    /// Color for the filled portion
+    /// Color for the filled portion (used in Solid mode)
     fill_color: Color,
     /// Width of the bar in characters
     width: u16,
+    /// Fill style (Unicode characters)
+    fill_style: ProgressFillStyle,
+    /// Color mode (solid, auto, gradient)
+    color_mode: ProgressColorMode,
+    /// Whether to show the numeric value
+    show_value: bool,
+    /// Whether to show the percentage
+    show_percent: bool,
+    /// Whether to use fine-grained rendering (when supported by fill style)
+    fine_grained: bool,
 }
 
 impl ProgressBar {
@@ -306,6 +393,11 @@ impl ProgressBar {
             label: String::new(),
             fill_color: Color::Green,
             width: 20,
+            fill_style: ProgressFillStyle::default(),
+            color_mode: ProgressColorMode::Solid,
+            show_value: false,
+            show_percent: true,
+            fine_grained: false,
         }
     }
 
@@ -327,8 +419,61 @@ impl ProgressBar {
         self
     }
 
+    /// Set the fill style (Unicode characters).
+    pub fn fill_style(mut self, style: ProgressFillStyle) -> Self {
+        self.fill_style = style;
+        self
+    }
+
+    /// Set the color mode.
+    pub fn color_mode(mut self, mode: ProgressColorMode) -> Self {
+        self.color_mode = mode;
+        self
+    }
+
+    /// Enable auto-color mode based on percentage.
+    pub fn enable_auto_color(mut self) -> Self {
+        self.color_mode = ProgressColorMode::Auto;
+        self
+    }
+
+    /// Enable gradient color mode.
+    pub fn gradient(mut self) -> Self {
+        self.color_mode = ProgressColorMode::Gradient;
+        self
+    }
+
+    /// Enable custom gradient between two colors.
+    pub fn custom_gradient(mut self, start: Color, end: Color) -> Self {
+        self.color_mode = ProgressColorMode::CustomGradient(start, end);
+        self
+    }
+
+    /// Show or hide the numeric value.
+    pub fn show_value(mut self, show: bool) -> Self {
+        self.show_value = show;
+        self
+    }
+
+    /// Show or hide the percentage.
+    pub fn show_percent(mut self, show: bool) -> Self {
+        self.show_percent = show;
+        self
+    }
+
+    /// Enable fine-grained rendering (for supported fill styles).
+    pub fn fine_grained(mut self, enabled: bool) -> Self {
+        self.fine_grained = enabled;
+        self
+    }
+
     /// Get the color based on percentage.
     pub fn auto_color(&self) -> Color {
+        self.compute_auto_color()
+    }
+
+    /// Internal method to compute auto color.
+    fn compute_auto_color(&self) -> Color {
         let pct = if self.max > 0 {
             (self.value as f64 / self.max as f64) * 100.0
         } else {
@@ -344,6 +489,32 @@ impl ProgressBar {
         }
     }
 
+    /// Get the color at a specific position in the bar (for gradients).
+    fn color_at_position(&self, position: f64) -> Color {
+        match self.color_mode {
+            ProgressColorMode::Solid => self.fill_color,
+            ProgressColorMode::Auto => self.compute_auto_color(),
+            ProgressColorMode::Gradient => {
+                // Gradient from green to yellow to red
+                if position < 0.7 {
+                    Color::Green
+                } else if position < 0.9 {
+                    Color::Yellow
+                } else {
+                    Color::Red
+                }
+            }
+            ProgressColorMode::CustomGradient(start, end) => {
+                // Simple interpolation - for full RGB support, we'd need more complex logic
+                if position < 0.5 {
+                    start
+                } else {
+                    end
+                }
+            }
+        }
+    }
+
     /// Render the progress bar as a string.
     pub fn render_string(&self) -> String {
         let pct = if self.max > 0 {
@@ -352,19 +523,238 @@ impl ProgressBar {
             0.0
         };
 
+        let (filled_char, empty_char) = self.fill_style.chars();
+
+        if self.fine_grained {
+            // Fine-grained rendering with 8 levels per position
+            if let Some(partial_chars) = self.fill_style.partial_chars() {
+                let bar = self.render_fine_grained(pct, partial_chars);
+                return self.format_output(&bar, pct);
+            }
+        }
+
+        // Standard rendering
         let filled = (pct * self.width as f64).round() as usize;
-        let empty = self.width as usize - filled;
+        let empty = (self.width as usize).saturating_sub(filled);
 
         let bar = format!(
             "{}{}",
-            "▓".repeat(filled),
-            "░".repeat(empty)
+            filled_char.to_string().repeat(filled),
+            empty_char.to_string().repeat(empty)
         );
 
-        if self.label.is_empty() {
-            format!("{} {:.0}%", bar, pct * 100.0)
+        self.format_output(&bar, pct)
+    }
+
+    /// Render with fine-grained progress display.
+    fn render_fine_grained(&self, pct: f64, chars: [char; 8]) -> String {
+        let total_units = self.width as usize * 8;
+        let filled_units = (pct * total_units as f64).round() as usize;
+        let full_chars = filled_units / 8;
+        let partial_level = filled_units % 8;
+        let empty_chars = (self.width as usize).saturating_sub(full_chars).saturating_sub(1);
+
+        let mut result = String::with_capacity(self.width as usize);
+
+        // Add full characters
+        for _ in 0..full_chars {
+            result.push(chars[7]);
+        }
+
+        // Add partial character if needed
+        if full_chars + empty_chars < self.width as usize {
+            result.push(chars[partial_level]);
+        }
+
+        // Add empty characters
+        for _ in 0..empty_chars {
+            result.push(chars[0]);
+        }
+
+        result
+    }
+
+    /// Format the output string with label, bar, and stats.
+    fn format_output(&self, bar: &str, pct: f64) -> String {
+        let mut parts = Vec::new();
+
+        if !self.label.is_empty() {
+            parts.push(format!("{}:", self.label));
+        }
+
+        parts.push(bar.to_string());
+
+        if self.show_value {
+            parts.push(format!("{}/{}", self.value, self.max));
+        }
+
+        if self.show_percent {
+            parts.push(format!("{:.0}%", pct * 100.0));
+        }
+
+        parts.join(" ")
+    }
+}
+
+impl Widget for ProgressBar {
+    fn render(self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+        if area.width < 2 || area.height == 0 {
+            return;
+        }
+
+        let pct = if self.max > 0 {
+            (self.value as f64 / self.max as f64).min(1.0)
         } else {
-            format!("{}: {} {}/{} ({:.0}%)", self.label, bar, self.value, self.max, pct * 100.0)
+            0.0
+        };
+
+        let (filled_char, empty_char) = self.fill_style.chars();
+        let bar_width = area.width.min(self.width) as usize;
+
+        // Determine the color based on mode
+        let bar_color = match self.color_mode {
+            ProgressColorMode::Solid => self.fill_color,
+            ProgressColorMode::Auto => self.auto_color(),
+            ProgressColorMode::Gradient => self.color_at_position(pct),
+            ProgressColorMode::CustomGradient(_, _) => self.color_at_position(pct),
+        };
+
+        if self.fine_grained {
+            if let Some(partial_chars) = self.fill_style.partial_chars() {
+                self.render_fine_grained_to_buffer(area, buf, pct, partial_chars, bar_color);
+                return;
+            }
+        }
+
+        // Standard rendering to buffer
+        let filled = (pct * bar_width as f64).round() as usize;
+        let empty = bar_width.saturating_sub(filled);
+
+        let mut x = area.left();
+        let y = area.top();
+
+        // Render filled portion
+        for _ in 0..filled {
+            if x < area.right() {
+                buf[(x, y)]
+                    .set_char(filled_char)
+                    .set_style(Style::default().fg(bar_color));
+                x += 1;
+            }
+        }
+
+        // Render empty portion
+        for _ in 0..empty {
+            if x < area.right() {
+                buf[(x, y)]
+                    .set_char(empty_char)
+                    .set_style(Style::default().fg(Color::DarkGray));
+                x += 1;
+            }
+        }
+
+        // Render label and stats if space permits
+        let stats_width = if self.label.is_empty() { 0 } else { self.label.len() + 2 };
+        let value_width = if self.show_value {
+            format!("{}/{}", self.value, self.max).len()
+        } else {
+            0
+        };
+        let percent_width = if self.show_percent { 5 } else { 0 }; // "100%"
+
+        let total_stats_width = stats_width + value_width + if value_width > 0 && percent_width > 0 { 1 } else { 0 } + percent_width;
+
+        if total_stats_width > 0 && area.width > bar_width as u16 + total_stats_width as u16 {
+            x = area.left() + bar_width as u16 + 1;
+
+            if !self.label.is_empty() {
+                let label_str = format!("{}: ", self.label);
+                for (i, ch) in label_str.chars().enumerate() {
+                    if x + (i as u16) < area.right() {
+                        buf[(x + (i as u16), y)]
+                            .set_char(ch)
+                            .set_style(Style::default().fg(Color::White));
+                    }
+                }
+                x += label_str.len() as u16;
+            }
+
+            if self.show_value {
+                let value_str = format!("{}/{}", self.value, self.max);
+                for (i, ch) in value_str.chars().enumerate() {
+                    if x + (i as u16) < area.right() {
+                        buf[(x + (i as u16), y)]
+                            .set_char(ch)
+                            .set_style(Style::default().fg(Color::White));
+                    }
+                }
+                x += value_str.len() as u16;
+
+                if self.show_percent {
+                    if x < area.right() {
+                        buf[(x, y)]
+                            .set_char(' ')
+                            .set_style(Style::default().fg(Color::White));
+                        x += 1;
+                    }
+                }
+            }
+
+            if self.show_percent {
+                let percent_str = format!("{:.0}%", pct * 100.0);
+                for (i, ch) in percent_str.chars().enumerate() {
+                    if x + (i as u16) < area.right() {
+                        buf[(x + (i as u16), y)]
+                            .set_char(ch)
+                            .set_style(Style::default().fg(bar_color));
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl ProgressBar {
+    /// Render fine-grained progress directly to buffer.
+    fn render_fine_grained_to_buffer(
+        &self,
+        area: Rect,
+        buf: &mut ratatui::buffer::Buffer,
+        pct: f64,
+        chars: [char; 8],
+        color: Color,
+    ) {
+        let bar_width = area.width.min(self.width) as usize;
+        let total_units = bar_width * 8;
+        let filled_units = (pct * total_units as f64).round() as usize;
+
+        let mut x = area.left();
+        let y = area.top();
+
+        for i in 0..bar_width {
+            if x >= area.right() {
+                break;
+            }
+
+            let start_unit = i * 8;
+            let end_unit = start_unit + 8;
+            let segment_units = filled_units.saturating_sub(start_unit).min(end_unit) - start_unit;
+            let level = if segment_units == 0 {
+                0
+            } else if segment_units >= 8 {
+                7
+            } else {
+                segment_units
+            };
+
+            let ch = chars[level];
+            let fg_color = if level > 0 { color } else { Color::DarkGray };
+
+            buf[(x, y)]
+                .set_char(ch)
+                .set_style(Style::default().fg(fg_color));
+
+            x += 1;
         }
     }
 }
@@ -787,7 +1177,7 @@ mod tests {
 
     #[test]
     fn test_progress_bar_with_label() {
-        let bar = ProgressBar::new(75, 100).width(10).label("Usage");
+        let bar = ProgressBar::new(75, 100).width(10).label("Usage").show_value(true);
         let rendered = bar.render_string();
         assert!(rendered.contains("Usage:"));
         assert!(rendered.contains("75/100"));
@@ -810,6 +1200,12 @@ mod tests {
 
         let bar_high = ProgressBar::new(95, 100);
         assert_eq!(bar_high.auto_color(), Color::Red);
+    }
+
+    #[test]
+    fn test_progress_bar_enable_auto_color_method() {
+        let bar = ProgressBar::new(50, 100).enable_auto_color();
+        assert_eq!(bar.color_mode, ProgressColorMode::Auto);
     }
 
     #[test]
@@ -939,5 +1335,205 @@ mod tests {
         // Should contain both empty and full blocks
         assert!(sparkline.contains('▁'));
         assert!(sparkline.contains('█'));
+    }
+
+    // Enhanced progress bar tests
+
+    #[test]
+    fn test_progress_bar_fill_style_smooth() {
+        let bar = ProgressBar::new(50, 100)
+            .width(10)
+            .fill_style(ProgressFillStyle::Smooth);
+        let rendered = bar.render_string();
+        assert!(rendered.contains('█'));
+        assert!(rendered.contains('░'));
+    }
+
+    #[test]
+    fn test_progress_bar_fill_style_minimal() {
+        let bar = ProgressBar::new(50, 100)
+            .width(10)
+            .fill_style(ProgressFillStyle::Minimal);
+        let rendered = bar.render_string();
+        assert!(rendered.contains('━'));
+    }
+
+    #[test]
+    fn test_progress_bar_fill_style_heavy() {
+        let bar = ProgressBar::new(50, 100)
+            .width(10)
+            .fill_style(ProgressFillStyle::Heavy);
+        let rendered = bar.render_string();
+        assert!(rendered.contains('■'));
+        assert!(rendered.contains('□'));
+    }
+
+    #[test]
+    fn test_progress_bar_fill_style_rounded() {
+        let bar = ProgressBar::new(50, 100)
+            .width(10)
+            .fill_style(ProgressFillStyle::Rounded);
+        let rendered = bar.render_string();
+        assert!(rendered.contains('●'));
+        assert!(rendered.contains('○'));
+    }
+
+    #[test]
+    fn test_progress_bar_fine_grained() {
+        let bar = ProgressBar::new(50, 100)
+            .width(10)
+            .fill_style(ProgressFillStyle::Fine)
+            .fine_grained(true);
+        let rendered = bar.render_string();
+        // Fine-grained should use partial characters
+        assert!(!rendered.is_empty());
+    }
+
+    #[test]
+    fn test_progress_bar_vertical_style() {
+        let bar = ProgressBar::new(50, 100)
+            .width(10)
+            .fill_style(ProgressFillStyle::Vertical)
+            .fine_grained(true);
+        let rendered = bar.render_string();
+        // Vertical style with fine-grained should use block heights
+        assert!(!rendered.is_empty());
+    }
+
+    #[test]
+    fn test_progress_bar_color_mode_solid() {
+        let bar = ProgressBar::new(50, 100)
+            .fill_color(Color::Blue)
+            .color_mode(ProgressColorMode::Solid);
+        assert_eq!(bar.color_mode, ProgressColorMode::Solid);
+    }
+
+    #[test]
+    fn test_progress_bar_color_mode_auto() {
+        let bar = ProgressBar::new(50, 100).enable_auto_color();
+        assert_eq!(bar.color_mode, ProgressColorMode::Auto);
+    }
+
+    #[test]
+    fn test_progress_bar_color_mode_gradient() {
+        let bar = ProgressBar::new(50, 100).gradient();
+        assert_eq!(bar.color_mode, ProgressColorMode::Gradient);
+    }
+
+    #[test]
+    fn test_progress_bar_custom_gradient() {
+        let bar = ProgressBar::new(50, 100)
+            .custom_gradient(Color::Cyan, Color::Magenta);
+        assert_eq!(
+            bar.color_mode,
+            ProgressColorMode::CustomGradient(Color::Cyan, Color::Magenta)
+        );
+    }
+
+    #[test]
+    fn test_progress_bar_show_value() {
+        let bar = ProgressBar::new(50, 100)
+            .width(10)
+            .show_value(true)
+            .show_percent(false);
+        let rendered = bar.render_string();
+        assert!(rendered.contains("50/100"));
+    }
+
+    #[test]
+    fn test_progress_bar_hide_percent() {
+        let bar = ProgressBar::new(50, 100)
+            .width(10)
+            .show_percent(false);
+        let rendered = bar.render_string();
+        assert!(!rendered.contains('%'));
+    }
+
+    #[test]
+    fn test_progress_bar_full() {
+        let bar = ProgressBar::new(100, 100).width(10);
+        let rendered = bar.render_string();
+        assert!(rendered.contains("100%"));
+        // Should be completely filled
+        assert!(!rendered.contains('░'));
+    }
+
+    #[test]
+    fn test_progress_bar_empty() {
+        let bar = ProgressBar::new(0, 100).width(10);
+        let rendered = bar.render_string();
+        assert!(rendered.contains("0%"));
+        assert!(!rendered.contains('▓'));
+    }
+
+    #[test]
+    fn test_progress_bar_clamp_value() {
+        // Value exceeding max should be clamped
+        let bar = ProgressBar::new(150, 100).width(10);
+        let rendered = bar.render_string();
+        // Should show 100% even though value > max
+        assert!(rendered.contains("100%"));
+    }
+
+    #[test]
+    fn test_progress_fill_style_chars() {
+        assert_eq!(ProgressFillStyle::Blocks.chars(), ('▓', '░'));
+        assert_eq!(ProgressFillStyle::Smooth.chars(), ('█', '░'));
+        assert_eq!(ProgressFillStyle::Minimal.chars(), ('━', ' '));
+        assert_eq!(ProgressFillStyle::Heavy.chars(), ('■', '□'));
+        assert_eq!(ProgressFillStyle::Rounded.chars(), ('●', '○'));
+        assert_eq!(ProgressFillStyle::Vertical.chars(), ('▇', ' '));
+    }
+
+    #[test]
+    fn test_progress_fill_style_partial_chars() {
+        // Fine style should have partial chars
+        assert!(ProgressFillStyle::Fine.partial_chars().is_some());
+        let chars = ProgressFillStyle::Fine.partial_chars().unwrap();
+        assert_eq!(chars[0], '░');
+        assert_eq!(chars[7], '█');
+
+        // Vertical style should have partial chars
+        assert!(ProgressFillStyle::Vertical.partial_chars().is_some());
+        let chars = ProgressFillStyle::Vertical.partial_chars().unwrap();
+        assert_eq!(chars[0], ' ');
+        assert_eq!(chars[7], '▇');
+
+        // Blocks style should not have partial chars
+        assert!(ProgressFillStyle::Blocks.partial_chars().is_none());
+    }
+
+    #[test]
+    fn test_progress_bar_render_width() {
+        let bar = ProgressBar::new(50, 100).width(5);
+        let rendered = bar.render_string();
+        // Count the fill characters (should be 5)
+        let fill_count = rendered.chars().filter(|c| *c == '▓' || *c == '░').count();
+        assert_eq!(fill_count, 5);
+    }
+
+    #[test]
+    fn test_progress_bar_zero_width() {
+        let bar = ProgressBar::new(50, 100).width(0);
+        let rendered = bar.render_string();
+        // Should still render without crashing
+        assert!(!rendered.is_empty());
+    }
+
+    #[test]
+    fn test_progress_bar_with_all_options() {
+        let bar = ProgressBar::new(75, 100)
+            .width(20)
+            .label("Progress")
+            .fill_style(ProgressFillStyle::Smooth)
+            .fill_color(Color::Cyan)
+            .color_mode(ProgressColorMode::Gradient)
+            .show_value(true)
+            .show_percent(true);
+
+        let rendered = bar.render_string();
+        assert!(rendered.contains("Progress:"));
+        assert!(rendered.contains("75/100"));
+        assert!(rendered.contains("75%"));
     }
 }

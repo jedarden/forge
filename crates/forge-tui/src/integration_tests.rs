@@ -2376,7 +2376,7 @@ mod tests {
     fn test_progress_bar_widget() {
         use crate::widget::ProgressBar;
 
-        let bar = ProgressBar::new(75, 100).width(20).label("Memory");
+        let bar = ProgressBar::new(75, 100).width(20).label("Memory").show_value(true);
         let rendered = bar.render_string();
         assert!(rendered.contains("Memory"));
         assert!(rendered.contains("75/100"));
