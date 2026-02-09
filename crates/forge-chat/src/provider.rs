@@ -5,14 +5,15 @@
 //!
 //! ## Implementations
 //!
-//! - [`ClaudeApiProvider`] - Direct Anthropic API via HTTP (reqwest)
+//! - [`ClaudeApiProvider`] - Direct Anthropic API via HTTP (reqwest) (see [`claude_api`])
 //! - [`ClaudeCliProvider`] - claude-cli via stdin/stdout (tokio::process)
 //! - [`MockProvider`] - Testing mock that returns predefined responses
 //!
 //! ## Example
 //!
 //! ```no_run
-//! use forge_chat::{provider::{ChatProvider, ClaudeApiProvider}, config::ClaudeApiConfig, context::DashboardContext};
+//! use forge_chat::{provider::{ChatProvider}, config::ClaudeApiConfig, context::DashboardContext};
+//! use forge_chat::claude_api::ClaudeApiProvider;
 //!
 //! # async fn example() -> anyhow::Result<()> {
 //! let config = ClaudeApiConfig::default();
@@ -25,6 +26,8 @@
 //! # Ok(())
 //! # }
 //! ```
+
+use crate::claude_api::ClaudeApiProvider;
 
 use ::async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -243,200 +246,8 @@ pub trait ChatProvider: Send + Sync {
     fn model(&self) -> &str;
 }
 
-// ============ Claude API Provider ============
-
-/// Claude API provider using direct HTTP requests.
-///
-/// This provider uses the reqwest client to make direct API calls to
-/// Anthropic's Claude API.
-pub struct ClaudeApiProvider {
-    config: ClaudeApiConfig,
-    client: reqwest::Client,
-    api_key: String,
-    base_url: String,
-}
-
-impl ClaudeApiProvider {
-    /// Create a new Claude API provider from config.
-    pub fn from_config(config: ClaudeApiConfig) -> Result<Self> {
-        let api_key = std::env::var(&config.api_key_env).map_err(|_| {
-            ChatError::ConfigError(format!(
-                "{} environment variable not set",
-                config.api_key_env
-            ))
-        })?;
-
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(config.timeout_secs))
-            .build()
-            .map_err(|e| ChatError::ConfigError(format!("Failed to create HTTP client: {}", e)))?;
-
-        let base_url = config.api_base_url.clone();
-
-        Ok(Self {
-            config,
-            client,
-            api_key,
-            base_url,
-        })
-    }
-
-    /// Create a provider with a custom API key.
-    pub fn with_api_key(mut config: ClaudeApiConfig, api_key: impl Into<String>) -> Result<Self> {
-        let api_key = api_key.into();
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(config.timeout_secs))
-            .build()
-            .map_err(|e| ChatError::ConfigError(format!("Failed to create HTTP client: {}", e)))?;
-
-        let base_url = config.api_base_url.clone();
-
-        // Override the api_key_env to indicate we're using a custom key
-        config.api_key_env = "<custom>".to_string();
-
-        Ok(Self {
-            config,
-            client,
-            api_key,
-            base_url,
-        })
-    }
-}
-
-#[async_trait]
-impl ChatProvider for ClaudeApiProvider {
-    async fn process(
-        &self,
-        prompt: &str,
-        context: &DashboardContext,
-        tools: &[ProviderTool],
-    ) -> Result<ProviderResponse> {
-        let start = std::time::Instant::now();
-
-        // Build the enhanced prompt with context
-        let enhanced_prompt = format!(
-            "{}\n\nCurrent dashboard state:\n{}",
-            prompt,
-            context.to_summary()
-        );
-
-        let request = ApiRequest {
-            model: self.config.model.clone(),
-            max_tokens: self.config.max_tokens,
-            temperature: Some(self.config.temperature),
-            system: SYSTEM_PROMPT.to_string(),
-            messages: vec![ApiMessage {
-                role: "user".to_string(),
-                content: enhanced_prompt,
-            }],
-            tools: tools
-                .iter()
-                .map(|t| ApiTool {
-                    name: t.name.clone(),
-                    description: t.description.clone(),
-                    input_schema: t.input_schema.clone(),
-                })
-                .collect(),
-        };
-
-        debug!("Sending API request to {}", self.base_url);
-
-        let response = self
-            .client
-            .post(format!("{}/v1/messages", self.base_url))
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&request)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Ok(ProviderResponse::new(format!("API error: {}", status))
-                .with_finish_reason(FinishReason::Error(body)));
-        }
-
-        let api_response: ApiResponse = response.json().await?;
-
-        // Process the response
-        let mut text = String::new();
-        let mut tool_calls = Vec::new();
-
-        for content in api_response.content {
-            match content {
-                ContentBlock::Text { text: t } => {
-                    text.push_str(&t);
-                }
-                ContentBlock::ToolUse { id, name, input } => {
-                    tool_calls.push(ToolCall {
-                        name: name.clone(),
-                        parameters: input.clone(),
-                        id: Some(id),
-                    });
-                }
-            }
-        }
-
-        let duration = start.elapsed().as_millis() as u64;
-        let cost = estimate_cost(&self.config.model, &api_response.usage);
-
-        let finish_reason = if !tool_calls.is_empty() {
-            FinishReason::ToolCall
-        } else {
-            FinishReason::Stop
-        };
-
-        let usage = TokenUsage {
-            input_tokens: api_response.usage.input_tokens,
-            output_tokens: api_response.usage.output_tokens,
-            cache_read_tokens: api_response.usage.cache_read_tokens.unwrap_or(0),
-            cache_creation_tokens: api_response.usage.cache_creation_tokens.unwrap_or(0),
-        };
-
-        Ok(ProviderResponse {
-            text,
-            tool_calls,
-            duration_ms: duration,
-            cost_usd: Some(cost),
-            finish_reason,
-            usage: Some(usage),
-        })
-    }
-
-    fn name(&self) -> &str {
-        "claude-api"
-    }
-
-    fn supports_streaming(&self) -> bool {
-        true
-    }
-
-    fn estimated_cost(&self) -> Option<f64> {
-        // Estimate based on max_tokens setting
-        let (input_cost, output_cost) = if self.config.model.contains("opus") {
-            (15.0, 75.0)
-        } else if self.config.model.contains("sonnet") {
-            (3.0, 15.0)
-        } else {
-            (0.25, 1.25)
-        };
-        // Rough estimate: assume 10k input, max_tokens output
-        let estimated_input = 10_000.0;
-        let estimated_output = self.config.max_tokens as f64;
-        Some(
-            (estimated_input / 1_000_000.0) * input_cost
-                + (estimated_output / 1_000_000.0) * output_cost,
-        )
-    }
-
-    fn model(&self) -> &str {
-        &self.config.model
-    }
-}
-
 // ============ Claude CLI Provider ============
+// Note: Claude API provider has been moved to claude_api.rs module
 
 /// Claude CLI provider using stdin/stdout communication.
 ///
@@ -851,153 +662,13 @@ fn create_provider_by_type(
 
 // ============ Helper Functions ============
 
-/// Extract model name from model ID.
-fn model_name_from_id(model_id: &str) -> String {
-    if model_id.contains("opus") {
-        "opus".to_string()
-    } else if model_id.contains("sonnet") {
-        "sonnet".to_string()
-    } else if model_id.contains("haiku") {
-        "haiku".to_string()
-    } else {
-        "sonnet".to_string()
-    }
-}
-
-/// Estimate cost based on usage.
-fn estimate_cost(model: &str, usage: &ApiUsage) -> f64 {
-    let (input_cost_per_million, output_cost_per_million) = if model.contains("opus") {
-        (15.0, 75.0)
-    } else if model.contains("sonnet") {
-        (3.0, 15.0)
-    } else {
-        (0.25, 1.25) // Haiku
-    };
-
-    let input_cost = (usage.input_tokens as f64 / 1_000_000.0) * input_cost_per_million;
-    let output_cost = (usage.output_tokens as f64 / 1_000_000.0) * output_cost_per_million;
-
-    input_cost + output_cost
-}
-
-// ============ API Types ============
-
-#[derive(Debug, Serialize)]
-struct ApiRequest {
-    model: String,
-    max_tokens: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,
-    system: String,
-    messages: Vec<ApiMessage>,
-    tools: Vec<ApiTool>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ApiMessage {
-    role: String,
-    content: String,
-}
-
-#[derive(Debug, Serialize)]
-struct ApiTool {
-    name: String,
-    description: String,
-    input_schema: serde_json::Value,
-}
-
-#[derive(Debug, Deserialize)]
-struct ApiResponse {
-    #[allow(dead_code)]
-    id: String,
-    content: Vec<ContentBlock>,
-    usage: ApiUsage,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type")]
-enum ContentBlock {
-    #[serde(rename = "text")]
-    Text { text: String },
-    #[serde(rename = "tool_use")]
-    ToolUse {
-        id: String,
-        name: String,
-        input: serde_json::Value,
-    },
-}
-
-#[derive(Debug, Deserialize)]
-struct ApiUsage {
-    input_tokens: u32,
-    output_tokens: u32,
-    #[serde(default)]
-    cache_read_tokens: Option<u32>,
-    #[serde(default)]
-    cache_creation_tokens: Option<u32>,
-}
-
-/// System prompt for the chat agent.
-const SYSTEM_PROMPT: &str = r#"You are the conversational interface for a distributed worker control panel called FORGE.
-
-Context:
-- The user manages a pool of coding agents (workers) across multiple workspaces
-- Workers process "beads" (tasks) using different LLM models (Sonnet, Opus, GLM, etc.)
-- The system optimizes costs across subscriptions and pay-per-token APIs
-- You have access to real-time dashboard state and can execute commands
-
-Your role:
-- Answer questions about worker status, costs, tasks, and subscriptions
-- Execute commands safely (confirm destructive operations)
-- Provide analysis and recommendations
-- Be concise (max 5 sentences unless asked for details)
-- Use tables, progress bars, and formatting when helpful
-- Explain your reasoning when making recommendations
-
-Response format:
-- Use markdown for formatting
-- Tables for comparisons
-- Status indicators: ✓ (success), ✗ (failure), ◐ (in progress)
-- Progress bars: ████▌ 66%
-- Keep responses under 10 lines (TUI space is limited)
-
-Safety rules:
-- Always confirm before killing workers
-- Explain cost implications for model changes
-- Warn about context loss when reassigning in-progress tasks
-- Rate limit: User can run max 10 commands/minute
-"#;
+// Helper functions and API types have been moved to claude_api and claude_api_types modules
+// See claude_api.rs for SYSTEM_PROMPT and provider implementation
+// See claude_api_types.rs for ApiRequest, ApiResponse, ContentBlock, etc.
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_model_name_from_id() {
-        assert_eq!(model_name_from_id("claude-opus-4-5"), "opus");
-        assert_eq!(model_name_from_id("claude-sonnet-4-5"), "sonnet");
-        assert_eq!(model_name_from_id("claude-haiku-4-5"), "haiku");
-        assert_eq!(model_name_from_id("unknown"), "sonnet");
-    }
-
-    #[test]
-    fn test_estimate_cost() {
-        let usage = ApiUsage {
-            input_tokens: 1000,
-            output_tokens: 500,
-            cache_read_tokens: Some(0),
-            cache_creation_tokens: Some(0),
-        };
-
-        let opus_cost = estimate_cost("claude-opus-4", &usage);
-        assert!(opus_cost > 0.0);
-
-        let sonnet_cost = estimate_cost("claude-sonnet-4", &usage);
-        assert!(sonnet_cost < opus_cost);
-
-        let haiku_cost = estimate_cost("claude-haiku-4", &usage);
-        assert!(haiku_cost < sonnet_cost);
-    }
 
     #[tokio::test]
     async fn test_mock_provider() {
