@@ -4,6 +4,7 @@
 //! and coordinates between different components.
 
 use std::io;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyEvent};
 use ratatui::{
@@ -25,6 +26,16 @@ use crate::widget::QuickActionsPanel;
 
 /// Result type for app operations.
 pub type AppResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+/// Target frame rate (60 FPS = ~16.67ms per frame).
+const TARGET_FPS: u64 = 60;
+const FRAME_DURATION: Duration = Duration::from_millis(1000 / TARGET_FPS);
+
+/// Data polling intervals (optimized for performance).
+const DATA_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Header timestamp cache duration (update every second).
+const TIMESTAMP_CACHE_DURATION: Duration = Duration::from_secs(1);
 
 /// Main application state.
 pub struct App {
@@ -50,6 +61,19 @@ pub struct App {
     data_manager: DataManager,
     /// Theme manager for color themes
     theme_manager: ThemeManager,
+    /// Dirty flag - whether UI needs redraw
+    dirty: bool,
+    /// Cached terminal size for layout recalculation
+    cached_size: Option<Rect>,
+    /// Last data poll time
+    last_poll_time: Instant,
+    /// Cached timestamp for header (updated every second)
+    cached_timestamp: Option<String>,
+    last_timestamp_update: Instant,
+    /// Cached layout mode based on terminal width
+    cached_layout_mode: Option<LayoutMode>,
+    /// Last terminal width for layout mode detection
+    last_terminal_width: u16,
 }
 
 impl Default for App {
@@ -61,6 +85,7 @@ impl Default for App {
 impl App {
     /// Create a new app instance with default state.
     pub fn new() -> Self {
+        let now = Instant::now();
         Self {
             current_view: View::default(),
             previous_view: None,
@@ -73,12 +98,20 @@ impl App {
             scroll_offset: 0,
             data_manager: DataManager::new(),
             theme_manager: ThemeManager::load_config(),
+            dirty: true,
+            cached_size: None,
+            last_poll_time: now,
+            cached_timestamp: None,
+            last_timestamp_update: now,
+            cached_layout_mode: None,
+            last_terminal_width: 0,
         }
     }
 
     /// Create a new app with a custom status directory (for testing).
     #[allow(dead_code)]
     pub fn with_status_dir(status_dir: std::path::PathBuf) -> Self {
+        let now = Instant::now();
         Self {
             current_view: View::default(),
             previous_view: None,
@@ -91,6 +124,13 @@ impl App {
             scroll_offset: 0,
             data_manager: DataManager::with_status_dir(status_dir),
             theme_manager: ThemeManager::new(),
+            dirty: true,
+            cached_size: None,
+            last_poll_time: now,
+            cached_timestamp: None,
+            last_timestamp_update: now,
+            cached_layout_mode: None,
+            last_terminal_width: 0,
         }
     }
 
@@ -114,12 +154,59 @@ impl App {
         self.show_help
     }
 
+    /// Mark the UI as dirty (needs redraw).
+    fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    /// Check if UI needs redraw and clear the dirty flag.
+    fn take_dirty(&mut self) -> bool {
+        if self.dirty {
+            self.dirty = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get cached timestamp or update if expired.
+    fn get_cached_timestamp(&mut self) -> String {
+        if self.last_timestamp_update.elapsed() >= TIMESTAMP_CACHE_DURATION {
+            self.cached_timestamp = Some(chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
+            self.last_timestamp_update = Instant::now();
+        }
+        self.cached_timestamp.clone().unwrap_or_default()
+    }
+
+    /// Get layout mode with caching.
+    fn get_layout_mode(&mut self, width: u16) -> LayoutMode {
+        if self.last_terminal_width != width || self.cached_layout_mode.is_none() {
+            self.cached_layout_mode = Some(LayoutMode::from_width(width));
+            self.last_terminal_width = width;
+        }
+        self.cached_layout_mode.unwrap_or(LayoutMode::Narrow)
+    }
+
+    /// Check if terminal size changed.
+    fn size_changed(&self, area: Rect) -> bool {
+        match self.cached_size {
+            Some(cached) => cached.width != area.width || cached.height != area.height,
+            None => true,
+        }
+    }
+
+    /// Update cached terminal size.
+    fn update_cached_size(&mut self, area: Rect) {
+        self.cached_size = Some(area);
+    }
+
     /// Switch to a specific view.
     pub fn switch_view(&mut self, view: View) {
         if self.current_view != view {
             self.previous_view = Some(self.current_view);
             self.current_view = view;
             self.scroll_offset = 0;
+            self.mark_dirty();
 
             // Set appropriate default focus for the view
             self.focus_panel = match view {
@@ -174,12 +261,19 @@ impl App {
             AppEvent::SwitchView(view) => self.switch_view(view),
             AppEvent::NextView => self.next_view(),
             AppEvent::PrevView => self.prev_view(),
-            AppEvent::ShowHelp => self.show_help = true,
-            AppEvent::HideHelp => self.show_help = false,
+            AppEvent::ShowHelp => {
+                self.show_help = true;
+                self.mark_dirty();
+            }
+            AppEvent::HideHelp => {
+                self.show_help = false;
+                self.mark_dirty();
+            }
             AppEvent::Quit => self.should_quit = true,
             AppEvent::ForceQuit => self.should_quit = true,
             AppEvent::Refresh => {
                 self.status_message = Some("Refreshed".to_string());
+                self.mark_dirty();
             }
             AppEvent::Cancel => {
                 if self.show_help {
@@ -188,39 +282,49 @@ impl App {
                     self.chat_input.clear();
                     self.go_back();
                 }
+                self.mark_dirty();
             }
             AppEvent::NavigateUp => {
                 if self.scroll_offset > 0 {
                     self.scroll_offset -= 1;
+                    self.mark_dirty();
                 }
             }
             AppEvent::NavigateDown => {
                 self.scroll_offset += 1;
+                self.mark_dirty();
             }
             AppEvent::PageUp => {
                 self.scroll_offset = self.scroll_offset.saturating_sub(10);
+                self.mark_dirty();
             }
             AppEvent::PageDown => {
                 self.scroll_offset += 10;
+                self.mark_dirty();
             }
             AppEvent::GoToTop => {
                 self.scroll_offset = 0;
+                self.mark_dirty();
             }
             AppEvent::GoToBottom => {
                 // In a real impl, this would go to the end of the list
                 self.scroll_offset = 100;
+                self.mark_dirty();
             }
             AppEvent::TextInput(c) => {
                 self.chat_input.push(c);
+                self.mark_dirty();
             }
             AppEvent::Backspace => {
                 self.chat_input.pop();
+                self.mark_dirty();
             }
             AppEvent::Submit => {
                 if !self.chat_input.is_empty() {
                     self.status_message = Some(format!("Executing: {}", self.chat_input));
                     self.chat_input.clear();
                 }
+                self.mark_dirty();
             }
             AppEvent::Select | AppEvent::Toggle | AppEvent::FocusNext | AppEvent::FocusPrev => {
                 // Panel-specific handling - to be implemented
@@ -230,27 +334,33 @@ impl App {
                     "Spawning {} worker...",
                     executor.name()
                 ));
+                self.mark_dirty();
                 // TODO: Implement actual worker spawning
             }
             AppEvent::KillWorker => {
                 self.status_message = Some("Kill worker - not yet implemented".to_string());
+                self.mark_dirty();
                 // TODO: Implement actual worker killing
             }
             AppEvent::OpenConfig => {
                 self.status_message = Some("Opening configuration menu...".to_string());
+                self.mark_dirty();
                 // TODO: Implement config menu
             }
             AppEvent::OpenBudgetConfig => {
                 self.status_message = Some("Opening budget configuration...".to_string());
+                self.mark_dirty();
                 // TODO: Implement budget config
             }
             AppEvent::OpenWorkerConfig => {
                 self.status_message = Some("Opening worker configuration...".to_string());
+                self.mark_dirty();
                 // TODO: Implement worker config
             }
             AppEvent::CycleTheme => {
                 let new_theme = self.theme_manager.cycle_theme();
                 self.status_message = Some(format!("Theme: {}", new_theme.display_name()));
+                self.mark_dirty();
             }
             AppEvent::None => {}
         }
@@ -284,28 +394,71 @@ impl App {
         result
     }
 
-    /// The inner event loop.
+    /// The inner event loop with frame-rate limiting and optimized polling.
     fn run_loop(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> AppResult<()> {
         while !self.should_quit {
-            // Poll for data updates
-            self.data_manager.poll_updates();
+            let frame_start = Instant::now();
 
-            // Draw UI
-            terminal.draw(|frame| self.draw(frame))?;
+            // Optimized data polling - only poll if interval elapsed
+            let needs_poll = self.last_poll_time.elapsed() >= DATA_POLL_INTERVAL;
+            if needs_poll {
+                let data_changed = self.data_manager.poll_updates();
+                self.last_poll_time = Instant::now();
 
-            // Handle events
-            if event::poll(std::time::Duration::from_millis(100))? {
+                // Mark dirty if data actually changed
+                if data_changed {
+                    self.mark_dirty();
+                }
+            }
+
+            // Only draw if dirty or at minimum rate (timestamp updates every second)
+            let needs_redraw = self.take_dirty() ||
+                self.last_timestamp_update.elapsed() >= TIMESTAMP_CACHE_DURATION;
+
+            if needs_redraw {
+                terminal.draw(|frame| self.draw(frame))?;
+            }
+
+            // Calculate remaining time in frame for event handling
+            let elapsed = frame_start.elapsed();
+            let timeout_for_events = if elapsed < FRAME_DURATION {
+                FRAME_DURATION - elapsed
+            } else {
+                Duration::ZERO
+            };
+
+            // Handle events with adaptive timeout
+            let event_timeout = if timeout_for_events > Duration::ZERO {
+                timeout_for_events
+            } else {
+                // If frame took too long, use shorter timeout
+                Duration::from_millis(10)
+            };
+
+            if event::poll(event_timeout)? {
                 if let Event::Key(key) = event::read()? {
                     self.handle_key_event(key);
                 }
+            }
+
+            // Frame-rate limiting: sleep if frame was too fast
+            let frame_elapsed = frame_start.elapsed();
+            if frame_elapsed < FRAME_DURATION {
+                let sleep_time = FRAME_DURATION - frame_elapsed;
+                std::thread::sleep(sleep_time);
             }
         }
         Ok(())
     }
 
     /// Draw the UI.
-    pub fn draw(&self, frame: &mut Frame) {
+    pub fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
+
+        // Update cached size if changed
+        if self.size_changed(area) {
+            self.update_cached_size(area);
+        }
 
         // Main layout: header, content, footer
         let chunks = Layout::default()
@@ -327,9 +480,9 @@ impl App {
         }
     }
 
-    /// Draw the header bar.
-    fn draw_header(&self, frame: &mut Frame, area: Rect) {
-        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    /// Draw the header bar with cached timestamp.
+    fn draw_header(&mut self, frame: &mut Frame, area: Rect) {
+        let now = self.get_cached_timestamp();
         let theme = self.theme_manager.current();
         let title = format!(" FORGE Dashboard - {} ", self.current_view.title());
         let title_len = title.len();
@@ -353,7 +506,7 @@ impl App {
         let header = Paragraph::new(Line::from(vec![
             Span::styled(title, Style::default().fg(theme.colors.header).add_modifier(Modifier::BOLD)),
             Span::raw(" ".repeat(area.width.saturating_sub(title_len as u16 + 25) as usize)),
-            Span::styled(format!("{}", now), Style::default().fg(theme.colors.text_dim)),
+            Span::styled(now, Style::default().fg(theme.colors.text_dim)),
             Span::raw("  "),
             Span::styled(status_text, Style::default().fg(status_color)),
         ]))
@@ -367,7 +520,7 @@ impl App {
     }
 
     /// Draw the main content area based on current view.
-    fn draw_content(&self, frame: &mut Frame, area: Rect) {
+    fn draw_content(&mut self, frame: &mut Frame, area: Rect) {
         match self.current_view {
             View::Overview => self.draw_overview(frame, area),
             View::Workers => self.draw_workers(frame, area),
@@ -420,14 +573,14 @@ impl App {
         frame.render_widget(footer, area);
     }
 
-    /// Draw the Overview/Dashboard view.
+    /// Draw the Overview/Dashboard view with cached layout mode.
     ///
     /// Layout adapts based on terminal width:
     /// - Ultra-wide (199+): 3-column layout with all 6 panels
     /// - Wide (120-198): 2-column layout with 4 panels
     /// - Narrow (<120): Single-column with stacked panels
-    fn draw_overview(&self, frame: &mut Frame, area: Rect) {
-        let layout_mode = LayoutMode::from_width(area.width);
+    fn draw_overview(&mut self, frame: &mut Frame, area: Rect) {
+        let layout_mode = self.get_layout_mode(area.width);
 
         match layout_mode {
             LayoutMode::UltraWide => self.draw_overview_ultrawide(frame, area),
@@ -442,7 +595,7 @@ impl App {
     /// Left: Workers + Subscriptions (stacked)
     /// Middle: Tasks + Activity (stacked)
     /// Right: Costs + Actions (stacked)
-    fn draw_overview_ultrawide(&self, frame: &mut Frame, area: Rect) {
+    fn draw_overview_ultrawide(&mut self, frame: &mut Frame, area: Rect) {
         // Calculate column widths: 66 + 66 + 65 = 197, borders use remaining
         let columns = Layout::default()
             .direction(Direction::Horizontal)
@@ -526,7 +679,7 @@ impl App {
     }
 
     /// Draw wide 2-column layout (120-198 cols).
-    fn draw_overview_wide(&self, frame: &mut Frame, area: Rect) {
+    fn draw_overview_wide(&mut self, frame: &mut Frame, area: Rect) {
         // Split into top and bottom sections
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -593,7 +746,7 @@ impl App {
     }
 
     /// Draw narrow single-column layout (<120 cols).
-    fn draw_overview_narrow(&self, frame: &mut Frame, area: Rect) {
+    fn draw_overview_narrow(&mut self, frame: &mut Frame, area: Rect) {
         // Stack panels vertically, show fewer in constrained space
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -917,7 +1070,7 @@ mod tests {
     }
 
     /// Helper to render app and get the buffer
-    fn render_app(app: &App, width: u16, height: u16) -> Buffer {
+    fn render_app(app: &mut App, width: u16, height: u16) -> Buffer {
         let mut terminal = test_terminal(width, height);
         terminal.draw(|frame| app.draw(frame)).unwrap();
         terminal.backend().buffer().clone()
@@ -948,8 +1101,8 @@ mod tests {
 
     #[test]
     fn test_overview_renders_worker_pool_panel() {
-        let app = App::new();
-        let buffer = render_app(&app, 100, 30);
+        let mut app = App::new();
+        let buffer = render_app(&mut app, 100, 30);
 
         // Check Worker Pool panel title appears
         assert!(
@@ -960,9 +1113,9 @@ mod tests {
 
     #[test]
     fn test_overview_renders_utilization_panel() {
-        let app = App::new();
+        let mut app = App::new();
         // Use wide layout (120+ cols) to ensure Subscriptions panel is visible
-        let buffer = render_app(&app, 140, 30);
+        let buffer = render_app(&mut app, 140, 30);
 
         assert!(
             buffer_contains(&buffer, "Subscriptions"),
@@ -972,8 +1125,8 @@ mod tests {
 
     #[test]
     fn test_overview_renders_task_queue_panel() {
-        let app = App::new();
-        let buffer = render_app(&app, 100, 30);
+        let mut app = App::new();
+        let buffer = render_app(&mut app, 100, 30);
 
         assert!(
             buffer_contains(&buffer, "Task Queue"),
@@ -983,8 +1136,8 @@ mod tests {
 
     #[test]
     fn test_overview_renders_activity_log_panel() {
-        let app = App::new();
-        let buffer = render_app(&app, 100, 30);
+        let mut app = App::new();
+        let buffer = render_app(&mut app, 100, 30);
 
         assert!(
             buffer_contains(&buffer, "Activity Log"),
@@ -996,7 +1149,7 @@ mod tests {
     fn test_costs_view_renders_cost_analytics_panel() {
         let mut app = App::new();
         app.switch_view(View::Costs);
-        let buffer = render_app(&app, 100, 30);
+        let buffer = render_app(&mut app, 100, 30);
 
         assert!(
             buffer_contains(&buffer, "Cost Analytics"),
@@ -1008,7 +1161,7 @@ mod tests {
     fn test_metrics_view_renders_performance_panel() {
         let mut app = App::new();
         app.switch_view(View::Metrics);
-        let buffer = render_app(&app, 100, 30);
+        let buffer = render_app(&mut app, 100, 30);
 
         assert!(
             buffer_contains(&buffer, "Performance Metrics"),
@@ -1027,7 +1180,7 @@ mod tests {
         app.switch_view(View::Overview);
         assert_eq!(app.focus_panel(), FocusPanel::WorkerPool);
         // Use ultra-wide layout (199+ cols) to ensure all 6 panels are visible
-        let buffer = render_app(&app, 199, 38);
+        let buffer = render_app(&mut app, 199, 38);
         assert!(buffer_contains(&buffer, "Worker Pool"));
 
         // 2. Subscriptions (part of Overview) - visible in ultra-wide layout
@@ -1036,25 +1189,25 @@ mod tests {
         // 3. Task Queue (Tasks view)
         app.switch_view(View::Tasks);
         assert_eq!(app.focus_panel(), FocusPanel::TaskQueue);
-        let buffer = render_app(&app, 100, 30);
+        let buffer = render_app(&mut app, 100, 30);
         assert!(buffer_contains(&buffer, "Task Queue"));
 
         // 4. Activity Log (Logs view)
         app.switch_view(View::Logs);
         assert_eq!(app.focus_panel(), FocusPanel::ActivityLog);
-        let buffer = render_app(&app, 100, 30);
+        let buffer = render_app(&mut app, 100, 30);
         assert!(buffer_contains(&buffer, "Activity Log"));
 
         // 5. Cost Breakdown (Costs view)
         app.switch_view(View::Costs);
         assert_eq!(app.focus_panel(), FocusPanel::CostBreakdown);
-        let buffer = render_app(&app, 100, 30);
+        let buffer = render_app(&mut app, 100, 30);
         assert!(buffer_contains(&buffer, "Cost Analytics"));
 
         // 6. Metrics Charts (Metrics view)
         app.switch_view(View::Metrics);
         assert_eq!(app.focus_panel(), FocusPanel::MetricsCharts);
-        let buffer = render_app(&app, 100, 30);
+        let buffer = render_app(&mut app, 100, 30);
         assert!(buffer_contains(&buffer, "Performance Metrics"));
     }
 
@@ -1064,8 +1217,8 @@ mod tests {
 
     #[test]
     fn test_panels_render_with_borders() {
-        let app = App::new();
-        let buffer = render_app(&app, 100, 30);
+        let mut app = App::new();
+        let buffer = render_app(&mut app, 100, 30);
 
         // Unicode box drawing characters used by ratatui
         // Check for corner characters that indicate borders
@@ -1086,8 +1239,8 @@ mod tests {
 
     #[test]
     fn test_header_renders_with_borders() {
-        let app = App::new();
-        let buffer = render_app(&app, 100, 30);
+        let mut app = App::new();
+        let buffer = render_app(&mut app, 100, 30);
 
         assert!(
             buffer_contains(&buffer, "FORGE Dashboard"),
@@ -1097,8 +1250,8 @@ mod tests {
 
     #[test]
     fn test_footer_renders_hotkey_hints() {
-        let app = App::new();
-        let buffer = render_app(&app, 100, 30);
+        let mut app = App::new();
+        let buffer = render_app(&mut app, 100, 30);
 
         assert!(
             buffer_contains(&buffer, "[o]"),
@@ -1120,10 +1273,10 @@ mod tests {
 
     #[test]
     fn test_layout_adapts_to_small_terminal() {
-        let app = App::new();
+        let mut app = App::new();
 
         // Very small terminal
-        let buffer = render_app(&app, 40, 15);
+        let buffer = render_app(&mut app, 40, 15);
 
         // Should still render without panic
         assert!(buffer.area.width == 40);
@@ -1136,10 +1289,10 @@ mod tests {
 
     #[test]
     fn test_layout_adapts_to_large_terminal() {
-        let app = App::new();
+        let mut app = App::new();
 
         // Large terminal
-        let buffer = render_app(&app, 200, 60);
+        let buffer = render_app(&mut app, 200, 60);
 
         assert!(buffer.area.width == 200);
         assert!(buffer.area.height == 60);
@@ -1151,10 +1304,10 @@ mod tests {
 
     #[test]
     fn test_layout_adapts_to_wide_terminal() {
-        let app = App::new();
+        let mut app = App::new();
 
         // Wide but short terminal
-        let buffer = render_app(&app, 200, 20);
+        let buffer = render_app(&mut app, 200, 20);
 
         assert!(buffer.area.width == 200);
         assert!(buffer.area.height == 20);
@@ -1165,10 +1318,10 @@ mod tests {
 
     #[test]
     fn test_layout_adapts_to_tall_terminal() {
-        let app = App::new();
+        let mut app = App::new();
 
         // Narrow but tall terminal
-        let buffer = render_app(&app, 60, 50);
+        let buffer = render_app(&mut app, 60, 50);
 
         assert!(buffer.area.width == 60);
         assert!(buffer.area.height == 50);
@@ -1179,10 +1332,10 @@ mod tests {
 
     #[test]
     fn test_minimum_viable_terminal_size() {
-        let app = App::new();
+        let mut app = App::new();
 
         // Minimum size that should still render something
-        let buffer = render_app(&app, 20, 10);
+        let buffer = render_app(&mut app, 20, 10);
 
         // Should not panic and should produce some output
         assert!(buffer.area.width == 20);
@@ -1195,8 +1348,8 @@ mod tests {
 
     #[test]
     fn test_worker_pool_shows_worker_counts() {
-        let app = App::new();
-        let buffer = render_app(&app, 100, 30);
+        let mut app = App::new();
+        let buffer = render_app(&mut app, 100, 30);
 
         // Worker pool should show worker statistics
         assert!(
@@ -1209,7 +1362,7 @@ mod tests {
     fn test_task_queue_shows_priority_indicators() {
         let mut app = App::new();
         app.switch_view(View::Tasks);
-        let buffer = render_app(&app, 100, 30);
+        let buffer = render_app(&mut app, 100, 30);
 
         // Task queue should show priority markers
         assert!(
@@ -1222,7 +1375,7 @@ mod tests {
     fn test_costs_view_shows_placeholder() {
         let mut app = App::new();
         app.switch_view(View::Costs);
-        let buffer = render_app(&app, 100, 30);
+        let buffer = render_app(&mut app, 100, 30);
 
         // Costs view shows placeholder since cost tracking isn't implemented
         assert!(
@@ -1235,7 +1388,7 @@ mod tests {
     fn test_logs_view_shows_activity() {
         let mut app = App::new();
         app.switch_view(View::Logs);
-        let buffer = render_app(&app, 100, 30);
+        let buffer = render_app(&mut app, 100, 30);
 
         // Logs view should show activity log panel title and content
         assert!(
@@ -1252,7 +1405,7 @@ mod tests {
     fn test_workers_view_renders_table() {
         let mut app = App::new();
         app.switch_view(View::Workers);
-        let buffer = render_app(&app, 100, 30);
+        let buffer = render_app(&mut app, 100, 30);
 
         assert!(
             buffer_contains(&buffer, "Worker Pool Management"),
@@ -1268,7 +1421,7 @@ mod tests {
     fn test_chat_view_renders_input_field() {
         let mut app = App::new();
         app.switch_view(View::Chat);
-        let buffer = render_app(&app, 100, 30);
+        let buffer = render_app(&mut app, 100, 30);
 
         assert!(
             buffer_contains(&buffer, "Chat") || buffer_contains(&buffer, "Input"),
@@ -1284,7 +1437,7 @@ mod tests {
     fn test_help_overlay_renders() {
         let mut app = App::new();
         app.handle_app_event(AppEvent::ShowHelp);
-        let buffer = render_app(&app, 100, 40);
+        let buffer = render_app(&mut app, 100, 40);
 
         assert!(app.show_help(), "Help should be visible");
         assert!(
@@ -1297,7 +1450,7 @@ mod tests {
     fn test_help_overlay_shows_navigation_keys() {
         let mut app = App::new();
         app.handle_app_event(AppEvent::ShowHelp);
-        let buffer = render_app(&app, 100, 40);
+        let buffer = render_app(&mut app, 100, 40);
 
         // Help should show view navigation keys
         let content = buffer_to_string(&buffer);
@@ -1367,7 +1520,7 @@ mod tests {
 
     #[test]
     fn test_app_creation() {
-        let app = App::new();
+        let mut app = App::new();
         assert_eq!(app.current_view(), View::Overview);
         assert!(!app.should_quit());
         assert!(!app.show_help());
@@ -1485,9 +1638,9 @@ mod tests {
 
     #[test]
     fn test_ultrawide_layout_renders_all_six_panels() {
-        let app = App::new();
+        let mut app = App::new();
         // Ultra-wide: 199x38 terminal
-        let buffer = render_app(&app, 199, 38);
+        let buffer = render_app(&mut app, 199, 38);
 
         // All 6 panels should be visible in ultra-wide mode
         assert!(
@@ -1518,9 +1671,9 @@ mod tests {
 
     #[test]
     fn test_ultrawide_layout_at_exact_boundary() {
-        let app = App::new();
+        let mut app = App::new();
         // Exactly 199 cols - should trigger ultra-wide
-        let buffer = render_app(&app, 199, 38);
+        let buffer = render_app(&mut app, 199, 38);
 
         assert!(
             buffer_contains(&buffer, "Cost Breakdown"),
@@ -1534,9 +1687,9 @@ mod tests {
 
     #[test]
     fn test_wide_layout_at_boundary_below_ultrawide() {
-        let app = App::new();
+        let mut app = App::new();
         // 198 cols - should NOT trigger ultra-wide, just wide
-        let buffer = render_app(&app, 198, 38);
+        let buffer = render_app(&mut app, 198, 38);
 
         // Should have 4 panels (wide mode)
         assert!(
@@ -1569,9 +1722,9 @@ mod tests {
 
     #[test]
     fn test_narrow_layout_below_wide_threshold() {
-        let app = App::new();
+        let mut app = App::new();
         // 119 cols - should trigger narrow mode
-        let buffer = render_app(&app, 119, 30);
+        let buffer = render_app(&mut app, 119, 30);
 
         // Should still show essential panels
         assert!(
@@ -1596,9 +1749,9 @@ mod tests {
 
     #[test]
     fn test_wide_layout_at_wide_threshold() {
-        let app = App::new();
+        let mut app = App::new();
         // 120 cols - exactly at wide threshold
-        let buffer = render_app(&app, 120, 30);
+        let buffer = render_app(&mut app, 120, 30);
 
         // Should have 4 panels (wide mode)
         assert!(
@@ -1641,11 +1794,11 @@ mod tests {
 
     #[test]
     fn test_ultrawide_renders_without_panic_at_various_heights() {
-        let app = App::new();
+        let mut app = App::new();
 
         // Test various heights with ultra-wide width
         for height in [20, 30, 38, 50, 60, 100] {
-            let buffer = render_app(&app, 199, height);
+            let buffer = render_app(&mut app, 199, height);
             assert_eq!(buffer.area.height, height);
             // Should render something without panic
             assert!(buffer_contains(&buffer, "FORGE Dashboard"));
@@ -1654,8 +1807,8 @@ mod tests {
 
     #[test]
     fn test_ultrawide_shows_action_hints() {
-        let app = App::new();
-        let buffer = render_app(&app, 199, 38);
+        let mut app = App::new();
+        let buffer = render_app(&mut app, 199, 38);
 
         // Quick Actions panel should show worker action hints
         let content = buffer_to_string(&buffer);
@@ -1667,8 +1820,8 @@ mod tests {
 
     #[test]
     fn test_ultrawide_shows_cost_placeholders() {
-        let app = App::new();
-        let buffer = render_app(&app, 199, 38);
+        let mut app = App::new();
+        let buffer = render_app(&mut app, 199, 38);
 
         // Cost Breakdown panel should show cost placeholders
         let content = buffer_to_string(&buffer);
@@ -1680,24 +1833,24 @@ mod tests {
 
     #[test]
     fn test_graceful_degradation_sequence() {
-        let app = App::new();
+        let mut app = App::new();
 
         // Test the degradation sequence: ultra-wide -> wide -> narrow
         // Each step down should still render without errors and show appropriate panels
 
         // Ultra-wide (199): 6 panels
-        let buffer_ultrawide = render_app(&app, 199, 38);
+        let buffer_ultrawide = render_app(&mut app, 199, 38);
         assert!(buffer_contains(&buffer_ultrawide, "Cost Breakdown"));
         assert!(buffer_contains(&buffer_ultrawide, "Quick Actions"));
 
         // Wide (150): 4 panels
-        let buffer_wide = render_app(&app, 150, 30);
+        let buffer_wide = render_app(&mut app, 150, 30);
         assert!(buffer_contains(&buffer_wide, "Worker Pool"));
         assert!(buffer_contains(&buffer_wide, "Task Queue"));
         assert!(!buffer_contains(&buffer_wide, "Cost Breakdown"));
 
         // Narrow (80): 3 panels stacked
-        let buffer_narrow = render_app(&app, 80, 25);
+        let buffer_narrow = render_app(&mut app, 80, 25);
         assert!(buffer_contains(&buffer_narrow, "Worker Pool"));
         assert!(buffer_contains(&buffer_narrow, "Task Queue"));
         assert!(buffer_contains(&buffer_narrow, "Activity Log"));
