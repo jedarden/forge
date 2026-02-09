@@ -12,14 +12,15 @@
 //! ## Example
 //!
 //! ```no_run
-//! use forge_chat::{ChatConfig, provider::{ChatProvider, ClaudeApiProvider}};
+//! use forge_chat::{ChatConfig, provider::{ChatProvider, ClaudeApiProvider}, context::DashboardContext};
 //!
 //! # async fn example() -> anyhow::Result<()> {
 //! let config = ChatConfig::default();
 //! let provider = ClaudeApiProvider::new(config)?;
 //!
+//! let context = DashboardContext::default();
 //! let tools = vec![];
-//! let response = provider.process("Hello!", &tools).await?;
+//! let response = provider.process("Hello!", &context, &tools).await?;
 //! println!("{}", response.text);
 //! # Ok(())
 //! # }
@@ -34,6 +35,7 @@ use tokio::time::{timeout, Duration};
 use tracing::{debug, info};
 
 use crate::config::ChatConfig;
+use crate::context::DashboardContext;
 use crate::error::{ChatError, Result};
 use crate::tools::{ToolCall, ToolDefinition};
 
@@ -51,6 +53,124 @@ pub struct ProviderResponse {
 
     /// Estimated cost of this interaction (optional).
     pub cost_usd: Option<f64>,
+
+    /// Reason why the response ended.
+    pub finish_reason: FinishReason,
+
+    /// Token usage information (if available).
+    pub usage: Option<TokenUsage>,
+}
+
+impl ProviderResponse {
+    /// Create a new basic response.
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            tool_calls: vec![],
+            duration_ms: 0,
+            cost_usd: None,
+            finish_reason: FinishReason::Stop,
+            usage: None,
+        }
+    }
+
+    /// Add tool calls to the response.
+    pub fn with_tool_calls(mut self, calls: Vec<ToolCall>) -> Self {
+        self.tool_calls = calls;
+        self.finish_reason = if !self.tool_calls.is_empty() {
+            FinishReason::ToolCall
+        } else {
+            FinishReason::Stop
+        };
+        self
+    }
+
+    /// Set the finish reason.
+    pub fn with_finish_reason(mut self, reason: FinishReason) -> Self {
+        self.finish_reason = reason;
+        self
+    }
+
+    /// Set the token usage.
+    pub fn with_usage(mut self, usage: TokenUsage) -> Self {
+        self.usage = Some(usage);
+        self
+    }
+
+    /// Set the duration.
+    pub fn with_duration(mut self, duration_ms: u64) -> Self {
+        self.duration_ms = duration_ms;
+        self
+    }
+
+    /// Set the cost.
+    pub fn with_cost(mut self, cost: f64) -> Self {
+        self.cost_usd = Some(cost);
+        self
+    }
+}
+
+/// Reason why the provider's response ended.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum FinishReason {
+    /// Normal stop sequence.
+    Stop,
+    /// Tool calls were made.
+    ToolCall,
+    /// Max tokens reached.
+    MaxTokens,
+    /// Error occurred.
+    Error(String),
+}
+
+impl Default for FinishReason {
+    fn default() -> Self {
+        Self::Stop
+    }
+}
+
+/// Token usage information for a provider response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenUsage {
+    /// Input tokens consumed.
+    pub input_tokens: u32,
+
+    /// Output tokens consumed.
+    pub output_tokens: u32,
+
+    /// Cache read tokens (prompt caching hits).
+    pub cache_read_tokens: u32,
+
+    /// Cache creation tokens (new cache entries).
+    pub cache_creation_tokens: u32,
+}
+
+impl TokenUsage {
+    /// Total tokens consumed (input + output).
+    pub fn total_tokens(&self) -> u64 {
+        self.input_tokens as u64 + self.output_tokens as u64
+    }
+
+    /// Total cache tokens (read + creation).
+    pub fn total_cache_tokens(&self) -> u64 {
+        self.cache_read_tokens as u64 + self.cache_creation_tokens as u64
+    }
+
+    /// Create zero usage.
+    pub fn zero() -> Self {
+        Self {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+        }
+    }
+}
+
+impl Default for TokenUsage {
+    fn default() -> Self {
+        Self::zero()
+    }
 }
 
 /// Tool definition passed to providers.
@@ -84,23 +204,37 @@ impl From<ToolDefinition> for ProviderTool {
 /// - Mock providers for testing
 #[async_trait]
 pub trait ChatProvider: Send + Sync {
-    /// Process a prompt and return a response.
+    /// Process a prompt with context and tools.
     ///
     /// The provider may invoke tools during processing. Tool results are
     /// NOT included in the response - callers must handle tool execution
     /// separately based on the returned tool_calls.
+    ///
+    /// # Arguments
+    /// * `prompt` - The user's prompt/command
+    /// * `context` - Current dashboard context for contextual awareness
+    /// * `tools` - Available tools that the provider may invoke
     async fn process(
         &self,
         prompt: &str,
+        context: &DashboardContext,
         tools: &[ProviderTool],
     ) -> Result<ProviderResponse>;
 
-    /// Get the provider name.
+    /// Get the provider name for logging/debugging.
     fn name(&self) -> &str;
 
     /// Whether this provider supports streaming responses.
     fn supports_streaming(&self) -> bool {
         false
+    }
+
+    /// Estimated cost per request (if known).
+    ///
+    /// Returns None if cost estimation is not available for this provider.
+    /// This is useful for cost tracking and budget management.
+    fn estimated_cost(&self) -> Option<f64> {
+        None
     }
 
     /// Get the model name being used.
@@ -171,8 +305,20 @@ impl ClaudeApiProvider {
 
 #[async_trait]
 impl ChatProvider for ClaudeApiProvider {
-    async fn process(&self, prompt: &str, tools: &[ProviderTool]) -> Result<ProviderResponse> {
+    async fn process(
+        &self,
+        prompt: &str,
+        context: &DashboardContext,
+        tools: &[ProviderTool],
+    ) -> Result<ProviderResponse> {
         let start = std::time::Instant::now();
+
+        // Build the enhanced prompt with context
+        let enhanced_prompt = format!(
+            "{}\n\nCurrent dashboard state:\n{}",
+            prompt,
+            context.to_summary()
+        );
 
         let request = ApiRequest {
             model: self.config.model.clone(),
@@ -181,7 +327,7 @@ impl ChatProvider for ClaudeApiProvider {
             system: SYSTEM_PROMPT.to_string(),
             messages: vec![ApiMessage {
                 role: "user".to_string(),
-                content: prompt.to_string(),
+                content: enhanced_prompt,
             }],
             tools: tools
                 .iter()
@@ -208,10 +354,8 @@ impl ChatProvider for ClaudeApiProvider {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(ChatError::ApiError(format!(
-                "API returned {}: {}",
-                status, body
-            )));
+            return Ok(ProviderResponse::new(format!("API error: {}", status))
+                .with_finish_reason(FinishReason::Error(body)));
         }
 
         let api_response: ApiResponse = response.json().await?;
@@ -238,11 +382,26 @@ impl ChatProvider for ClaudeApiProvider {
         let duration = start.elapsed().as_millis() as u64;
         let cost = estimate_cost(&self.config.model, &api_response.usage);
 
+        let finish_reason = if !tool_calls.is_empty() {
+            FinishReason::ToolCall
+        } else {
+            FinishReason::Stop
+        };
+
+        let usage = TokenUsage {
+            input_tokens: api_response.usage.input_tokens,
+            output_tokens: api_response.usage.output_tokens,
+            cache_read_tokens: api_response.usage.cache_read_tokens.unwrap_or(0),
+            cache_creation_tokens: api_response.usage.cache_creation_tokens.unwrap_or(0),
+        };
+
         Ok(ProviderResponse {
             text,
             tool_calls,
             duration_ms: duration,
             cost_usd: Some(cost),
+            finish_reason,
+            usage: Some(usage),
         })
     }
 
@@ -252,6 +411,24 @@ impl ChatProvider for ClaudeApiProvider {
 
     fn supports_streaming(&self) -> bool {
         true
+    }
+
+    fn estimated_cost(&self) -> Option<f64> {
+        // Estimate based on max_tokens setting
+        let (input_cost, output_cost) = if self.config.model.contains("opus") {
+            (15.0, 75.0)
+        } else if self.config.model.contains("sonnet") {
+            (3.0, 15.0)
+        } else {
+            (0.25, 1.25)
+        };
+        // Rough estimate: assume 10k input, max_tokens output
+        let estimated_input = 10_000.0;
+        let estimated_output = self.config.max_tokens as f64;
+        Some(
+            (estimated_input / 1_000_000.0) * input_cost
+                + (estimated_output / 1_000_000.0) * output_cost,
+        )
     }
 
     fn model(&self) -> &str {
@@ -465,15 +642,27 @@ impl ClaudeCliProvider {
 
 #[async_trait]
 impl ChatProvider for ClaudeCliProvider {
-    async fn process(&self, prompt: &str, tools: &[ProviderTool]) -> Result<ProviderResponse> {
+    async fn process(
+        &self,
+        prompt: &str,
+        context: &DashboardContext,
+        tools: &[ProviderTool],
+    ) -> Result<ProviderResponse> {
         let start = std::time::Instant::now();
 
-        let cli_response = self.send_request(prompt, tools).await?;
+        // Build the enhanced prompt with context
+        let enhanced_prompt = format!(
+            "{}\n\nCurrent dashboard state:\n{}",
+            prompt,
+            context.to_summary()
+        );
+
+        let cli_response = self.send_request(&enhanced_prompt, tools).await?;
 
         let duration = start.elapsed().as_millis() as u64;
 
         // Convert tool calls
-        let tool_calls = cli_response
+        let tool_calls: Vec<ToolCall> = cli_response
             .tool_calls
             .into_iter()
             .map(|tc| ToolCall {
@@ -483,11 +672,19 @@ impl ChatProvider for ClaudeCliProvider {
             })
             .collect();
 
+        let finish_reason = if !tool_calls.is_empty() {
+            FinishReason::ToolCall
+        } else {
+            FinishReason::Stop
+        };
+
         Ok(ProviderResponse {
             text: cli_response.text,
             tool_calls,
             duration_ms: duration,
             cost_usd: Some(0.0), // CLI provider doesn't report cost
+            finish_reason,
+            usage: None, // CLI doesn't provide token usage
         })
     }
 
@@ -576,7 +773,12 @@ impl Default for MockProvider {
 
 #[async_trait]
 impl ChatProvider for MockProvider {
-    async fn process(&self, _prompt: &str, _tools: &[ProviderTool]) -> Result<ProviderResponse> {
+    async fn process(
+        &self,
+        _prompt: &str,
+        _context: &DashboardContext,
+        _tools: &[ProviderTool],
+    ) -> Result<ProviderResponse> {
         if self.response_delay_ms > 0 {
             tokio::time::sleep(Duration::from_millis(self.response_delay_ms)).await;
         }
@@ -586,11 +788,17 @@ impl ChatProvider for MockProvider {
             tool_calls: vec![],
             duration_ms: self.response_delay_ms,
             cost_usd: Some(0.0),
+            finish_reason: FinishReason::Stop,
+            usage: None,
         })
     }
 
     fn name(&self) -> &str {
         "mock"
+    }
+
+    fn estimated_cost(&self) -> Option<f64> {
+        Some(0.0)
     }
 
     fn model(&self) -> &str {
@@ -703,6 +911,10 @@ enum ContentBlock {
 struct ApiUsage {
     input_tokens: u32,
     output_tokens: u32,
+    #[serde(default)]
+    cache_read_tokens: Option<u32>,
+    #[serde(default)]
+    cache_creation_tokens: Option<u32>,
 }
 
 /// System prompt for the chat agent.
@@ -753,6 +965,8 @@ mod tests {
         let usage = ApiUsage {
             input_tokens: 1000,
             output_tokens: 500,
+            cache_read_tokens: Some(0),
+            cache_creation_tokens: Some(0),
         };
 
         let opus_cost = estimate_cost("claude-opus-4", &usage);
@@ -767,6 +981,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_mock_provider() {
+        use crate::context::DashboardContext;
+
         let provider = MockProvider::new()
             .with_response("Test response")
             .with_delay(10);
@@ -774,12 +990,16 @@ mod tests {
         assert_eq!(provider.name(), "mock");
         assert_eq!(provider.model(), "mock-model");
         assert!(!provider.supports_streaming());
+        assert_eq!(provider.estimated_cost(), Some(0.0));
 
-        let response = provider.process("Hello", &[]).await.unwrap();
+        let context = DashboardContext::default();
+        let response = provider.process("Hello", &context, &[]).await.unwrap();
         assert_eq!(response.text, "Test response");
         assert_eq!(response.tool_calls.len(), 0);
         assert!(response.duration_ms >= 10);
         assert_eq!(response.cost_usd, Some(0.0));
+        assert_eq!(response.finish_reason, FinishReason::Stop);
+        assert!(response.usage.is_none());
     }
 
     #[test]

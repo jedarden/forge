@@ -235,8 +235,8 @@ impl ChatBackend {
             .map(|t| t.into())
             .collect();
 
-        // Call the provider
-        let response = match self.provider.process(&prompt, &tools).await {
+        // Call the provider with context
+        let response = match self.provider.process(&prompt, &context, &tools).await {
             Ok(resp) => resp,
             Err(e) => {
                 let duration = start.elapsed().as_millis() as u64;
