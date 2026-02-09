@@ -1,16 +1,19 @@
 //! Data management for the FORGE TUI.
 //!
 //! This module provides the data layer for the TUI, managing worker state,
-//! task information, and formatting data for display. It integrates with
+//! task information, cost analytics, and formatting data for display. It integrates with
 //! forge-core's StatusWatcher to provide real-time updates, forge-worker's
-//! tmux discovery for additional session information, and the BeadManager
-//! for task queue data from monitored workspaces.
+//! tmux discovery for additional session information, the BeadManager
+//! for task queue data from monitored workspaces, and forge-cost for cost analytics.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use crate::bead::BeadManager;
+use crate::cost_panel::{BudgetConfig, CostPanelData};
 use crate::status::{StatusWatcher, StatusWatcherConfig, WorkerCounts, WorkerStatusFile};
 use forge_core::types::WorkerStatus;
+use forge_cost::{CostDatabase, CostQuery};
 use forge_worker::discovery::DiscoveryResult;
 
 /// Aggregated worker data for TUI display.
@@ -388,7 +391,10 @@ fn truncate_string(s: &str, max_len: usize) -> String {
 /// Interval for tmux discovery polling (5 seconds).
 const TMUX_DISCOVERY_INTERVAL_SECS: u64 = 5;
 
-/// Data manager that handles the StatusWatcher, BeadManager, and provides formatted data.
+/// Interval for cost data polling (30 seconds).
+const COST_POLL_INTERVAL_SECS: u64 = 30;
+
+/// Data manager that handles the StatusWatcher, BeadManager, CostDatabase, and provides formatted data.
 pub struct DataManager {
     /// StatusWatcher for real-time updates
     watcher: Option<StatusWatcher>,
@@ -396,16 +402,22 @@ pub struct DataManager {
     pub worker_data: WorkerData,
     /// Bead manager for task queue data
     pub bead_manager: BeadManager,
+    /// Cost database for analytics
+    cost_db: Option<CostDatabase>,
+    /// Cached cost panel data
+    pub cost_data: CostPanelData,
     /// Error message if watcher failed to initialize
     init_error: Option<String>,
     /// Last tmux discovery time
     last_tmux_poll: Option<std::time::Instant>,
+    /// Last cost poll time
+    last_cost_poll: Option<std::time::Instant>,
     /// Tokio runtime for async tmux discovery
     runtime: Option<tokio::runtime::Runtime>,
 }
 
 impl DataManager {
-    /// Create a new DataManager, initializing the StatusWatcher and BeadManager.
+    /// Create a new DataManager, initializing the StatusWatcher, BeadManager, and CostDatabase.
     pub fn new() -> Self {
         let (watcher, init_error) = match StatusWatcher::new(StatusWatcherConfig::default()) {
             Ok(w) => (Some(w), None),
@@ -422,12 +434,19 @@ impl DataManager {
         let mut bead_manager = BeadManager::new();
         bead_manager.add_default_workspaces();
 
+        // Initialize cost database from default location
+        let cost_db = Self::init_cost_database();
+        let cost_data = CostPanelData::loading();
+
         let mut manager = Self {
             watcher,
             worker_data: WorkerData::new(),
             bead_manager,
+            cost_db,
+            cost_data,
             init_error,
             last_tmux_poll: None,
+            last_cost_poll: None,
             runtime,
         };
 
@@ -435,6 +454,23 @@ impl DataManager {
         manager.poll_updates();
 
         manager
+    }
+
+    /// Initialize the cost database.
+    fn init_cost_database() -> Option<CostDatabase> {
+        // Try default location: ~/.forge/costs.db
+        let home = std::env::var("HOME").ok()?;
+        let db_path = PathBuf::from(home).join(".forge").join("costs.db");
+
+        if db_path.exists() {
+            CostDatabase::open(&db_path).ok()
+        } else {
+            // Try to create it
+            if let Some(parent) = db_path.parent() {
+                std::fs::create_dir_all(parent).ok()?;
+            }
+            CostDatabase::open(&db_path).ok()
+        }
     }
 
     /// Create a DataManager with a custom status directory.
@@ -454,12 +490,19 @@ impl DataManager {
         let mut bead_manager = BeadManager::new();
         bead_manager.add_default_workspaces();
 
+        // Initialize cost database
+        let cost_db = Self::init_cost_database();
+        let cost_data = CostPanelData::loading();
+
         let mut manager = Self {
             watcher,
             worker_data: WorkerData::new(),
             bead_manager,
+            cost_db,
+            cost_data,
             init_error,
             last_tmux_poll: None,
+            last_cost_poll: None,
             runtime,
         };
 
@@ -467,7 +510,7 @@ impl DataManager {
         manager
     }
 
-    /// Poll for updates from the StatusWatcher, BeadManager, and tmux discovery.
+    /// Poll for updates from the StatusWatcher, BeadManager, CostDatabase, and tmux discovery.
     ///
     /// This should be called regularly (e.g., in the event loop).
     pub fn poll_updates(&mut self) {
@@ -492,6 +535,85 @@ impl DataManager {
             self.poll_tmux_discovery();
             self.last_tmux_poll = Some(std::time::Instant::now());
         }
+
+        // Periodically poll cost data
+        let should_poll_costs = self
+            .last_cost_poll
+            .map_or(true, |t| t.elapsed().as_secs() >= COST_POLL_INTERVAL_SECS);
+
+        if should_poll_costs {
+            self.poll_cost_data();
+            self.last_cost_poll = Some(std::time::Instant::now());
+        }
+    }
+
+    /// Poll cost database for updates.
+    fn poll_cost_data(&mut self) {
+        let Some(ref db) = self.cost_db else {
+            self.cost_data = CostPanelData::with_error("Cost database not initialized");
+            return;
+        };
+
+        let query = CostQuery::new(db);
+
+        // Get today's costs
+        match query.get_today_costs() {
+            Ok(today) => {
+                self.cost_data.set_today(today);
+            }
+            Err(e) => {
+                self.cost_data.error = Some(format!("Failed to get today's costs: {}", e));
+                return;
+            }
+        }
+
+        // Get current month's costs
+        match query.get_current_month_costs() {
+            Ok(monthly) => {
+                // Convert to model costs for display
+                let model_costs: Vec<forge_cost::ModelCost> = monthly
+                    .by_model
+                    .iter()
+                    .map(|b| forge_cost::ModelCost {
+                        model: b.model.clone(),
+                        total_cost_usd: b.total_cost_usd,
+                        call_count: b.call_count,
+                        avg_cost_per_call: if b.call_count > 0 {
+                            b.total_cost_usd / b.call_count as f64
+                        } else {
+                            0.0
+                        },
+                        total_tokens: b.input_tokens + b.output_tokens + b.cache_creation_tokens + b.cache_read_tokens,
+                    })
+                    .collect();
+
+                self.cost_data.set_monthly(monthly.total_cost_usd, model_costs);
+
+                // Build daily trend from monthly data
+                let trend: Vec<(chrono::NaiveDate, f64)> = monthly
+                    .by_day
+                    .iter()
+                    .map(|d| (d.date, d.total_cost_usd))
+                    .collect();
+                self.cost_data.set_daily_trend(trend);
+            }
+            Err(e) => {
+                self.cost_data.error = Some(format!("Failed to get monthly costs: {}", e));
+            }
+        }
+
+        // Get projected costs
+        match query.get_projected_costs(None) {
+            Ok(projected) => {
+                self.cost_data.set_projected(projected);
+            }
+            Err(_) => {
+                // Projection failure is non-critical
+            }
+        }
+
+        // Set default budget config (can be customized later)
+        self.cost_data.set_budget(BudgetConfig::default());
     }
 
     /// Poll tmux for worker sessions.

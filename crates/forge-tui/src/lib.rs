@@ -27,6 +27,7 @@
 
 pub mod app;
 pub mod bead;
+pub mod cost_panel;
 pub mod data;
 pub mod event;
 #[cfg(test)]
@@ -38,6 +39,7 @@ pub mod widget;
 
 pub use app::{App, AppResult};
 pub use bead::{Bead, BeadManager, BeadStats};
+pub use cost_panel::{BudgetAlertLevel, BudgetConfig, CostPanel, CostPanelData, CostSummaryCompact};
 pub use data::{DataManager, WorkerData};
 pub use log::{LogBuffer, LogEntry, LogEvent, LogLevel, LogTailer, LogTailerConfig};
 pub use status::{StatusEvent, StatusWatcher, StatusWatcherConfig, WorkerStatusFile};
