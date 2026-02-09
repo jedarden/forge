@@ -34,6 +34,7 @@ pub mod event;
 mod integration_tests;
 pub mod log;
 pub mod status;
+pub mod subscription_panel;
 pub mod view;
 pub mod widget;
 
@@ -43,4 +44,8 @@ pub use cost_panel::{BudgetAlertLevel, BudgetConfig, CostPanel, CostPanelData, C
 pub use data::{DataManager, WorkerData};
 pub use log::{LogBuffer, LogEntry, LogEvent, LogLevel, LogTailer, LogTailerConfig};
 pub use status::{StatusEvent, StatusWatcher, StatusWatcherConfig, WorkerStatusFile};
+pub use subscription_panel::{
+    format_subscription_summary, SubscriptionAction, SubscriptionData, SubscriptionPanel,
+    SubscriptionService, SubscriptionStatus, SubscriptionSummaryCompact,
+};
 pub use view::{LayoutMode, View};

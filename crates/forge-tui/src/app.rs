@@ -430,7 +430,7 @@ impl App {
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(columns[2]);
 
-        // Left column: Workers + Subscriptions/Utilization
+        // Left column: Workers + Subscriptions
         let worker_summary = self.data_manager.worker_data.format_worker_pool_summary();
         self.draw_panel(
             frame,
@@ -440,15 +440,13 @@ impl App {
             self.focus_panel == FocusPanel::WorkerPool,
         );
 
-        let subscriptions_content = if self.data_manager.is_ready() {
-            self.format_utilization_panel()
-        } else {
-            "Loading...".to_string()
-        };
+        let subscriptions_content = crate::subscription_panel::format_subscription_summary(
+            &self.data_manager.subscription_data,
+        );
         self.draw_panel(
             frame,
             left_panels[1],
-            "Utilization",
+            "Subscriptions",
             &subscriptions_content,
             self.focus_panel == FocusPanel::Subscriptions,
         );
@@ -517,17 +515,15 @@ impl App {
             self.focus_panel == FocusPanel::WorkerPool,
         );
 
-        // Subscriptions/Utilization panel - show real metrics
-        let subscriptions_content = if self.data_manager.is_ready() {
-            self.format_utilization_panel()
-        } else {
-            "Loading...".to_string()
-        };
+        // Subscriptions panel - show subscription usage and reset timers
+        let subscriptions_content = crate::subscription_panel::format_subscription_summary(
+            &self.data_manager.subscription_data,
+        );
 
         self.draw_panel(
             frame,
             top_chunks[1],
-            "Utilization",
+            "Subscriptions",
             &subscriptions_content,
             self.focus_panel == FocusPanel::Subscriptions,
         );
@@ -847,64 +843,6 @@ impl App {
         self.data_manager.poll_updates();
     }
 
-    /// Format the utilization panel showing worker metrics.
-    fn format_utilization_panel(&self) -> String {
-        let counts = self.data_manager.worker_counts();
-        let mut lines = Vec::new();
-
-        if counts.total == 0 {
-            return "No workers to measure.\n\n\
-                    Start workers to see utilization metrics."
-                .to_string();
-        }
-
-        // Calculate utilization percentage
-        let utilization = if counts.total > 0 {
-            (counts.active * 100) / counts.total
-        } else {
-            0
-        };
-
-        // Worker utilization bar
-        lines.push("Worker Utilization:".to_string());
-        lines.push(format_progress_bar(utilization, 100, 20));
-        lines.push(format!("{}/{} workers active ({}%)", counts.active, counts.total, utilization));
-        lines.push(String::new());
-
-        // Breakdown by status
-        lines.push("Status Breakdown:".to_string());
-        if counts.active > 0 {
-            lines.push(format!("  ✅ Active:   {}", counts.active));
-        }
-        if counts.idle > 0 {
-            lines.push(format!("  💤 Idle:     {}", counts.idle));
-        }
-        if counts.starting > 0 {
-            lines.push(format!("  🔄 Starting: {}", counts.starting));
-        }
-        if counts.failed > 0 {
-            lines.push(format!("  ❌ Failed:   {}", counts.failed));
-        }
-        if counts.stopped > 0 {
-            lines.push(format!("  ⏹  Stopped:  {}", counts.stopped));
-        }
-        if counts.error > 0 {
-            lines.push(format!("  ⚠  Error:    {}", counts.error));
-        }
-
-        // Health summary
-        lines.push(String::new());
-        let healthy = counts.healthy();
-        let unhealthy = counts.unhealthy();
-        if unhealthy > 0 {
-            lines.push(format!("⚠  {} unhealthy workers", unhealthy));
-        } else {
-            lines.push(format!("✅ All {} workers healthy", healthy));
-        }
-
-        lines.join("\n")
-    }
-
     /// Draw the help overlay.
     fn draw_help_overlay(&self, frame: &mut Frame, area: Rect) {
         // Calculate centered overlay area
@@ -975,20 +913,6 @@ fn truncate_status_error(err: &str) -> String {
     }
 }
 
-/// Format a simple ASCII progress bar.
-fn format_progress_bar(value: usize, max: usize, width: usize) -> String {
-    let pct = if max > 0 { value * 100 / max } else { 0 };
-    let filled = (pct * width) / 100;
-    let empty = width.saturating_sub(filled);
-
-    format!(
-        "[{}{}] {}%",
-        "█".repeat(filled),
-        "░".repeat(empty),
-        pct
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1046,12 +970,12 @@ mod tests {
     #[test]
     fn test_overview_renders_utilization_panel() {
         let app = App::new();
-        // Use wide layout (120+ cols) to ensure Utilization panel is visible
+        // Use wide layout (120+ cols) to ensure Subscriptions panel is visible
         let buffer = render_app(&app, 140, 30);
 
         assert!(
-            buffer_contains(&buffer, "Utilization"),
-            "Overview should render Utilization panel in wide layout"
+            buffer_contains(&buffer, "Subscriptions"),
+            "Overview should render Subscriptions panel in wide layout"
         );
     }
 
@@ -1115,8 +1039,8 @@ mod tests {
         let buffer = render_app(&app, 199, 38);
         assert!(buffer_contains(&buffer, "Worker Pool"));
 
-        // 2. Utilization (part of Overview) - visible in ultra-wide layout
-        assert!(buffer_contains(&buffer, "Utilization"));
+        // 2. Subscriptions (part of Overview) - visible in ultra-wide layout
+        assert!(buffer_contains(&buffer, "Subscriptions"));
 
         // 3. Task Queue (Tasks view)
         app.switch_view(View::Tasks);
@@ -1231,7 +1155,7 @@ mod tests {
 
         // All panels should still be visible
         assert!(buffer_contains(&buffer, "Worker Pool"));
-        assert!(buffer_contains(&buffer, "Utilization"));
+        assert!(buffer_contains(&buffer, "Subscriptions"));
     }
 
     #[test]
@@ -1580,8 +1504,8 @@ mod tests {
             "Ultra-wide layout should show Worker Pool panel"
         );
         assert!(
-            buffer_contains(&buffer, "Utilization"),
-            "Ultra-wide layout should show Utilization panel"
+            buffer_contains(&buffer, "Subscriptions"),
+            "Ultra-wide layout should show Subscriptions panel"
         );
         assert!(
             buffer_contains(&buffer, "Task Queue"),
@@ -1629,8 +1553,8 @@ mod tests {
             "Wide layout should show Worker Pool"
         );
         assert!(
-            buffer_contains(&buffer, "Utilization"),
-            "Wide layout should show Utilization"
+            buffer_contains(&buffer, "Subscriptions"),
+            "Wide layout should show Subscriptions"
         );
         assert!(
             buffer_contains(&buffer, "Task Queue"),
@@ -1691,8 +1615,8 @@ mod tests {
             "Wide layout at threshold should show Worker Pool"
         );
         assert!(
-            buffer_contains(&buffer, "Utilization"),
-            "Wide layout at threshold should show Utilization"
+            buffer_contains(&buffer, "Subscriptions"),
+            "Wide layout at threshold should show Subscriptions"
         );
     }
 

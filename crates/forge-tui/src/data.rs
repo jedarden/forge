@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use crate::bead::BeadManager;
 use crate::cost_panel::{BudgetConfig, CostPanelData};
 use crate::status::{StatusWatcher, StatusWatcherConfig, WorkerCounts, WorkerStatusFile};
+use crate::subscription_panel::SubscriptionData;
 use forge_core::types::WorkerStatus;
 use forge_cost::{CostDatabase, CostQuery};
 use forge_worker::discovery::DiscoveryResult;
@@ -406,6 +407,8 @@ pub struct DataManager {
     cost_db: Option<CostDatabase>,
     /// Cached cost panel data
     pub cost_data: CostPanelData,
+    /// Subscription tracking data
+    pub subscription_data: SubscriptionData,
     /// Error message if watcher failed to initialize
     init_error: Option<String>,
     /// Last tmux discovery time
@@ -438,12 +441,17 @@ impl DataManager {
         let cost_db = Self::init_cost_database();
         let cost_data = CostPanelData::loading();
 
+        // Initialize subscription data with demo data for now
+        // In a real implementation, this would load from ~/.forge/subscriptions.yaml
+        let subscription_data = SubscriptionData::with_demo_data();
+
         let mut manager = Self {
             watcher,
             worker_data: WorkerData::new(),
             bead_manager,
             cost_db,
             cost_data,
+            subscription_data,
             init_error,
             last_tmux_poll: None,
             last_cost_poll: None,
@@ -494,12 +502,16 @@ impl DataManager {
         let cost_db = Self::init_cost_database();
         let cost_data = CostPanelData::loading();
 
+        // Initialize subscription data with demo data
+        let subscription_data = SubscriptionData::with_demo_data();
+
         let mut manager = Self {
             watcher,
             worker_data: WorkerData::new(),
             bead_manager,
             cost_db,
             cost_data,
+            subscription_data,
             init_error,
             last_tmux_poll: None,
             last_cost_poll: None,
