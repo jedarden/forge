@@ -13,6 +13,9 @@ rust-version.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
 
+# Async runtime
+tokio.workspace = true
+
 # Database
 rusqlite.workspace = true
 
@@ -31,3 +34,4 @@ forge-core = { path = "../forge-core" }
 
 [dev-dependencies]
 tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
