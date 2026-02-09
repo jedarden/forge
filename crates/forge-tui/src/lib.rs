@@ -40,8 +40,9 @@ pub mod view;
 pub mod widget;
 
 pub use widget::{
-    render_sparkline, render_sparkline_i64, QuickAction, QuickActionsPanel, QuickActionType,
-    SparklineDirection, SparklineWidget,
+    render_sparkline, render_sparkline_i64, HotkeyHints, ProgressBar, ProgressColorMode,
+    ProgressFillStyle, QuickAction, QuickActionsPanel, QuickActionType, SparklineDirection,
+    SparklineWidget, StatusIndicator,
 };
 
 pub use app::{App, AppResult};
