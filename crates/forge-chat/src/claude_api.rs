@@ -358,4 +358,148 @@ mod tests {
         assert_eq!(provider.name(), "claude-api");
         assert!(provider.supports_streaming());
     }
+
+    // ============ HTTP Mocking Tests with wiremock ============
+
+    #[cfg(test)]
+    mod http_tests {
+        use super::*;
+        use crate::context::DashboardContext;
+        use wiremock::{matchers, Mock, MockServer, ResponseTemplate};
+
+        #[tokio::test]
+        async fn test_claude_api_with_mock_server() {
+            // Start mock server
+            let mock_server = MockServer::start().await;
+
+            // Set up mock response
+            let template = ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "msg-123",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Mock response from Claude API"
+                    }
+                ],
+                "model": "claude-sonnet-4-5-20250929",
+                "stop_reason": "end_turn",
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0
+                }
+            }));
+
+            Mock::given(matchers::method("POST"))
+                .and(matchers::path("/v1/messages"))
+                .and(matchers::header("x-api-key", "test-key"))
+                .respond_with(template)
+                .mount(&mock_server)
+                .await;
+
+            // Create provider with mock server URL
+            let config = ClaudeApiConfig {
+                api_base_url: mock_server.uri(),
+                model: "claude-sonnet-4-5-20250929".to_string(),
+                ..Default::default()
+            };
+            let provider = ClaudeApiProvider::with_api_key(config, "test-key").unwrap();
+
+            // Test the provider
+            let context = DashboardContext::default();
+            let response = provider.process("Hello", &context, &[]).await.unwrap();
+
+            assert_eq!(response.text, "Mock response from Claude API");
+            assert_eq!(response.finish_reason, crate::provider::FinishReason::Stop);
+        }
+
+        #[tokio::test]
+        async fn test_claude_api_with_tool_call_response() {
+            let mock_server = MockServer::start().await;
+
+            let template = ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "msg-456",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "I'll check the worker status."
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "toolu-123",
+                        "name": "get_worker_status",
+                        "input": {"worker_id": "worker-1"}
+                    }
+                ],
+                "model": "claude-sonnet-4-5-20250929",
+                "stop_reason": "tool_use",
+                "usage": {
+                    "input_tokens": 15,
+                    "output_tokens": 10
+                }
+            }));
+
+            Mock::given(matchers::method("POST"))
+                .and(matchers::path("/v1/messages"))
+                .respond_with(template)
+                .mount(&mock_server)
+                .await;
+
+            let config = ClaudeApiConfig {
+                api_base_url: mock_server.uri(),
+                ..Default::default()
+            };
+            let provider = ClaudeApiProvider::with_api_key(config, "test-key").unwrap();
+
+            let context = DashboardContext::default();
+            let response = provider.process("Check worker status", &context, &[]).await.unwrap();
+
+            assert!(!response.text.is_empty());
+            assert_eq!(response.tool_calls.len(), 1);
+            assert_eq!(response.tool_calls[0].name, "get_worker_status");
+            assert_eq!(response.tool_calls[0].id, Some("toolu-123".to_string()));
+        }
+
+        #[tokio::test]
+        async fn test_claude_api_error_handling() {
+            let mock_server = MockServer::start().await;
+
+            // Simulate API error
+            let template = ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": "Invalid request: missing required field"
+                }
+            }));
+
+            Mock::given(matchers::method("POST"))
+                .and(matchers::path("/v1/messages"))
+                .respond_with(template)
+                .mount(&mock_server)
+                .await;
+
+            let config = ClaudeApiConfig {
+                api_base_url: mock_server.uri(),
+                ..Default::default()
+            };
+            let provider = ClaudeApiProvider::with_api_key(config, "test-key").unwrap();
+
+            let context = DashboardContext::default();
+            let result = provider.process("Bad request", &context, &[]).await;
+
+            assert!(result.is_err());
+            match result {
+                Err(crate::error::ChatError::ApiError(msg)) => {
+                    assert!(msg.contains("API request failed") || msg.contains("400"));
+                }
+                _ => panic!("Expected ApiError"),
+            }
+        }
+    }
 }
