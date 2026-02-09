@@ -17,8 +17,9 @@ use ratatui::{
 
 use crate::cost_panel::CostPanel;
 use crate::data::DataManager;
-use crate::event::{AppEvent, InputHandler};
+use crate::event::{AppEvent, InputHandler, WorkerExecutor};
 use crate::view::{FocusPanel, LayoutMode, View};
+use crate::widget::QuickActionsPanel;
 
 /// Result type for app operations.
 pub type AppResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -217,6 +218,29 @@ impl App {
             }
             AppEvent::Select | AppEvent::Toggle | AppEvent::FocusNext | AppEvent::FocusPrev => {
                 // Panel-specific handling - to be implemented
+            }
+            AppEvent::SpawnWorker(executor) => {
+                self.status_message = Some(format!(
+                    "Spawning {} worker...",
+                    executor.name()
+                ));
+                // TODO: Implement actual worker spawning
+            }
+            AppEvent::KillWorker => {
+                self.status_message = Some("Kill worker - not yet implemented".to_string());
+                // TODO: Implement actual worker killing
+            }
+            AppEvent::OpenConfig => {
+                self.status_message = Some("Opening configuration menu...".to_string());
+                // TODO: Implement config menu
+            }
+            AppEvent::OpenBudgetConfig => {
+                self.status_message = Some("Opening budget configuration...".to_string());
+                // TODO: Implement budget config
+            }
+            AppEvent::OpenWorkerConfig => {
+                self.status_message = Some("Opening worker configuration...".to_string());
+                // TODO: Implement worker config
             }
             AppEvent::None => {}
         }
@@ -480,14 +504,10 @@ impl App {
             self.focus_panel == FocusPanel::CostBreakdown,
         );
 
-        let actions_content = self.format_actions_panel();
-        self.draw_panel(
-            frame,
-            right_panels[1],
-            "Quick Actions",
-            &actions_content,
-            self.focus_panel == FocusPanel::MetricsCharts,
-        );
+        // Render Quick Actions panel with widget
+        let quick_actions_panel = QuickActionsPanel::new()
+            .focused(self.focus_panel == FocusPanel::MetricsCharts);
+        frame.render_widget(quick_actions_panel, right_panels[1]);
     }
 
     /// Draw wide 2-column layout (120-198 cols).
@@ -655,25 +675,6 @@ impl App {
             "░".repeat(empty),
             data.monthly_usage_pct()
         ));
-
-        lines.join("\n")
-    }
-
-    /// Format the actions panel for the right column in ultra-wide mode.
-    fn format_actions_panel(&self) -> String {
-        let mut lines = Vec::new();
-        lines.push("Worker Actions:".to_string());
-        lines.push("  [G] Spawn GLM worker".to_string());
-        lines.push("  [S] Spawn Sonnet worker".to_string());
-        lines.push("  [O] Spawn Opus worker".to_string());
-        lines.push("  [K] Kill selected worker".to_string());
-        lines.push(String::new());
-        lines.push("Task Actions:".to_string());
-        lines.push("  [P] Prioritize task".to_string());
-        lines.push("  [D] Defer task".to_string());
-        lines.push("  [X] Cancel task".to_string());
-        lines.push(String::new());
-        lines.push("Press ? for help".to_string());
 
         lines.join("\n")
     }
