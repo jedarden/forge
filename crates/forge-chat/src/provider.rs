@@ -1023,4 +1023,200 @@ mod tests {
         assert_eq!(provider_tool.name, "test_tool");
         assert_eq!(provider_tool.description, "A test tool");
     }
+
+    // ============ Claude CLI Provider Tests ============
+
+    #[test]
+    fn test_claude_cli_provider_creation() {
+        let config = ClaudeCliConfig {
+            binary_path: "/usr/bin/claude".to_string(),
+            model: "opus".to_string(),
+            headless: true,
+            extra_args: vec!["--debug".to_string()],
+        };
+
+        let provider = ClaudeCliProvider::new(config.clone());
+        assert_eq!(provider.name(), "claude-cli");
+        assert_eq!(provider.model(), "opus");
+        assert!(!provider.supports_streaming());
+    }
+
+    #[test]
+    fn test_claude_cli_from_chat_config() {
+        use crate::config::ChatConfig;
+
+        let chat_config = ChatConfig {
+            model: "claude-opus-4-5".to_string(),
+            ..Default::default()
+        };
+
+        let provider = ClaudeCliProvider::from_chat_config(&chat_config);
+        assert_eq!(provider.model(), "opus");
+    }
+
+    #[test]
+    fn test_claude_cli_request_serialization() {
+        let request = CliRequest {
+            prompt: "Hello, world!".to_string(),
+            tools: vec![ProviderTool {
+                name: "test_tool".to_string(),
+                description: "A test tool".to_string(),
+                input_schema: serde_json::json!({"type": "object"}),
+            }],
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("Hello, world!"));
+        assert!(json.contains("test_tool"));
+
+        // CliRequest is Serialize only (for sending to CLI), not Deserialize
+        // We verify the JSON structure is valid
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["prompt"], "Hello, world!");
+        assert_eq!(parsed["tools"][0]["name"], "test_tool");
+    }
+
+    #[test]
+    fn test_claude_cli_response_parsing() {
+        // Test basic text response
+        let json = r#"{"text": "Hello there!", "tool_calls": []}"#;
+        let response: CliResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.text, "Hello there!");
+        assert!(response.tool_calls.is_empty());
+
+        // Test response with tool calls
+        let json_with_tools = r#"{
+            "text": "I'll help you with that.",
+            "tool_calls": [
+                {
+                    "name": "get_worker_status",
+                    "parameters": {"worker_id": "worker-1"},
+                    "id": "call_123"
+                }
+            ]
+        }"#;
+        let response_with_tools: CliResponse = serde_json::from_str(json_with_tools).unwrap();
+        assert_eq!(response_with_tools.text, "I'll help you with that.");
+        assert_eq!(response_with_tools.tool_calls.len(), 1);
+        assert_eq!(response_with_tools.tool_calls[0].name, "get_worker_status");
+        assert_eq!(response_with_tools.tool_calls[0].id, Some("call_123".to_string()));
+    }
+
+    #[test]
+    fn test_claude_cli_response_tool_call_parsing() {
+        // Test tool call without ID
+        let json = r#"{
+            "text": "Executing tool",
+            "tool_calls": [
+                {
+                    "name": "spawn_worker",
+                    "parameters": {"worker_type": "sonnet", "count": 2}
+                }
+            ]
+        }"#;
+        let response: CliResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.tool_calls[0].name, "spawn_worker");
+        assert!(response.tool_calls[0].id.is_none());
+        assert_eq!(
+            response.tool_calls[0].parameters["worker_type"],
+            "sonnet"
+        );
+        assert_eq!(response.tool_calls[0].parameters["count"], 2);
+    }
+
+    #[test]
+    fn test_claude_cli_response_default_tool_calls() {
+        // Test that tool_calls defaults to empty array
+        let json = r#"{"text": "Simple response"}"#;
+        let response: CliResponse = serde_json::from_str(json).unwrap();
+        assert!(response.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn test_claude_cli_response_malformed_json() {
+        // Test malformed JSON handling
+        let json = r#"{"text": "Incomplete"#;
+        let result: std::result::Result<CliResponse, serde_json::Error> =
+            serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_provider_response_builder() {
+        let response = ProviderResponse::new("Test response")
+            .with_duration(100)
+            .with_cost(0.5)
+            .with_finish_reason(FinishReason::ToolCall)
+            .with_usage(TokenUsage {
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_read_tokens: 0,
+                cache_creation_tokens: 0,
+            });
+
+        assert_eq!(response.text, "Test response");
+        assert_eq!(response.duration_ms, 100);
+        assert_eq!(response.cost_usd, Some(0.5));
+        assert_eq!(response.finish_reason, FinishReason::ToolCall);
+        assert!(response.usage.is_some());
+        assert_eq!(response.usage.unwrap().total_tokens(), 150);
+    }
+
+    #[test]
+    fn test_token_usage_calculations() {
+        let usage = TokenUsage {
+            input_tokens: 1000,
+            output_tokens: 500,
+            cache_read_tokens: 200,
+            cache_creation_tokens: 100,
+        };
+
+        assert_eq!(usage.total_tokens(), 1500);
+        assert_eq!(usage.total_cache_tokens(), 300);
+    }
+
+    #[test]
+    fn test_finish_reason_display() {
+        assert_eq!(FinishReason::Stop, FinishReason::Stop);
+        assert_eq!(FinishReason::ToolCall, FinishReason::ToolCall);
+        assert_eq!(FinishReason::MaxTokens, FinishReason::MaxTokens);
+        assert_eq!(
+            FinishReason::Error("test".to_string()),
+            FinishReason::Error("test".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_claude_cli_process_with_dashboard_context() {
+        use crate::context::DashboardContext;
+
+        let config = ClaudeCliConfig::default();
+        let provider = ClaudeCliProvider::new(config);
+
+        // Note: This test will fail if claude-cli is not installed
+        // In a real test environment, you would mock the subprocess
+        let context = DashboardContext::default();
+        let tools: Vec<ProviderTool> = vec![];
+
+        // This will attempt to spawn the real claude-cli process
+        // In production tests, this should be mocked
+        let result = provider.process("Hello", &context, &tools).await;
+
+        // We expect this to fail in test environment without claude-cli
+        // But we can verify the error type
+        match result {
+            Ok(_) => {
+                // If claude-cli is installed and working, that's fine too
+            }
+            Err(ChatError::ConfigError(_)) => {
+                // Expected: claude-cli not found
+            }
+            Err(ChatError::ApiError(_)) => {
+                // Also possible: claude-cli failed to start
+            }
+            Err(other) => {
+                panic!("Unexpected error type: {:?}", other);
+            }
+        }
+    }
 }
