@@ -37,9 +37,10 @@ FORGE is a terminal-based control panel that intelligently manages multiple AI c
 
 ### 🤖 Multi-Agent Orchestration
 - Spawn and manage multiple AI coding agents simultaneously
-- Distribute work across different models and providers (Claude, GPT, Qwen, etc.)
+- Distribute work across different models and providers (Claude, GPT, Qwen, GLM, etc.)
 - Real-time health monitoring with auto-recovery
 - Support for tmux, subprocess, and Docker-based workers
+- Worker pooling with automatic failover
 
 ### 💰 Cost Optimization
 - Smart model routing based on task complexity (0-100 scoring system)
@@ -47,15 +48,20 @@ FORGE is a terminal-based control panel that intelligently manages multiple AI c
 - Save 87-94% on AI costs with intelligent routing
 - Real-time cost tracking and forecasting
 - Subscription vs API cost analysis
+- Budget alerts with visual progress bars
 
 ### 📊 Beautiful TUI Dashboard
-- **6-panel layout**: Workers, Tasks, Costs, Metrics, Activity Log, Chat
+- **Responsive layouts**: Adapts to terminal size
+  - **Narrow** (<120 cols): Single column stacked panels
+  - **Wide** (120-198 cols): 2-column layout with 4 panels
+  - **Ultra-Wide** (199+ cols): 3-column layout with all 6 panels
+- **6-panel layout**: Workers, Tasks, Costs, Subscriptions, Activity Log, Chat
 - Real-time worker status and health metrics
 - Task queue visualization with bead integration
 - Live activity logs and performance metrics
 - **Conversational interface as primary control** - just ask in natural language
 - Optional hotkeys for power users (W for workers, T for tasks, etc.)
-- Responsive layouts for multiple terminal sizes (199×38, 199×55, and more)
+- **4 configurable themes**: Default, Dark, Light, Cyberpunk
 
 ### 🔄 Self-Updating & Hot-Reload
 - Hot-reload capability for live configuration updates
@@ -69,11 +75,19 @@ FORGE is a terminal-based control panel that intelligently manages multiple AI c
 - Bead-level locking for multi-worker coordination
 - Lock management to prevent duplicate work
 
+### 💬 Conversational Chat Interface
+- Natural language commands to control FORGE
+- AI-powered tool execution
+- Command history and context awareness
+- Rate limiting (10 commands/min)
+- Audit logging for all commands
+
 ### 🔌 Extensible Integration
 - **Headless CLI backend**: Integrate with any AI tool that supports structured I/O
 - **Custom launchers**: Create worker launchers for any AI coding tool
 - **Worker configurations**: Share reusable worker configs via Git repos
 - **45+ built-in tools** for dashboard control and management
+- **Chat tools**: worker_status, task_queue, cost_analytics, subscription_usage, spawn_worker, kill_worker, assign_task, and more
 
 ---
 
