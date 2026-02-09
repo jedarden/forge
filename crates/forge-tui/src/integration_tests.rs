@@ -2693,16 +2693,18 @@ mod tests {
     #[test]
     fn test_input_handler_view_hotkeys() {
         use crossterm::event::{KeyCode, KeyModifiers};
+        use crate::event::WorkerExecutor;
 
         let mut handler = InputHandler::new();
 
         let view_keys = [
-            (KeyCode::Char('o'), View::Overview),
+            (KeyCode::Char('O'), View::Overview), // Uppercase for Overview
             (KeyCode::Char('w'), View::Workers),
             (KeyCode::Char('t'), View::Tasks),
             (KeyCode::Char('c'), View::Costs),
             (KeyCode::Char('m'), View::Metrics),
             (KeyCode::Char('l'), View::Logs),
+            (KeyCode::Char('a'), View::Logs), // 'a' for Activity/Logs
         ];
 
         for (keycode, expected_view) in view_keys {
@@ -2718,6 +2720,17 @@ mod tests {
                 expected_view
             );
         }
+
+        // Verify lowercase 'o' is now spawn Opus, not Overview
+        let event = handler.handle_key(crossterm::event::KeyEvent::new(
+            KeyCode::Char('o'),
+            KeyModifiers::NONE,
+        ));
+        assert_eq!(
+            event,
+            AppEvent::SpawnWorker(WorkerExecutor::Opus),
+            "Lowercase 'o' should spawn Opus worker"
+        );
     }
 
     #[test]
@@ -2760,12 +2773,12 @@ mod tests {
         ));
         assert_eq!(down, AppEvent::NavigateDown);
 
-        // Vim keys
+        // Vim keys (note: 'k' is now KillWorker, not NavigateUp)
         let k = handler.handle_key(crossterm::event::KeyEvent::new(
             KeyCode::Char('k'),
             KeyModifiers::NONE,
         ));
-        assert_eq!(k, AppEvent::NavigateUp);
+        assert_eq!(k, AppEvent::KillWorker);
 
         let j = handler.handle_key(crossterm::event::KeyEvent::new(
             KeyCode::Char('j'),

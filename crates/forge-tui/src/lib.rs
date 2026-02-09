@@ -38,14 +38,17 @@ pub mod subscription_panel;
 pub mod view;
 pub mod widget;
 
+pub use widget::{QuickAction, QuickActionsPanel, QuickActionType};
+
 pub use app::{App, AppResult};
 pub use bead::{Bead, BeadManager, BeadStats};
 pub use cost_panel::{BudgetAlertLevel, BudgetConfig, CostPanel, CostPanelData, CostSummaryCompact};
 pub use data::{DataManager, WorkerData};
+pub use event::{AppEvent, InputHandler, WorkerExecutor};
 pub use log::{LogBuffer, LogEntry, LogEvent, LogLevel, LogTailer, LogTailerConfig};
 pub use status::{StatusEvent, StatusWatcher, StatusWatcherConfig, WorkerStatusFile};
 pub use subscription_panel::{
     format_subscription_summary, SubscriptionAction, SubscriptionData, SubscriptionPanel,
     SubscriptionService, SubscriptionStatus, SubscriptionSummaryCompact,
 };
-pub use view::{LayoutMode, View};
+pub use view::{FocusPanel, LayoutMode, View};

@@ -53,8 +53,53 @@ pub enum AppEvent {
     Backspace,
     /// Submit text input
     Submit,
+    /// Spawn a new worker (variant specifies executor type)
+    SpawnWorker(WorkerExecutor),
+    /// Kill selected worker
+    KillWorker,
+    /// Open configuration menu
+    OpenConfig,
+    /// Open budget configuration
+    OpenBudgetConfig,
+    /// Open worker configuration
+    OpenWorkerConfig,
     /// No action needed
     None,
+}
+
+/// Worker executor types for spawn actions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkerExecutor {
+    /// GLM-4.7 model
+    Glm,
+    /// Claude Sonnet 4.5
+    Sonnet,
+    /// Claude Opus 4.6
+    Opus,
+    /// Haiku model
+    Haiku,
+}
+
+impl WorkerExecutor {
+    /// Returns the display name for this executor.
+    pub fn name(&self) -> &'static str {
+        match self {
+            WorkerExecutor::Glm => "GLM-4.7",
+            WorkerExecutor::Sonnet => "Sonnet 4.5",
+            WorkerExecutor::Opus => "Opus 4.6",
+            WorkerExecutor::Haiku => "Haiku",
+        }
+    }
+
+    /// Returns the hotkey character for this executor.
+    pub fn hotkey(&self) -> char {
+        match self {
+            WorkerExecutor::Glm => 'G',
+            WorkerExecutor::Sonnet => 'S',
+            WorkerExecutor::Opus => 'O',
+            WorkerExecutor::Haiku => 'H',
+        }
+    }
 }
 
 /// Input handler for converting key events to app events.
@@ -128,16 +173,44 @@ impl InputHandler {
             // Quit
             KeyCode::Char('q') | KeyCode::Char('Q') => AppEvent::Quit,
 
-            // Help
-            KeyCode::Char('?') | KeyCode::Char('h') | KeyCode::Char('H') => AppEvent::ShowHelp,
+            // Help (when not used for spawn Haiku)
+            KeyCode::Char('?') => AppEvent::ShowHelp,
+            // Note: 'h' is now spawn Haiku, help only via '?'
 
-            // View navigation hotkeys
-            KeyCode::Char('o') | KeyCode::Char('O') => AppEvent::SwitchView(View::Overview),
+            // Quick Actions - Spawn workers
+            KeyCode::Char('g') | KeyCode::Char('G') => AppEvent::SpawnWorker(WorkerExecutor::Glm),
+            KeyCode::Char('s') | KeyCode::Char('S') => AppEvent::SpawnWorker(WorkerExecutor::Sonnet),
+            KeyCode::Char('o') => AppEvent::SpawnWorker(WorkerExecutor::Opus),  // lowercase only
+            KeyCode::Char('h') => AppEvent::SpawnWorker(WorkerExecutor::Haiku),
+
+            // Quick Actions - Kill worker
+            KeyCode::Char('k') => AppEvent::KillWorker,
+
+            // Quick Actions - Refresh
+            KeyCode::Char('r') => AppEvent::Refresh,
+
+            // View navigation hotkeys (also quick actions - view shortcuts)
             KeyCode::Char('w') | KeyCode::Char('W') => AppEvent::SwitchView(View::Workers),
             KeyCode::Char('t') | KeyCode::Char('T') => AppEvent::SwitchView(View::Tasks),
-            KeyCode::Char('c') | KeyCode::Char('C') => AppEvent::SwitchView(View::Costs),
-            KeyCode::Char('m') | KeyCode::Char('M') => AppEvent::SwitchView(View::Metrics),
-            KeyCode::Char('l') | KeyCode::Char('L') => AppEvent::SwitchView(View::Logs),
+            // 'a' for Activity/Logs view
+            KeyCode::Char('a') | KeyCode::Char('A') => AppEvent::SwitchView(View::Logs),
+            // 'l' for Logs view (alternative to 'a')
+            KeyCode::Char('l') => AppEvent::SwitchView(View::Logs),
+
+            // Quick Actions - Configure
+            KeyCode::Char('M') => AppEvent::OpenConfig,
+            KeyCode::Char('b') | KeyCode::Char('B') => AppEvent::OpenBudgetConfig,
+            // Note: 'c' lowercase is still Costs view, uppercase is WorkerConfig
+            KeyCode::Char('C') => AppEvent::OpenWorkerConfig,
+
+            // Costs view (only lowercase, uppercase is config)
+            KeyCode::Char('c') => AppEvent::SwitchView(View::Costs),
+
+            // Metrics view (lowercase, uppercase is OpenConfig)
+            KeyCode::Char('m') => AppEvent::SwitchView(View::Metrics),
+
+            // Overview view
+            KeyCode::Char('O') => AppEvent::SwitchView(View::Overview),
 
             // Chat mode activation
             KeyCode::Char(':') => {
@@ -155,20 +228,17 @@ impl InputHandler {
             }
             KeyCode::BackTab => AppEvent::PrevView,
 
-            // List navigation
-            KeyCode::Up | KeyCode::Char('k') => AppEvent::NavigateUp,
+            // List navigation (use 'j' for down since 'k' is unused now)
+            KeyCode::Up => AppEvent::NavigateUp,
             KeyCode::Down | KeyCode::Char('j') => AppEvent::NavigateDown,
             KeyCode::PageUp => AppEvent::PageUp,
             KeyCode::PageDown => AppEvent::PageDown,
-            KeyCode::Home | KeyCode::Char('g') => AppEvent::GoToTop,
-            KeyCode::End | KeyCode::Char('G') => AppEvent::GoToBottom,
+            KeyCode::Home => AppEvent::GoToTop,
+            KeyCode::End => AppEvent::GoToBottom,
 
             // Selection
             KeyCode::Enter => AppEvent::Select,
             KeyCode::Char(' ') => AppEvent::Toggle,
-
-            // Refresh
-            KeyCode::Char('r') | KeyCode::Char('R') => AppEvent::Refresh,
 
             _ => AppEvent::None,
         }
@@ -191,8 +261,9 @@ mod tests {
     fn test_view_hotkeys() {
         let mut handler = InputHandler::new();
 
+        // 'O' uppercase for Overview (lowercase 'o' is spawn Opus)
         assert_eq!(
-            handler.handle_key(key_event(KeyCode::Char('o'))),
+            handler.handle_key(key_event(KeyCode::Char('O'))),
             AppEvent::SwitchView(View::Overview)
         );
         assert_eq!(
@@ -213,6 +284,11 @@ mod tests {
         );
         assert_eq!(
             handler.handle_key(key_event(KeyCode::Char('l'))),
+            AppEvent::SwitchView(View::Logs)
+        );
+        // 'a' for Activity/Logs view
+        assert_eq!(
+            handler.handle_key(key_event(KeyCode::Char('a'))),
             AppEvent::SwitchView(View::Logs)
         );
     }
@@ -309,9 +385,10 @@ mod tests {
             handler.handle_key(key_event(KeyCode::Char('j'))),
             AppEvent::NavigateDown
         );
+        // 'k' is now KillWorker, not NavigateUp
         assert_eq!(
             handler.handle_key(key_event(KeyCode::Char('k'))),
-            AppEvent::NavigateUp
+            AppEvent::KillWorker
         );
     }
 
@@ -323,9 +400,10 @@ mod tests {
             handler.handle_key(key_event(KeyCode::Char('?'))),
             AppEvent::ShowHelp
         );
+        // 'h' is now spawn Haiku, help only via '?'
         assert_eq!(
             handler.handle_key(key_event(KeyCode::Char('h'))),
-            AppEvent::ShowHelp
+            AppEvent::SpawnWorker(WorkerExecutor::Haiku)
         );
         assert_eq!(
             handler.handle_key(key_event(KeyCode::Char('q'))),
