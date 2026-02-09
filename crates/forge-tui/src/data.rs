@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 use crate::bead::BeadManager;
 use crate::cost_panel::{BudgetConfig, CostPanelData};
+use crate::metrics_panel::MetricsPanelData;
 use crate::status::{StatusWatcher, StatusWatcherConfig, WorkerCounts, WorkerStatusFile};
 use crate::subscription_panel::SubscriptionData;
 use forge_core::types::WorkerStatus;
@@ -395,6 +396,9 @@ const TMUX_DISCOVERY_INTERVAL_SECS: u64 = 5;
 /// Interval for cost data polling (30 seconds).
 const COST_POLL_INTERVAL_SECS: u64 = 30;
 
+/// Interval for metrics data polling (10 seconds).
+const METRICS_POLL_INTERVAL_SECS: u64 = 10;
+
 /// Data manager that handles the StatusWatcher, BeadManager, CostDatabase, and provides formatted data.
 pub struct DataManager {
     /// StatusWatcher for real-time updates
@@ -409,12 +413,16 @@ pub struct DataManager {
     pub cost_data: CostPanelData,
     /// Subscription tracking data
     pub subscription_data: SubscriptionData,
+    /// Performance metrics data
+    pub metrics_data: MetricsPanelData,
     /// Error message if watcher failed to initialize
     init_error: Option<String>,
     /// Last tmux discovery time
     last_tmux_poll: Option<std::time::Instant>,
     /// Last cost poll time
     last_cost_poll: Option<std::time::Instant>,
+    /// Last metrics poll time
+    last_metrics_poll: Option<std::time::Instant>,
     /// Tokio runtime for async tmux discovery
     runtime: Option<tokio::runtime::Runtime>,
 }
@@ -441,6 +449,9 @@ impl DataManager {
         let cost_db = Self::init_cost_database();
         let cost_data = CostPanelData::loading();
 
+        // Initialize metrics data
+        let metrics_data = MetricsPanelData::loading();
+
         // Initialize subscription data with demo data for now
         // In a real implementation, this would load from ~/.forge/subscriptions.yaml
         let subscription_data = SubscriptionData::with_demo_data();
@@ -452,9 +463,11 @@ impl DataManager {
             cost_db,
             cost_data,
             subscription_data,
+            metrics_data,
             init_error,
             last_tmux_poll: None,
             last_cost_poll: None,
+            last_metrics_poll: None,
             runtime,
         };
 
@@ -502,6 +515,9 @@ impl DataManager {
         let cost_db = Self::init_cost_database();
         let cost_data = CostPanelData::loading();
 
+        // Initialize metrics data
+        let metrics_data = MetricsPanelData::loading();
+
         // Initialize subscription data with demo data
         let subscription_data = SubscriptionData::with_demo_data();
 
@@ -512,9 +528,11 @@ impl DataManager {
             cost_db,
             cost_data,
             subscription_data,
+            metrics_data,
             init_error,
             last_tmux_poll: None,
             last_cost_poll: None,
+            last_metrics_poll: None,
             runtime,
         };
 
@@ -556,6 +574,16 @@ impl DataManager {
         if should_poll_costs {
             self.poll_cost_data();
             self.last_cost_poll = Some(std::time::Instant::now());
+        }
+
+        // Periodically poll metrics data (every 10 seconds)
+        let should_poll_metrics = self
+            .last_metrics_poll
+            .map_or(true, |t| t.elapsed().as_secs() >= METRICS_POLL_INTERVAL_SECS);
+
+        if should_poll_metrics {
+            self.poll_metrics_data();
+            self.last_metrics_poll = Some(std::time::Instant::now());
         }
     }
 
@@ -645,6 +673,61 @@ impl DataManager {
                 Ok(Err(_)) | Err(_) => {
                     // Discovery failed or timed out - that's okay, status files are primary
                 }
+            }
+        }
+    }
+
+    /// Poll metrics database for updates.
+    fn poll_metrics_data(&mut self) {
+        let Some(ref db) = self.cost_db else {
+            self.metrics_data = MetricsPanelData::with_error("Cost database not initialized");
+            return;
+        };
+
+        // Get today's daily stats
+        let today = chrono::Utc::now().date_naive();
+        match db.get_daily_stat(today) {
+            Ok(Some(daily)) => {
+                self.metrics_data.set_today(daily);
+            }
+            Ok(None) => {
+                // No stats for today yet - create empty stats
+                let empty_daily = forge_cost::DailyStat::new(today);
+                self.metrics_data.set_today(empty_daily);
+            }
+            Err(e) => {
+                self.metrics_data.error = Some(format!("Failed to get daily stats: {}", e));
+                return;
+            }
+        }
+
+        // Get hourly stats for the last 24 hours
+        match db.get_recent_hourly_stats(24) {
+            Ok(hourly) => {
+                self.metrics_data.set_hourly_stats(hourly);
+            }
+            Err(_) => {
+                // Hourly stats failure is non-critical
+            }
+        }
+
+        // Get model performance for today
+        match db.get_model_performance(today) {
+            Ok(models) => {
+                self.metrics_data.set_model_performance(models);
+            }
+            Err(_) => {
+                // Model performance failure is non-critical
+            }
+        }
+
+        // Get worker efficiency for today
+        match db.get_worker_efficiency(today) {
+            Ok(workers) => {
+                self.metrics_data.set_worker_efficiency(workers);
+            }
+            Err(_) => {
+                // Worker efficiency failure is non-critical
             }
         }
     }
