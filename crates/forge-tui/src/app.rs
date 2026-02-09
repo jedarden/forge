@@ -15,6 +15,7 @@ use ratatui::{
     Frame, Terminal,
 };
 
+use crate::cost_panel::CostPanel;
 use crate::data::DataManager;
 use crate::event::{AppEvent, InputHandler};
 use crate::view::{FocusPanel, LayoutMode, View};
@@ -605,21 +606,59 @@ impl App {
 
     /// Format the costs panel for the right column in ultra-wide mode.
     fn format_costs_panel(&self) -> String {
+        use crate::cost_panel::{format_usd, format_tokens};
+
         if !self.data_manager.is_ready() {
             return "Loading...".to_string();
         }
 
+        let data = &self.data_manager.cost_data;
+
+        if data.is_loading {
+            return "Loading cost data...".to_string();
+        }
+
+        if !data.has_data() {
+            return "No cost data available.\n\n\
+                    Cost tracking requires:\n\
+                    - forge-cost database\n\
+                    - Worker logs being parsed"
+                .to_string();
+        }
+
         let mut lines = Vec::new();
-        lines.push("Today's Costs:".to_string());
-        lines.push("  API calls: $---.--".to_string());
-        lines.push("  Tokens:    $---.--".to_string());
-        lines.push("  Total:     $---.--".to_string());
+
+        // Today's costs
+        let daily_alert = data.daily_alert();
+        lines.push(format!(
+            "{} Today: {}",
+            daily_alert.icon(),
+            format_usd(data.today_total())
+        ));
+        lines.push(format!("  Calls: {}", data.today_calls()));
+        lines.push(format!("  Tokens: {}", format_tokens(data.today_tokens())));
         lines.push(String::new());
-        lines.push("Monthly Budget:".to_string());
-        lines.push("  Used:  $----.-- / $----.--".to_string());
-        lines.push("  Remaining: $----.--".to_string());
-        lines.push(String::new());
-        lines.push("(Cost tracking not yet active)".to_string());
+
+        // Monthly budget
+        let monthly_alert = data.monthly_alert();
+        lines.push(format!(
+            "{} Month: {} / {}",
+            monthly_alert.icon(),
+            format_usd(data.monthly_total),
+            format_usd(data.budget.monthly_limit)
+        ));
+
+        // Progress bar
+        let pct = data.monthly_usage_pct().min(100.0);
+        let bar_width: usize = 15;
+        let filled = ((pct / 100.0) * bar_width as f64).round() as usize;
+        let empty = bar_width.saturating_sub(filled);
+        lines.push(format!(
+            "  [{}{}] {:.1}%",
+            "█".repeat(filled),
+            "░".repeat(empty),
+            data.monthly_usage_pct()
+        ));
 
         lines.join("\n")
     }
@@ -671,26 +710,10 @@ impl App {
 
     /// Draw the Costs view.
     fn draw_costs(&self, frame: &mut Frame, area: Rect) {
-        let content = if self.data_manager.is_ready() {
-            "Cost tracking not yet implemented.\n\n\
-             This view will show:\n\
-             - Daily/monthly cost totals\n\
-             - Cost breakdown by model type\n\
-             - Cost per task metrics\n\
-             - Budget usage and alerts\n\n\
-             Cost data requires integration with\n\
-             API usage tracking from worker sessions."
-        } else {
-            "Loading..."
-        };
-
-        self.draw_panel(
-            frame,
-            area,
-            "Cost Analytics",
-            content,
-            true,
-        );
+        // Use the CostPanel widget for rich analytics display
+        let cost_panel = CostPanel::new(&self.data_manager.cost_data)
+            .focused(self.focus_panel == FocusPanel::CostBreakdown);
+        frame.render_widget(cost_panel, area);
     }
 
     /// Draw the Metrics view.
