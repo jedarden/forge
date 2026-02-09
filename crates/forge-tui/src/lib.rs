@@ -36,6 +36,7 @@ pub mod log;
 pub mod metrics_panel;
 pub mod status;
 pub mod subscription_panel;
+pub mod theme;
 pub mod view;
 pub mod widget;
 
@@ -57,4 +58,5 @@ pub use subscription_panel::{
     format_subscription_summary, SubscriptionAction, SubscriptionData, SubscriptionPanel,
     SubscriptionService, SubscriptionStatus, SubscriptionSummaryCompact,
 };
+pub use theme::{Theme, ThemeColors, ThemeManager, ThemeName};
 pub use view::{FocusPanel, LayoutMode, View};

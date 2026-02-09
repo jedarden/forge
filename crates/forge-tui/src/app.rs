@@ -17,8 +17,9 @@ use ratatui::{
 
 use crate::cost_panel::CostPanel;
 use crate::data::DataManager;
-use crate::event::{AppEvent, InputHandler, WorkerExecutor};
+use crate::event::{AppEvent, InputHandler};
 use crate::metrics_panel::MetricsPanel;
+use crate::theme::ThemeManager;
 use crate::view::{FocusPanel, LayoutMode, View};
 use crate::widget::QuickActionsPanel;
 
@@ -47,6 +48,8 @@ pub struct App {
     scroll_offset: usize,
     /// Data manager for real worker/task data
     data_manager: DataManager,
+    /// Theme manager for color themes
+    theme_manager: ThemeManager,
 }
 
 impl Default for App {
@@ -69,6 +72,7 @@ impl App {
             status_message: None,
             scroll_offset: 0,
             data_manager: DataManager::new(),
+            theme_manager: ThemeManager::load_config(),
         }
     }
 
@@ -86,6 +90,7 @@ impl App {
             status_message: None,
             scroll_offset: 0,
             data_manager: DataManager::with_status_dir(status_dir),
+            theme_manager: ThemeManager::new(),
         }
     }
 
@@ -243,6 +248,10 @@ impl App {
                 self.status_message = Some("Opening worker configuration...".to_string());
                 // TODO: Implement worker config
             }
+            AppEvent::CycleTheme => {
+                let new_theme = self.theme_manager.cycle_theme();
+                self.status_message = Some(format!("Theme: {}", new_theme.display_name()));
+            }
             AppEvent::None => {}
         }
     }
@@ -321,36 +330,37 @@ impl App {
     /// Draw the header bar.
     fn draw_header(&self, frame: &mut Frame, area: Rect) {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let theme = self.theme_manager.current();
         let title = format!(" FORGE Dashboard - {} ", self.current_view.title());
         let title_len = title.len();
 
         // Determine system status from real data
         let (status_text, status_color) = if let Some(err) = self.data_manager.init_error() {
-            (format!("[Error: {}]", truncate_status_error(err)), Color::Red)
+            (format!("[Error: {}]", truncate_status_error(err)), theme.colors.status_error)
         } else if !self.data_manager.is_ready() {
-            ("[Loading...]".to_string(), Color::Yellow)
+            ("[Loading...]".to_string(), theme.colors.status_warning)
         } else {
             let counts = self.data_manager.worker_counts();
             if counts.unhealthy() > 0 {
-                (format!("[{} unhealthy]", counts.unhealthy()), Color::Yellow)
+                (format!("[{} unhealthy]", counts.unhealthy()), theme.colors.status_warning)
             } else if counts.total == 0 {
-                ("[No workers]".to_string(), Color::Gray)
+                ("[No workers]".to_string(), theme.colors.text_dim)
             } else {
-                (format!("[{} workers]", counts.total), Color::Green)
+                (format!("[{} workers]", counts.total), theme.colors.status_healthy)
             }
         };
 
         let header = Paragraph::new(Line::from(vec![
-            Span::styled(title, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(title, Style::default().fg(theme.colors.header).add_modifier(Modifier::BOLD)),
             Span::raw(" ".repeat(area.width.saturating_sub(title_len as u16 + 25) as usize)),
-            Span::styled(format!("{}", now), Style::default().fg(Color::Gray)),
+            Span::styled(format!("{}", now), Style::default().fg(theme.colors.text_dim)),
             Span::raw("  "),
             Span::styled(status_text, Style::default().fg(status_color)),
         ]))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(Style::default().fg(theme.colors.border_dim)),
         );
 
         frame.render_widget(header, area);
@@ -371,35 +381,39 @@ impl App {
 
     /// Draw the footer with hotkey hints.
     fn draw_footer(&self, frame: &mut Frame, area: Rect) {
+        let theme = self.theme_manager.current();
+        let hotkey_style = Style::default().fg(theme.colors.hotkey);
         let hints = vec![
-            Span::styled("[o]", Style::default().fg(Color::Yellow)),
+            Span::styled("[o]", hotkey_style),
             Span::raw("Overview "),
-            Span::styled("[w]", Style::default().fg(Color::Yellow)),
+            Span::styled("[w]", hotkey_style),
             Span::raw("Workers "),
-            Span::styled("[t]", Style::default().fg(Color::Yellow)),
+            Span::styled("[t]", hotkey_style),
             Span::raw("Tasks "),
-            Span::styled("[c]", Style::default().fg(Color::Yellow)),
+            Span::styled("[c]", hotkey_style),
             Span::raw("Costs "),
-            Span::styled("[m]", Style::default().fg(Color::Yellow)),
+            Span::styled("[m]", hotkey_style),
             Span::raw("Metrics "),
-            Span::styled("[l]", Style::default().fg(Color::Yellow)),
+            Span::styled("[l]", hotkey_style),
             Span::raw("Logs "),
-            Span::styled("[:]", Style::default().fg(Color::Yellow)),
+            Span::styled("[:]", hotkey_style),
             Span::raw("Chat "),
-            Span::styled("[?]", Style::default().fg(Color::Yellow)),
+            Span::styled("[?]", hotkey_style),
             Span::raw("Help "),
-            Span::styled("[q]", Style::default().fg(Color::Yellow)),
+            Span::styled("[C]", hotkey_style),
+            Span::raw("Theme "),
+            Span::styled("[q]", hotkey_style),
             Span::raw("Quit"),
         ];
 
         let dims_text = format!("{}x{}", area.width, area.height);
 
         let footer = Paragraph::new(Line::from(hints))
-            .style(Style::default().fg(Color::Gray))
+            .style(Style::default().fg(theme.colors.text_dim))
             .block(
                 Block::default()
                     .borders(Borders::TOP)
-                    .title(Span::styled(dims_text, Style::default().fg(Color::DarkGray)))
+                    .title(Span::styled(dims_text, Style::default().fg(theme.colors.border_dim)))
                     .title_alignment(ratatui::layout::Alignment::Right),
             );
 
@@ -738,6 +752,7 @@ impl App {
 
     /// Draw the Chat view.
     fn draw_chat(&self, frame: &mut Frame, area: Rect) {
+        let theme = self.theme_manager.current();
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(5), Constraint::Length(3)])
@@ -760,9 +775,9 @@ impl App {
 
         // Input field
         let input_style = if self.focus_panel == FocusPanel::ChatInput {
-            Style::default().fg(Color::Yellow)
+            Style::default().fg(theme.colors.hotkey)
         } else {
-            Style::default().fg(Color::Gray)
+            Style::default().fg(theme.colors.text_dim)
         };
 
         let cursor = if self.input_handler.is_chat_mode() {
@@ -776,7 +791,7 @@ impl App {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Cyan))
+                    .border_style(Style::default().fg(theme.colors.header))
                     .title(" Input "),
             );
 
@@ -785,20 +800,21 @@ impl App {
 
     /// Draw a panel with optional highlight.
     fn draw_panel(&self, frame: &mut Frame, area: Rect, title: &str, content: &str, focused: bool) {
+        let theme = self.theme_manager.current();
         let border_style = if focused {
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(theme.colors.header)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(theme.colors.border_dim)
         };
 
         let title_style = if focused {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            Style::default().fg(theme.colors.header).add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::White)
+            Style::default().fg(theme.colors.text)
         };
 
         let panel = Paragraph::new(content)
-            .style(Style::default().fg(Color::White))
+            .style(Style::default().fg(theme.colors.text))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -818,6 +834,7 @@ impl App {
 
     /// Draw the help overlay.
     fn draw_help_overlay(&self, frame: &mut Frame, area: Rect) {
+        let theme = self.theme_manager.current();
         // Calculate centered overlay area
         let overlay_width = 60.min(area.width.saturating_sub(4));
         let overlay_height = 20.min(area.height.saturating_sub(4));
@@ -850,6 +867,7 @@ General:
   Ctrl+C   Force quit
   Ctrl+L   Refresh
   r        Refresh
+  C        Cycle theme
 
 Navigation:
   ↑ k      Move up
@@ -860,14 +878,14 @@ Navigation:
 Press any key to close this help.";
 
         let help = Paragraph::new(help_text)
-            .style(Style::default().fg(Color::White))
+            .style(Style::default().fg(theme.colors.text))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Cyan))
+                    .border_style(Style::default().fg(theme.colors.header))
                     .title(Span::styled(
                         " Help ",
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                        Style::default().fg(theme.colors.header).add_modifier(Modifier::BOLD),
                     ))
                     .style(Style::default().bg(Color::Black)),
             )
