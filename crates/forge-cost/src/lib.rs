@@ -49,6 +49,9 @@ pub mod query;
 // Re-export main types
 pub use db::CostDatabase;
 pub use error::{CostError, Result};
-pub use models::{ApiCall, CostBreakdown, DailyCost, ModelCost, ProjectedCost};
+pub use models::{
+    ApiCall, CostBreakdown, DailyCost, ModelCost, ProjectedCost, QuotaStatus, Subscription,
+    SubscriptionSummary, SubscriptionType, SubscriptionUsageRecord,
+};
 pub use parser::LogParser;
-pub use query::CostQuery;
+pub use query::{CostQuery, SubscriptionOptimizationReport};
