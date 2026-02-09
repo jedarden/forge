@@ -2831,4 +2831,644 @@ mod tests {
         // Should show subscription status panel
         assert!(content.contains("Subscription Status"));
     }
+
+    // ============================================================
+    // Integration Test 36: Subscription Panel Comprehensive Tests
+    // ============================================================
+
+    #[test]
+    fn test_subscription_status_usage_calculations() {
+        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, ResetPeriod};
+        use chrono::{Utc, Duration};
+
+        // Test usage percentage calculation
+        let status = SubscriptionStatus::new(SubscriptionService::ClaudePro)
+            .with_usage(250, 500, "msgs")
+            .with_reset(Utc::now() + Duration::days(15), ResetPeriod::Monthly)
+            .with_active(true);
+
+        assert!((status.usage_pct() - 50.0).abs() < 0.01);
+        assert_eq!(status.remaining(), Some(250));
+        assert!(status.is_active);
+    }
+
+    #[test]
+    fn test_subscription_status_over_quota() {
+        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, SubscriptionAction, ResetPeriod};
+        use chrono::{Utc, Duration};
+
+        let status = SubscriptionStatus::new(SubscriptionService::CursorPro)
+            .with_usage(520, 500, "reqs")
+            .with_reset(Utc::now() + Duration::days(5), ResetPeriod::Monthly)
+            .with_active(true);
+
+        assert!(status.usage_pct() >= 100.0);
+        assert_eq!(status.recommended_action(), SubscriptionAction::OverQuota);
+    }
+
+    #[test]
+    fn test_subscription_status_pay_per_use() {
+        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, SubscriptionAction, ResetPeriod};
+
+        let status = SubscriptionStatus::new(SubscriptionService::DeepSeekAPI)
+            .with_pay_per_use(0.05)
+            .with_active(true);
+
+        assert_eq!(status.remaining(), None);
+        assert!(matches!(status.reset_period, ResetPeriod::PayPerUse));
+        assert_eq!(status.recommended_action(), SubscriptionAction::Active);
+    }
+
+    #[test]
+    fn test_subscription_status_inactive() {
+        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, SubscriptionAction};
+
+        let status = SubscriptionStatus::new(SubscriptionService::ChatGPTPlus)
+            .with_usage(10, 40, "msgs")
+            .with_active(false);
+
+        assert_eq!(status.recommended_action(), SubscriptionAction::Paused);
+        assert!(!status.is_active);
+    }
+
+    #[test]
+    fn test_subscription_status_accelerate_recommendation() {
+        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, SubscriptionAction, ResetPeriod};
+        use chrono::{Utc, Duration};
+
+        // Under-utilized: 20% used with 80% of time passed
+        let now = Utc::now();
+        let end = now + Duration::days(6);
+
+        let status = SubscriptionStatus::new(SubscriptionService::ClaudePro)
+            .with_usage(100, 500, "msgs")
+            .with_reset(end, ResetPeriod::Monthly)
+            .with_active(true);
+
+        // Should recommend acceleration
+        let action = status.recommended_action();
+        assert!(
+            matches!(action, SubscriptionAction::Accelerate | SubscriptionAction::MaxOut),
+            "Should recommend accelerating usage when behind schedule"
+        );
+    }
+
+    #[test]
+    fn test_subscription_status_on_pace() {
+        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, SubscriptionAction, ResetPeriod};
+        use chrono::{Utc, Duration};
+
+        // On pace: 50% used with 50% of time passed
+        let status = SubscriptionStatus::new(SubscriptionService::ClaudePro)
+            .with_usage(250, 500, "msgs")
+            .with_reset(Utc::now() + Duration::days(15), ResetPeriod::Monthly)
+            .with_active(true);
+
+        assert_eq!(status.recommended_action(), SubscriptionAction::OnPace);
+    }
+
+    #[test]
+    fn test_subscription_data_demo_data() {
+        use crate::subscription_panel::{SubscriptionData, SubscriptionService};
+
+        let data = SubscriptionData::with_demo_data();
+
+        assert!(data.has_data());
+        assert!(!data.is_loading);
+        assert!(data.error.is_none());
+        assert!(data.has_active());
+        assert_eq!(data.active_count(), 4);
+
+        // Verify specific subscriptions
+        assert!(data.get(SubscriptionService::ClaudePro).is_some());
+        assert!(data.get(SubscriptionService::ChatGPTPlus).is_some());
+        assert!(data.get(SubscriptionService::CursorPro).is_some());
+        assert!(data.get(SubscriptionService::DeepSeekAPI).is_some());
+    }
+
+    #[test]
+    fn test_subscription_data_empty() {
+        use crate::subscription_panel::SubscriptionData;
+
+        let data = SubscriptionData::new();
+
+        assert!(!data.has_data());
+        assert!(!data.is_loading);
+        assert!(!data.has_active());
+        assert_eq!(data.active_count(), 0);
+    }
+
+    #[test]
+    fn test_subscription_data_loading() {
+        use crate::subscription_panel::SubscriptionData;
+
+        let data = SubscriptionData::loading();
+
+        assert!(data.is_loading);
+        assert!(!data.has_data());
+    }
+
+    #[test]
+    fn test_subscription_reset_timer_formatting() {
+        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, ResetPeriod};
+        use chrono::{Utc, Duration};
+
+        // Days and hours
+        let status = SubscriptionStatus::new(SubscriptionService::ClaudePro)
+            .with_reset(Utc::now() + Duration::days(5) + Duration::hours(12), ResetPeriod::Monthly);
+        let timer = status.format_reset_timer();
+        assert!(timer.contains("d"), "Timer should show days: {}", timer);
+
+        // Hours and minutes
+        let status = SubscriptionStatus::new(SubscriptionService::ChatGPTPlus)
+            .with_reset(Utc::now() + Duration::hours(2) + Duration::minutes(30), ResetPeriod::Hourly(3));
+        let timer = status.format_reset_timer();
+        assert!(timer.contains("h") || timer.contains("m"), "Timer should show hours/minutes: {}", timer);
+
+        // Just minutes
+        let status = SubscriptionStatus::new(SubscriptionService::ChatGPTPlus)
+            .with_reset(Utc::now() + Duration::minutes(45), ResetPeriod::Hourly(3));
+        let timer = status.format_reset_timer();
+        assert!(timer.contains("m"), "Timer should show minutes: {}", timer);
+    }
+
+    #[test]
+    fn test_subscription_action_colors() {
+        use crate::subscription_panel::SubscriptionAction;
+        use ratatui::style::Color;
+
+        assert_eq!(SubscriptionAction::OnPace.color(), Color::Green);
+        assert_eq!(SubscriptionAction::Accelerate.color(), Color::Cyan);
+        assert_eq!(SubscriptionAction::MaxOut.color(), Color::Yellow);
+        assert_eq!(SubscriptionAction::Active.color(), Color::Green);
+        assert_eq!(SubscriptionAction::Paused.color(), Color::Gray);
+        assert_eq!(SubscriptionAction::OverQuota.color(), Color::Red);
+    }
+
+    #[test]
+    fn test_subscription_usage_color_gradient() {
+        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService};
+        use ratatui::style::Color;
+
+        // Low usage - green (< 40%)
+        let low = SubscriptionStatus::new(SubscriptionService::ClaudePro)
+            .with_usage(100, 500, "msgs");
+        assert_eq!(low.usage_color(), Color::Green);
+
+        // Medium-low usage - cyan (40-60%)
+        let medium_low = SubscriptionStatus::new(SubscriptionService::ClaudePro)
+            .with_usage(250, 500, "msgs");
+        assert_eq!(medium_low.usage_color(), Color::Cyan);
+
+        // Medium-high usage - yellow (60-80%)
+        let medium_high = SubscriptionStatus::new(SubscriptionService::ClaudePro)
+            .with_usage(350, 500, "msgs");
+        assert_eq!(medium_high.usage_color(), Color::Yellow);
+
+        // High usage - light red (80-95%)
+        let high = SubscriptionStatus::new(SubscriptionService::ClaudePro)
+            .with_usage(450, 500, "msgs");
+        assert_eq!(high.usage_color(), Color::LightRed);
+
+        // Critical usage - red (>= 95%)
+        let critical = SubscriptionStatus::new(SubscriptionService::ClaudePro)
+            .with_usage(480, 500, "msgs");
+        assert_eq!(critical.usage_color(), Color::Red);
+    }
+
+    #[test]
+    fn test_subscription_format_summary() {
+        use crate::subscription_panel::{SubscriptionData, format_subscription_summary};
+
+        // Test with demo data
+        let data = SubscriptionData::with_demo_data();
+        let summary = format_subscription_summary(&data);
+
+        assert!(summary.contains("Claude"));
+        assert!(summary.contains("ChatGPT"));
+        assert!(summary.contains("Cursor"));
+        assert!(summary.contains("DeepSeek"));
+        assert!(summary.contains("Subscription Status"));
+
+        // Test loading state
+        let loading = SubscriptionData::loading();
+        let loading_summary = format_subscription_summary(&loading);
+        assert!(loading_summary.contains("Loading"));
+
+        // Test empty state
+        let empty = SubscriptionData::new();
+        let empty_summary = format_subscription_summary(&empty);
+        assert!(empty_summary.contains("No subscriptions"));
+    }
+
+    #[test]
+    fn test_subscription_panel_compact_widget() {
+        use crate::subscription_panel::{SubscriptionSummaryCompact, SubscriptionData};
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let data = SubscriptionData::with_demo_data();
+        let widget = SubscriptionSummaryCompact::new(&data);
+
+        let backend = TestBackend::new(50, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| {
+            let area = f.area();
+            f.render_widget(widget, area);
+        }).unwrap();
+
+        // Should render without panic
+        let buffer = terminal.backend().buffer();
+        assert!(buffer.area.width > 0);
+    }
+
+    // ============================================================
+    // Integration Test 37: Responsive Layout Tests
+    // ============================================================
+
+    #[test]
+    fn test_layout_mode_detection() {
+        use crate::view::LayoutMode;
+
+        // Ultra-wide layout (199+ cols)
+        assert_eq!(LayoutMode::from_width(199), LayoutMode::UltraWide);
+        assert_eq!(LayoutMode::from_width(200), LayoutMode::UltraWide);
+        assert_eq!(LayoutMode::from_width(300), LayoutMode::UltraWide);
+
+        // Wide layout (120-198 cols)
+        assert_eq!(LayoutMode::from_width(120), LayoutMode::Wide);
+        assert_eq!(LayoutMode::from_width(150), LayoutMode::Wide);
+        assert_eq!(LayoutMode::from_width(198), LayoutMode::Wide);
+
+        // Narrow layout (<120 cols)
+        assert_eq!(LayoutMode::from_width(119), LayoutMode::Narrow);
+        assert_eq!(LayoutMode::from_width(80), LayoutMode::Narrow);
+        assert_eq!(LayoutMode::from_width(40), LayoutMode::Narrow);
+        assert_eq!(LayoutMode::from_width(0), LayoutMode::Narrow);
+    }
+
+    #[test]
+    fn test_layout_mode_min_heights() {
+        use crate::view::LayoutMode;
+
+        assert_eq!(LayoutMode::UltraWide.min_height(), 38);
+        assert_eq!(LayoutMode::Wide.min_height(), 30);
+        assert_eq!(LayoutMode::Narrow.min_height(), 20);
+    }
+
+    #[test]
+    fn test_layout_mode_requirements() {
+        use crate::view::LayoutMode;
+
+        // Ultra-wide mode requirements
+        assert!(LayoutMode::UltraWide.meets_requirements(199, 38));
+        assert!(LayoutMode::UltraWide.meets_requirements(250, 50));
+        assert!(!LayoutMode::UltraWide.meets_requirements(199, 37)); // Height too short
+        assert!(!LayoutMode::UltraWide.meets_requirements(198, 38)); // Width too narrow
+
+        // Wide mode requirements
+        assert!(LayoutMode::Wide.meets_requirements(150, 30));
+        assert!(LayoutMode::Wide.meets_requirements(120, 35));
+        assert!(!LayoutMode::Wide.meets_requirements(150, 29)); // Height too short
+        assert!(!LayoutMode::Wide.meets_requirements(199, 30)); // Width triggers UltraWide
+
+        // Narrow mode requirements
+        assert!(LayoutMode::Narrow.meets_requirements(80, 20));
+        assert!(LayoutMode::Narrow.meets_requirements(100, 25));
+        assert!(!LayoutMode::Narrow.meets_requirements(80, 19)); // Height too short
+        assert!(!LayoutMode::Narrow.meets_requirements(120, 20)); // Width triggers Wide
+    }
+
+    #[test]
+    fn test_layout_boundary_conditions() {
+        use crate::view::LayoutMode;
+
+        // Test exact boundary values
+        assert_eq!(LayoutMode::from_width(119), LayoutMode::Narrow);
+        assert_eq!(LayoutMode::from_width(120), LayoutMode::Wide);
+        assert_eq!(LayoutMode::from_width(198), LayoutMode::Wide);
+        assert_eq!(LayoutMode::from_width(199), LayoutMode::UltraWide);
+    }
+
+    #[test]
+    fn test_responsive_rendering_ultrawide() {
+        let app = App::new();
+
+        // Ultra-wide: 200x50
+        let buffer = render_app(&app, 200, 50);
+
+        assert!(buffer_contains(&buffer, "FORGE Dashboard"));
+        assert!(buffer_contains(&buffer, "Worker Pool"));
+    }
+
+    #[test]
+    fn test_responsive_rendering_wide() {
+        let app = App::new();
+
+        // Wide: 150x35
+        let buffer = render_app(&app, 150, 35);
+
+        assert!(buffer_contains(&buffer, "FORGE Dashboard"));
+        assert!(buffer_contains(&buffer, "Worker Pool"));
+    }
+
+    #[test]
+    fn test_responsive_rendering_narrow() {
+        let app = App::new();
+
+        // Narrow: 80x25
+        let buffer = render_app(&app, 80, 25);
+
+        // Should still render header
+        assert!(buffer_contains(&buffer, "FORGE"));
+    }
+
+    #[test]
+    fn test_responsive_rendering_minimum() {
+        let app = App::new();
+
+        // Minimum viable size: 40x15
+        let buffer = render_app(&app, 40, 15);
+
+        // Should not crash
+        assert_eq!(buffer.area.width, 40);
+        assert_eq!(buffer.area.height, 15);
+    }
+
+    #[test]
+    fn test_responsive_rendering_extreme_wide() {
+        let app = App::new();
+
+        // Extreme wide: 400x100
+        let buffer = render_app(&app, 400, 100);
+
+        // Should handle gracefully
+        assert_eq!(buffer.area.width, 400);
+        assert!(buffer_contains(&buffer, "FORGE Dashboard"));
+    }
+
+    #[test]
+    fn test_responsive_all_views_at_different_sizes() {
+        let mut app = App::new();
+
+        let sizes = [(80, 24), (120, 40), (200, 50), (60, 20)];
+        let views = View::ALL;
+
+        for (width, height) in sizes {
+            for view in &views {
+                app.switch_view(*view);
+                let buffer = render_app(&app, width, height);
+
+                // Should render without panic
+                assert_eq!(buffer.area.width, width);
+                assert_eq!(buffer.area.height, height);
+            }
+        }
+    }
+
+    #[test]
+    fn test_view_hotkey_navigation_comprehensive() {
+        use crate::view::View;
+
+        // Test all hotkey mappings
+        assert_eq!(View::from_hotkey('o'), Some(View::Overview));
+        assert_eq!(View::from_hotkey('w'), Some(View::Workers));
+        assert_eq!(View::from_hotkey('t'), Some(View::Tasks));
+        assert_eq!(View::from_hotkey('c'), Some(View::Costs));
+        assert_eq!(View::from_hotkey('m'), Some(View::Metrics));
+        assert_eq!(View::from_hotkey('l'), Some(View::Logs));
+        assert_eq!(View::from_hotkey(':'), Some(View::Chat));
+
+        // Case insensitive
+        assert_eq!(View::from_hotkey('O'), Some(View::Overview));
+        assert_eq!(View::from_hotkey('W'), Some(View::Workers));
+
+        // Invalid keys
+        assert_eq!(View::from_hotkey('x'), None);
+        assert_eq!(View::from_hotkey('z'), None);
+        assert_eq!(View::from_hotkey('1'), None);
+    }
+
+    #[test]
+    fn test_view_cycling_comprehensive() {
+        use crate::view::View;
+
+        // Forward cycling
+        assert_eq!(View::Overview.next(), View::Workers);
+        assert_eq!(View::Workers.next(), View::Tasks);
+        assert_eq!(View::Tasks.next(), View::Costs);
+        assert_eq!(View::Costs.next(), View::Metrics);
+        assert_eq!(View::Metrics.next(), View::Logs);
+        assert_eq!(View::Logs.next(), View::Chat);
+        assert_eq!(View::Chat.next(), View::Overview); // Wrap around
+
+        // Backward cycling
+        assert_eq!(View::Overview.prev(), View::Chat);
+        assert_eq!(View::Workers.prev(), View::Overview);
+        assert_eq!(View::Chat.prev(), View::Logs);
+    }
+
+    #[test]
+    fn test_view_display_names() {
+        use crate::view::View;
+
+        assert_eq!(View::Overview.title(), "Overview");
+        assert_eq!(View::Workers.title(), "Workers");
+        assert_eq!(View::Tasks.title(), "Tasks");
+        assert_eq!(View::Costs.title(), "Costs");
+        assert_eq!(View::Metrics.title(), "Metrics");
+        assert_eq!(View::Logs.title(), "Logs");
+        assert_eq!(View::Chat.title(), "Chat");
+    }
+
+    #[test]
+    fn test_view_hotkey_hints() {
+        use crate::view::View;
+
+        assert_eq!(View::Overview.hotkey_hint(), "[o] Overview");
+        assert_eq!(View::Workers.hotkey_hint(), "[w] Workers");
+        assert_eq!(View::Chat.hotkey_hint(), "[:] Chat");
+    }
+
+    // ============================================================
+    // Integration Test 38: End-to-End Data Flow Tests
+    // ============================================================
+
+    #[test]
+    fn test_e2e_data_flow_subscription_updates_ui() {
+        use crate::subscription_panel::{SubscriptionData, SubscriptionStatus, SubscriptionService, ResetPeriod};
+        use chrono::{Utc, Duration};
+
+        // Create subscription data that would trigger different UI states
+        let now = Utc::now();
+
+        let mut data = SubscriptionData::new();
+        data.subscriptions = vec![
+            // Active subscription on pace
+            SubscriptionStatus::new(SubscriptionService::ClaudePro)
+                .with_usage(250, 500, "msgs")
+                .with_reset(now + Duration::days(15), ResetPeriod::Monthly)
+                .with_active(true),
+            // Over quota
+            SubscriptionStatus::new(SubscriptionService::CursorPro)
+                .with_usage(510, 500, "reqs")
+                .with_reset(now + Duration::days(5), ResetPeriod::Monthly)
+                .with_active(true),
+        ];
+        data.last_updated = Some(now);
+
+        assert_eq!(data.active_count(), 2);
+        assert!(data.has_data());
+
+        // Verify different action recommendations
+        let claude = data.get(SubscriptionService::ClaudePro).unwrap();
+        let cursor = data.get(SubscriptionService::CursorPro).unwrap();
+
+        assert_eq!(claude.recommended_action(), crate::subscription_panel::SubscriptionAction::OnPace);
+        assert_eq!(cursor.recommended_action(), crate::subscription_panel::SubscriptionAction::OverQuota);
+    }
+
+    #[test]
+    fn test_e2e_data_flow_cost_updates_ui() {
+        use crate::cost_panel::{CostPanelData, BudgetConfig, BudgetAlertLevel};
+
+        // Simulate cost data being updated
+        let mut data = CostPanelData::new();
+        data.set_budget(BudgetConfig::new(1000.0));
+
+        // Day 1: Low usage
+        data.monthly_total = 100.0;
+        assert_eq!(data.monthly_alert(), BudgetAlertLevel::Normal);
+        assert!((data.monthly_usage_pct() - 10.0).abs() < 0.01);
+
+        // Day 15: Moderate usage
+        data.monthly_total = 500.0;
+        assert_eq!(data.monthly_alert(), BudgetAlertLevel::Normal);
+        assert!((data.monthly_usage_pct() - 50.0).abs() < 0.01);
+
+        // Day 25: High usage approaching limit
+        data.monthly_total = 850.0;
+        assert_eq!(data.monthly_alert(), BudgetAlertLevel::Warning);
+
+        // Over budget
+        data.monthly_total = 1100.0;
+        assert_eq!(data.monthly_alert(), BudgetAlertLevel::Exceeded);
+    }
+
+    #[test]
+    fn test_e2e_full_session_workflow() {
+        // Simulate a complete user session:
+        // 1. Start app
+        // 2. Check workers (Overview)
+        // 3. View costs
+        // 4. Check subscriptions
+        // 5. Navigate through views
+        // 6. Open help
+        // 7. Use chat
+        // 8. Exit
+
+        let mut app = App::new();
+
+        // 1. Start in Overview
+        assert_eq!(app.current_view(), View::Overview);
+        let buffer = render_app(&app, 120, 40);
+        assert!(buffer_contains(&buffer, "FORGE"));
+
+        // 2. Check Workers view
+        app.switch_view(View::Workers);
+        let buffer = render_app(&app, 120, 40);
+        assert!(buffer_contains(&buffer, "Worker"));
+
+        // 3. View Costs
+        app.switch_view(View::Costs);
+        let buffer = render_app(&app, 120, 40);
+        assert!(buffer_contains(&buffer, "Cost"));
+
+        // 4. View Metrics (includes subscription-related info)
+        app.switch_view(View::Metrics);
+        let buffer = render_app(&app, 120, 40);
+        assert!(buffer_contains(&buffer, "Metrics") || buffer_contains(&buffer, "Performance"));
+
+        // 5. Cycle through remaining views
+        for _ in 0..3 {
+            app.next_view();
+            let _ = render_app(&app, 120, 40);
+        }
+
+        // 6. Open help
+        app.handle_app_event(AppEvent::ShowHelp);
+        assert!(app.show_help());
+        let buffer = render_app(&app, 120, 40);
+        assert!(buffer_contains(&buffer, "Help") || buffer_contains(&buffer, "Hotkey"));
+        app.handle_app_event(AppEvent::Cancel);
+        assert!(!app.show_help());
+
+        // 7. Use chat
+        app.switch_view(View::Chat);
+        assert_eq!(app.current_view(), View::Chat);
+        for c in "show status".chars() {
+            app.handle_app_event(AppEvent::TextInput(c));
+        }
+        app.handle_app_event(AppEvent::Submit);
+
+        // 8. Return to overview and exit
+        app.switch_view(View::Overview);
+        app.handle_app_event(AppEvent::Quit);
+        assert!(app.should_quit());
+    }
+
+    #[test]
+    fn test_e2e_stress_test_subscription_updates() {
+        use crate::subscription_panel::{SubscriptionData, SubscriptionStatus, SubscriptionService, ResetPeriod};
+        use chrono::{Utc, Duration};
+
+        let now = Utc::now();
+
+        // Simulate rapid subscription updates (like from a background poller)
+        let mut data = SubscriptionData::new();
+
+        for i in 0..100 {
+            data.subscriptions = vec![
+                SubscriptionStatus::new(SubscriptionService::ClaudePro)
+                    .with_usage(i * 5, 500, "msgs")
+                    .with_reset(now + Duration::days(15), ResetPeriod::Monthly)
+                    .with_active(true),
+            ];
+            data.last_updated = Some(now);
+
+            // Verify data is consistent after each update
+            assert_eq!(data.active_count(), 1);
+            let status = data.get(SubscriptionService::ClaudePro).unwrap();
+            assert_eq!(status.current_usage, (i * 5) as u64);
+        }
+    }
+
+    #[test]
+    fn test_e2e_stress_test_cost_updates() {
+        use crate::cost_panel::{CostPanelData, BudgetConfig};
+        use forge_cost::DailyCost;
+        use chrono::Utc;
+
+        let mut data = CostPanelData::new();
+        data.set_budget(BudgetConfig::new(1000.0));
+
+        // Simulate rapid cost updates
+        for i in 0..100 {
+            let today = DailyCost {
+                date: Utc::now().date_naive(),
+                total_cost_usd: (i as f64) * 0.5,
+                call_count: i * 10,
+                total_tokens: i * 1000,
+                by_model: vec![],
+            };
+
+            data.set_today(today);
+            data.monthly_total = (i as f64) * 10.0;
+
+            // Verify data is consistent
+            assert!(data.has_data());
+            assert_eq!(data.today_calls(), (i * 10) as i64);
+        }
+    }
 }
