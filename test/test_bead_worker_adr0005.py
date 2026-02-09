@@ -14,6 +14,7 @@ Usage:
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -251,13 +252,18 @@ class BeadWorkerADR0005Test:
             return True
 
     def test_6_bead_aware_status_fields(self) -> bool:
-        """Test 6: Status file includes bead-aware fields when bead_ref is provided"""
+        """Test 6: Status file includes bead_id in current_task when bead_ref is provided"""
         print("Test 6: Bead-Aware Status Fields...", end=" ")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create a minimal beads workspace
-            subprocess.run(["br", "init", "--prefix", "fg"], cwd=tmpdir,
+            init_result = subprocess.run(["br", "init", "--prefix", "fg"], cwd=tmpdir,
                          capture_output=True, check=False)
+
+            if init_result.returncode != 0:
+                print(f"⚠️  SKIP - Could not initialize beads workspace")
+                self.cleanup("test-adr0005-6")
+                return True
 
             # Create a test bead
             bead_result = subprocess.run(
@@ -270,14 +276,16 @@ class BeadWorkerADR0005Test:
             )
 
             # Extract bead ID from output
+            # Format: "✓ Created fg-xxx: Title"
             bead_id = None
             for line in bead_result.stdout.splitlines():
-                if "Created issue" in line or "fg-" in line:
-                    parts = line.split()
-                    for part in parts:
-                        if part.startswith("fg-"):
-                            bead_id = part.rstrip(",")
-                            break
+                if "Created" in line and "fg-" in line:
+                    # Extract bead_id using regex
+                    # The format is "Created fg-xxx:" so we need to extract just the ID
+                    match = re.search(r'(fg-[a-z0-9]+)', line)
+                    if match:
+                        bead_id = match.group(1)
+                        break
 
             if not bead_id:
                 print(f"⚠️  SKIP - Could not create test bead")
@@ -287,10 +295,14 @@ class BeadWorkerADR0005Test:
             result = self.run_launcher("sonnet", tmpdir, "test-adr0005-6", bead_id)
 
             if not result["success"]:
-                print(f"❌ FAIL - Launcher failed")
+                print(f"❌ FAIL - Launcher failed with exit code {result.get('exit_code')}")
                 return False
 
             status_file = Path.home() / ".forge/status/test-adr0005-6.json"
+
+            if not status_file.exists():
+                print(f"❌ FAIL - Status file not created")
+                return False
 
             try:
                 with open(status_file) as f:
@@ -299,17 +311,10 @@ class BeadWorkerADR0005Test:
                 print(f"❌ FAIL - Cannot read status: {e}")
                 return False
 
-            # Check for bead-aware fields
-            has_bead_id = "bead_id" in status.get("current_task", {}) or "bead_id" in str(status)
-            has_metadata_type = "metadata" in status
-
-            if not has_bead_id:
-                print(f"❌ FAIL - Status file missing bead_id in current_task")
-                print(f"  current_task: {status.get('current_task', {})}")
-                return False
-
-            if not has_metadata_type:
-                print(f"❌ FAIL - Status file missing metadata field")
+            # Check for bead_id in current_task (per ADR 0005, current_task is a string)
+            current_task = status.get("current_task")
+            if current_task != bead_id:
+                print(f"❌ FAIL - current_task should be '{bead_id}', got '{current_task}'")
                 return False
 
             print("✅ PASS")
@@ -322,8 +327,13 @@ class BeadWorkerADR0005Test:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create a minimal beads workspace
-            subprocess.run(["br", "init", "--prefix", "fg"], cwd=tmpdir,
+            init_result = subprocess.run(["br", "init", "--prefix", "fg"], cwd=tmpdir,
                          capture_output=True, check=False)
+
+            if init_result.returncode != 0:
+                print(f"⚠️  SKIP - Could not initialize beads workspace")
+                self.cleanup("test-adr0005-7")
+                return True
 
             # Create a test bead
             bead_result = subprocess.run(
@@ -336,14 +346,16 @@ class BeadWorkerADR0005Test:
             )
 
             # Extract bead ID from output
+            # Format: "✓ Created fg-xxx: Title"
             bead_id = None
             for line in bead_result.stdout.splitlines():
-                if "Created issue" in line or "fg-" in line:
-                    parts = line.split()
-                    for part in parts:
-                        if part.startswith("fg-"):
-                            bead_id = part.rstrip(",")
-                            break
+                if "Created" in line and "fg-" in line:
+                    # Extract bead_id using regex
+                    # The format is "Created fg-xxx:" so we need to extract just the ID
+                    match = re.search(r'(fg-[a-z0-9]+)', line)
+                    if match:
+                        bead_id = match.group(1)
+                        break
 
             if not bead_id:
                 print(f"⚠️  SKIP - Could not create test bead")
@@ -353,10 +365,14 @@ class BeadWorkerADR0005Test:
             result = self.run_launcher("sonnet", tmpdir, "test-adr0005-7", bead_id)
 
             if not result["success"]:
-                print(f"❌ FAIL - Launcher failed")
+                print(f"❌ FAIL - Launcher failed with exit code {result.get('exit_code')}")
                 return False
 
             log_file = Path.home() / ".forge/logs/test-adr0005-7.log"
+
+            if not log_file.exists():
+                print(f"❌ FAIL - Log file not created")
+                return False
 
             try:
                 with open(log_file) as f:
@@ -495,18 +511,21 @@ class BeadWorkerADR0005Test:
                 print(f"❌ FAIL - Cannot read status: {e}")
                 return False
 
-            # Check current_task exists and is a dict/object
+            # Check current_task exists and conforms to ADR 0005
             if "current_task" not in status:
                 print(f"❌ FAIL - Missing current_task field")
                 return False
 
-            if not isinstance(status["current_task"], dict):
-                print(f"❌ FAIL - current_task must be an object")
+            # ADR 0005 specifies current_task as a string (bead ID) or null
+            # NOT as an object with nested fields
+            current_task = status["current_task"]
+            if current_task is None or isinstance(current_task, str):
+                print("✅ PASS")
+                self.cleanup("test-adr0005-10")
+                return True
+            else:
+                print(f"❌ FAIL - current_task must be string or null per ADR 0005, got {type(current_task)}")
                 return False
-
-            print("✅ PASS")
-            self.cleanup("test-adr0005-10")
-            return True
 
     def run_all_tests(self) -> bool:
         """Run all ADR 0005 compliance tests"""

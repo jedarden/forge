@@ -121,8 +121,8 @@ if [[ -n "$BEAD_REF" ]]; then
     exit 1
   fi
 
-  # Fetch bead data from br CLI
-  BEAD_DATA=$(br show "$BEAD_REF" --format json 2>/dev/null) || {
+  # Fetch bead data from br CLI (must run from workspace directory)
+  BEAD_DATA=$(cd "$WORKSPACE" && br show "$BEAD_REF" --format json 2>/dev/null) || {
     echo "Error: Failed to fetch bead data for: $BEAD_REF" >&2
     echo "       Bead may not exist or br CLI may not be configured" >&2
     exit 1
@@ -170,7 +170,7 @@ EOF
 )
 
   # Update bead status to in_progress
-  br update "$BEAD_REF" --status in_progress --assignee "$SESSION_NAME" >/dev/null 2>&1 || {
+  cd "$WORKSPACE" && br update "$BEAD_REF" --status in_progress --assignee "$SESSION_NAME" >/dev/null 2>&1 || {
     echo "Warning: Failed to update bead status to in_progress" >&2
   }
 fi
@@ -270,11 +270,7 @@ if [[ -n "$BEAD_REF" ]]; then
   "pid": $PID,
   "started_at": "$(date -Iseconds)",
   "last_activity": "$(date -Iseconds)",
-  "current_task": {
-    "bead_id": "$BEAD_REF",
-    "bead_title": "$BEAD_TITLE",
-    "priority": $BEAD_PRIORITY
-  },
+  "current_task": "$BEAD_REF",
   "tasks_completed": 0
 }
 EOF
@@ -301,7 +297,7 @@ fi
 # Use JSON Lines (JSONL) format for structured logging
 
 if [[ -n "$BEAD_REF" ]]; then
-  echo "{\"timestamp\": \"$(date -Iseconds)\", \"level\": \"info\", \"worker_id\": \"$SESSION_NAME\", \"message\": \"Worker started\", \"event\": \"worker_started\", \"model\": \"$MODEL\", \"bead_ref\": \"$BEAD_REF\", \"bead_title\": \"$BEAD_TITLE\"}" \
+  echo "{\"timestamp\": \"$(date -Iseconds)\", \"level\": \"info\", \"worker_id\": \"$SESSION_NAME\", \"message\": \"Worker started\", \"event\": \"worker_started\", \"model\": \"$MODEL\", \"bead_id\": \"$BEAD_REF\", \"bead_title\": \"$BEAD_TITLE\"}" \
     >> ~/.forge/logs/$SESSION_NAME.log
 else
   echo "{\"timestamp\": \"$(date -Iseconds)\", \"level\": \"info\", \"worker_id\": \"$SESSION_NAME\", \"message\": \"Worker started\", \"event\": \"worker_started\", \"model\": \"$MODEL\"}" \
