@@ -18,6 +18,7 @@ use ratatui::{
 use crate::cost_panel::CostPanel;
 use crate::data::DataManager;
 use crate::event::{AppEvent, InputHandler, WorkerExecutor};
+use crate::metrics_panel::MetricsPanel;
 use crate::view::{FocusPanel, LayoutMode, View};
 use crate::widget::QuickActionsPanel;
 
@@ -715,39 +716,10 @@ impl App {
 
     /// Draw the Metrics view.
     fn draw_metrics(&self, frame: &mut Frame, area: Rect) {
-        // Calculate some real metrics from worker data
-        let counts = self.data_manager.worker_counts();
-        let utilization = if counts.total > 0 {
-            (counts.active * 100) / counts.total
-        } else {
-            0
-        };
-
-        let content = if self.data_manager.is_ready() {
-            let mut lines = Vec::new();
-            lines.push(format!("Workers Active: {} / {}", counts.active, counts.total));
-            lines.push(format!("Worker Utilization: {}%", utilization));
-            lines.push(format!("Workers Starting: {}", counts.starting));
-            lines.push(format!("Workers Idle: {}", counts.idle));
-            lines.push(format!("Workers Failed: {}", counts.failed));
-            lines.push(String::new());
-            lines.push("Additional metrics not yet implemented:".to_string());
-            lines.push("- Tasks completed today".to_string());
-            lines.push("- Average task duration".to_string());
-            lines.push("- Tasks per hour histogram".to_string());
-            lines.push("- Model efficiency comparison".to_string());
-            lines.join("\n")
-        } else {
-            "Loading...".to_string()
-        };
-
-        self.draw_panel(
-            frame,
-            area,
-            "Performance Metrics",
-            &content,
-            true,
-        );
+        // Use the MetricsPanel widget for rich performance visualization
+        let metrics_panel = MetricsPanel::new(&self.data_manager.metrics_data)
+            .focused(self.focus_panel == FocusPanel::MetricsCharts);
+        frame.render_widget(metrics_panel, area);
     }
 
     /// Draw the Logs view.

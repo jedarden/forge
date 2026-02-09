@@ -33,6 +33,7 @@ pub mod event;
 #[cfg(test)]
 mod integration_tests;
 pub mod log;
+pub mod metrics_panel;
 pub mod status;
 pub mod subscription_panel;
 pub mod view;
@@ -46,6 +47,7 @@ pub use cost_panel::{BudgetAlertLevel, BudgetConfig, CostPanel, CostPanelData, C
 pub use data::{DataManager, WorkerData};
 pub use event::{AppEvent, InputHandler, WorkerExecutor};
 pub use log::{LogBuffer, LogEntry, LogEvent, LogLevel, LogTailer, LogTailerConfig};
+pub use metrics_panel::{MetricsPanel, MetricsPanelData, MetricsSummaryCompact};
 pub use status::{StatusEvent, StatusWatcher, StatusWatcherConfig, WorkerStatusFile};
 pub use subscription_panel::{
     format_subscription_summary, SubscriptionAction, SubscriptionData, SubscriptionPanel,
