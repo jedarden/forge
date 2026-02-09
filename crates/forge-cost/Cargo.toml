@@ -1,0 +1,33 @@
+[package]
+name = "forge-cost"
+description = "Cost tracking and analysis for FORGE worker agents"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Database
+rusqlite.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Time
+chrono.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Core types
+forge-core = { path = "../forge-core" }
+
+[dev-dependencies]
+tempfile.workspace = true
