@@ -1,0 +1,42 @@
+[package]
+name = "forge-chat"
+description = "AI conversational chat backend for FORGE control panel"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# Internal crates
+forge-core = { path = "../forge-core" }
+forge-worker = { path = "../forge-worker" }
+forge-cost = { path = "../forge-cost" }
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Async runtime
+tokio = { workspace = true, features = ["sync", "time", "fs"] }
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# HTTP client for Claude API
+reqwest.workspace = true
+
+# Time
+chrono.workspace = true
+
+# Async utilities
+async-trait.workspace = true
+
+# Logging
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
