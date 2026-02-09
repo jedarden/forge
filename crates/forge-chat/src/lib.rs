@@ -43,6 +43,8 @@
 
 pub mod audit;
 pub mod backend;
+pub mod claude_api;
+pub mod claude_api_types;
 pub mod config;
 pub mod context;
 pub mod error;
@@ -58,8 +60,9 @@ pub use config::{
 };
 pub use context::{ContextProvider, DashboardContext};
 pub use error::{ChatError, Result};
+pub use claude_api::ClaudeApiProvider;
 pub use provider::{
-    ChatProvider, ClaudeApiProvider, ClaudeCliProvider, FinishReason, MockProvider,
+    ChatProvider, ClaudeCliProvider, FinishReason, MockProvider,
     ProviderResponse, ProviderTool, TokenUsage,
 };
 pub use rate_limit::RateLimiter;
