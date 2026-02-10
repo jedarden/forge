@@ -362,7 +362,63 @@ impl App {
                 self.status_message = Some(format!("Theme: {}", new_theme.display_name()));
                 self.mark_dirty();
             }
+            AppEvent::Update => {
+                self.trigger_update();
+            }
             AppEvent::None => {}
+        }
+    }
+
+    /// Trigger forge update/rebuild and restart.
+    fn trigger_update(&mut self) {
+        use std::process::Command;
+        use std::env;
+
+        self.status_message = Some("Rebuilding forge...".to_string());
+        self.mark_dirty();
+
+        // Get the forge source directory (assuming we're in a workspace)
+        let forge_src = env::var("FORGE_SRC")
+            .unwrap_or_else(|_| "/home/coder/forge".to_string());
+
+        // Spawn background rebuild process
+        match Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "cd {} && cargo build --release 2>&1 | tail -5 && cp target/release/forge ~/.cargo/bin/forge",
+                forge_src
+            ))
+            .spawn()
+        {
+            Ok(mut child) => {
+                // Wait for build to complete
+                match child.wait() {
+                    Ok(status) if status.success() => {
+                        self.status_message = Some("Update complete! Restarting...".to_string());
+                        self.mark_dirty();
+
+                        // Give user time to see the message
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+
+                        // Exit gracefully and let the user restart manually
+                        // (exec in Rust TUI is tricky due to terminal state)
+                        self.status_message = Some("Update complete! Please restart forge.".to_string());
+                        self.mark_dirty();
+                    }
+                    Ok(_) => {
+                        self.status_message = Some("Update failed! Check cargo build output.".to_string());
+                        self.mark_dirty();
+                    }
+                    Err(e) => {
+                        self.status_message = Some(format!("Update error: {}", e));
+                        self.mark_dirty();
+                    }
+                }
+            }
+            Err(e) => {
+                self.status_message = Some(format!("Failed to start update: {}", e));
+                self.mark_dirty();
+            }
         }
     }
 
@@ -1028,6 +1084,7 @@ General:
   Esc      Cancel / Close
   Ctrl+C   Force quit
   Ctrl+L   Refresh
+  Ctrl+U   Update forge (rebuild & restart)
   r        Refresh
   C        Cycle theme
 

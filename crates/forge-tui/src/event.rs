@@ -65,6 +65,8 @@ pub enum AppEvent {
     OpenWorkerConfig,
     /// Cycle to the next theme
     CycleTheme,
+    /// Trigger forge update/rebuild and restart
+    Update,
     /// No action needed
     None,
 }
@@ -137,6 +139,11 @@ impl InputHandler {
         // Ctrl+L refreshes
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('l') {
             return AppEvent::Refresh;
+        }
+
+        // Ctrl+U triggers update/rebuild
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('u') {
+            return AppEvent::Update;
         }
 
         // Escape cancels current operation or exits chat mode
