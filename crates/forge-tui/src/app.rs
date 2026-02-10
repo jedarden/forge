@@ -487,6 +487,9 @@ impl App {
         let title = format!(" FORGE Dashboard - {} ", self.current_view.title());
         let title_len = title.len();
 
+        // Terminal dimensions display
+        let dimensions = format!("{}×{}", frame.area().width, frame.area().height);
+
         // Determine system status from real data
         let (status_text, status_color) = if let Some(err) = self.data_manager.init_error() {
             (format!("[Error: {}]", truncate_status_error(err)), theme.colors.status_error)
@@ -503,10 +506,16 @@ impl App {
             }
         };
 
+        // Calculate spacing to right-align timestamp, dimensions, and status
+        let right_content_len = now.len() + 2 + dimensions.len() + 2 + status_text.len();
+        let spacing = area.width.saturating_sub(title_len as u16 + right_content_len as u16 + 2) as usize;
+
         let header = Paragraph::new(Line::from(vec![
             Span::styled(title, Style::default().fg(theme.colors.header).add_modifier(Modifier::BOLD)),
-            Span::raw(" ".repeat(area.width.saturating_sub(title_len as u16 + 25) as usize)),
+            Span::raw(" ".repeat(spacing)),
             Span::styled(now, Style::default().fg(theme.colors.text_dim)),
+            Span::raw("  "),
+            Span::styled(dimensions, Style::default().fg(theme.colors.text_dim)),
             Span::raw("  "),
             Span::styled(status_text, Style::default().fg(status_color)),
         ]))
