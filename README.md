@@ -61,9 +61,9 @@ FORGE is a terminal-based control panel that intelligently manages multiple AI c
 │ GLM-4.7  active  │ │ Ready: 0         │ │ Today: $25.43    │
 │ Opus     idle    │ │ In Progress: 0   │ │ Week:  $178.92   │
 │ Sonnet   active  │ │ Blocked: 0       │ │ Month: $762.90   │
-├─ Subscriptions ──┤ ├─ Activity Log ───┤ ├─ Quick Actions ─┤
-│ Claude Pro 328/  │ │ Worker spawned   │ │ [s] Spawn Worker │
-│ ChatGPT+ 12/40   │ │ Task completed   │ │ [k] Kill Worker  │
+├─ Activity Log ───┤ ├─ Quick Actions ──┤ ├─ Metrics ────────┤
+│ Worker spawned   │ │ [s] Spawn Worker │ │ Tasks/hr: 12.5   │
+│ Task completed   │ │ [k] Kill Worker  │ │ Success: 94.2%   │
 └──────────────────┘ └──────────────────┘ └──────────────────┘
 ```
 **Best for**: Large monitors, ultra-wide displays, comprehensive overview
