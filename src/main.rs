@@ -21,14 +21,16 @@
 //! forge --version
 //! ```
 
+use std::fs;
 use std::io::Write;
 use std::panic;
 use std::process::ExitCode;
 
 use clap::Parser;
 use forge_core::{init_logging, LogGuard};
+use forge_init::{detection, generator};
 use forge_tui::App;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 /// FORGE Agent Orchestration Dashboard
 ///
@@ -65,6 +67,20 @@ fn main() -> ExitCode {
 
     // Install panic hook to ensure terminal cleanup
     install_panic_hook();
+
+    // Check if onboarding is needed
+    if needs_onboarding() {
+        eprintln!("🚀 Welcome to FORGE!");
+        eprintln!("No configuration found. Running first-time setup...\n");
+
+        if let Err(e) = run_onboarding() {
+            eprintln!("❌ Onboarding failed: {}", e);
+            eprintln!("You can manually create ~/.forge/config.yaml or try again.");
+            return ExitCode::from(1);
+        }
+
+        eprintln!("\n✅ Setup complete! Starting FORGE dashboard...\n");
+    }
 
     info!("Starting FORGE dashboard");
 
@@ -138,6 +154,91 @@ fn setup_logging(cli: &Cli) -> forge_core::Result<LogGuard> {
     // Either --debug or -v/--verbose enables debug logging
     let debug = cli.debug || cli.verbose > 0;
     init_logging(cli.log_dir.clone(), debug)
+}
+
+/// Check if onboarding is needed (no config.yaml exists).
+fn needs_onboarding() -> bool {
+    let forge_dir = get_forge_dir();
+    let config_path = forge_dir.join("config.yaml");
+    !config_path.exists()
+}
+
+/// Get the FORGE directory path (~/.forge).
+fn get_forge_dir() -> std::path::PathBuf {
+    dirs::home_dir()
+        .expect("Could not determine home directory")
+        .join(".forge")
+}
+
+/// Run the onboarding flow.
+fn run_onboarding() -> Result<(), Box<dyn std::error::Error>> {
+    info!("Starting onboarding flow");
+
+    // Detect CLI tools
+    eprintln!("🔍 Detecting available CLI tools...");
+    let tools = detection::detect_cli_tools()?;
+
+    if tools.is_empty() {
+        eprintln!("\n❌ No compatible CLI tools found!");
+        eprintln!("\nFORGE requires one of:");
+        eprintln!("  - Claude Code (https://claude.com/claude-code)");
+        eprintln!("  - OpenCode");
+        eprintln!("\nPlease install a compatible tool and try again.");
+        return Err("No CLI tools available".into());
+    }
+
+    // Display detected tools
+    eprintln!("\n📦 Detected tools:");
+    for tool in &tools {
+        let status_icon = match tool.status {
+            detection::ToolStatus::Ready => "✅",
+            detection::ToolStatus::MissingApiKey => "⚠️ ",
+            _ => "❌",
+        };
+        eprintln!("  {} {} - {} ({})",
+            status_icon,
+            tool.name,
+            tool.status_message(),
+            tool.binary_path.display()
+        );
+        if let Some(version) = &tool.version {
+            eprintln!("     Version: {}", version);
+        }
+        if tool.api_key_required && !tool.api_key_detected {
+            if let Some(env_var) = &tool.api_key_env_var {
+                eprintln!("     Missing: {}", env_var);
+            }
+        }
+    }
+
+    // Select the first ready tool
+    let selected_tool = tools.iter()
+        .find(|t| t.is_ready())
+        .ok_or("No ready tools available. Please set required API keys.")?;
+
+    eprintln!("\n✨ Using: {} ({})", selected_tool.name, selected_tool.binary_path.display());
+
+    // Create directory structure
+    let forge_dir = get_forge_dir();
+    eprintln!("\n📁 Creating directory structure...");
+    generator::create_directory_structure(&forge_dir)?;
+
+    // Generate config.yaml
+    let config_path = forge_dir.join("config.yaml");
+    eprintln!("📝 Generating config.yaml...");
+    generator::generate_config_yaml(selected_tool, &config_path)?;
+
+    // Generate launcher script
+    let launcher_name = format!("{}-launcher", selected_tool.name);
+    let launcher_path = forge_dir.join("launchers").join(&launcher_name);
+    eprintln!("🚀 Generating launcher script...");
+    generator::generate_launcher_script(selected_tool, &launcher_path)?;
+
+    eprintln!("\n✅ Configuration complete!");
+    eprintln!("   Config: {}", config_path.display());
+    eprintln!("   Launcher: {}", launcher_path.display());
+
+    Ok(())
 }
 
 /// Run the TUI application.
