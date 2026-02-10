@@ -277,13 +277,13 @@ fn detect_opencode() -> Result<Option<CliToolDetection>> {
         }
     }
 
-    // Check for headless support
+    // Check for headless support - OpenCode uses "serve" command
     if let Ok(output) = Command::new(&binary_path).arg("--help").output() {
         let help_text = String::from_utf8_lossy(&output.stdout);
-        let has_headless = help_text.contains("--output-format")
-            || help_text.contains("--headless");
-        let has_skip_perms = help_text.contains("--dangerously-skip-permissions")
-            || help_text.contains("--skip-permissions");
+        let has_headless = help_text.contains("serve")
+            || help_text.contains("headless");
+        // OpenCode doesn't use skip-permissions flag
+        let has_skip_perms = true; // Not applicable for OpenCode
 
         tool = tool
             .with_headless_support(has_headless)
