@@ -229,21 +229,18 @@ fn detect_claude_code() -> Result<Option<CliToolDetection>> {
             .with_skip_permissions(has_skip_perms);
     }
 
-    // Check for API key
-    let api_key_present = std::env::var("ANTHROPIC_API_KEY").is_ok();
+    // Claude CLI handles its own authentication - no API key check needed
     tool = tool.with_api_key(
-        true,                                  // API key required
-        Some("ANTHROPIC_API_KEY".to_string()), // Environment variable name
-        api_key_present,                       // Whether it's present
+        false, // API key NOT required (CLI handles auth)
+        None,  // No environment variable needed
+        true,  // Always "detected" since CLI handles it
     );
 
     // Determine overall status
     let status = if !tool.headless_support || !tool.skip_permissions {
         ToolStatus::IncompatibleVersion
-    } else if !api_key_present {
-        ToolStatus::MissingApiKey
     } else {
-        ToolStatus::Ready
+        ToolStatus::Ready // Ready if it has headless support
     };
 
     tool = tool.with_status(status);
@@ -293,21 +290,18 @@ fn detect_opencode() -> Result<Option<CliToolDetection>> {
             .with_skip_permissions(has_skip_perms);
     }
 
-    // OpenCode uses ANTHROPIC_API_KEY
-    let api_key_present = std::env::var("ANTHROPIC_API_KEY").is_ok();
+    // OpenCode CLI handles its own authentication - no API key check needed
     tool = tool.with_api_key(
-        true,
-        Some("ANTHROPIC_API_KEY".to_string()),
-        api_key_present,
+        false, // API key NOT required (CLI handles auth)
+        None,  // No environment variable needed
+        true,  // Always "detected" since CLI handles it
     );
 
     // Determine status
     let status = if !tool.headless_support {
         ToolStatus::IncompatibleVersion
-    } else if !api_key_present {
-        ToolStatus::MissingApiKey
     } else {
-        ToolStatus::Ready
+        ToolStatus::Ready // Ready if it has headless support
     };
 
     tool = tool.with_status(status);
