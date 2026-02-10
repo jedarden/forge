@@ -51,11 +51,64 @@ FORGE is a terminal-based control panel that intelligently manages multiple AI c
 - Budget alerts with visual progress bars
 
 ### 📊 Beautiful TUI Dashboard
-- **Responsive layouts**: Adapts to terminal size
-  - **Narrow** (<120 cols): Single column stacked panels
-  - **Wide** (120-198 cols): 2-column layout with 4 panels
-  - **Ultra-Wide** (199+ cols): 3-column layout with all 6 panels
-- **6-panel layout**: Workers, Tasks, Costs, Subscriptions, Activity Log, Chat
+
+**Responsive Multi-Panel Layout** - Automatically adapts to your terminal size:
+
+#### 🖥️ Ultra-Wide Mode (199+ columns × 38+ rows)
+**All 6 panels visible simultaneously** in a 3-column layout:
+```
+┌─ Workers ────────┐ ┌─ Tasks ──────────┐ ┌─ Costs ──────────┐
+│ GLM-4.7  active  │ │ Ready: 0         │ │ Today: $25.43    │
+│ Opus     idle    │ │ In Progress: 0   │ │ Week:  $178.92   │
+│ Sonnet   active  │ │ Blocked: 0       │ │ Month: $762.90   │
+├─ Subscriptions ──┤ ├─ Activity Log ───┤ ├─ Quick Actions ─┤
+│ Claude Pro 328/  │ │ Worker spawned   │ │ [s] Spawn Worker │
+│ ChatGPT+ 12/40   │ │ Task completed   │ │ [k] Kill Worker  │
+└──────────────────┘ └──────────────────┘ └──────────────────┘
+```
+**Best for**: Large monitors, ultra-wide displays, comprehensive overview
+
+#### 💻 Wide Mode (120-198 columns × 30+ rows)
+**4 panels visible** in a 2-column layout:
+```
+┌─ Worker Pool ────────────┐ ┌─ Utilization ─────────────┐
+│ Total: 17 (4 active)     │ │ Worker Utilization: 23%   │
+│ Unhealthy: 12            │ │ ██████                    │
+│                          │ │ 4/17 workers active       │
+├─ Task Queue ─────────────┤ │                           │
+│ Ready: 0                 │ │ Status Breakdown:         │
+│ No pending tasks         │ │ ⚡ Active:  4             │
+│                          │ │ 💤 Idle:    1             │
+├─ Activity Log ───────────┤ │ ⛔ Stopped: 12            │
+│ Worker stopped...        │ │ ⚠️ 12 unhealthy workers   │
+│ Task completed...        │ │                           │
+└──────────────────────────┘ └───────────────────────────┘
+```
+**Access Costs/Metrics via hotkeys**: Press `[c]` for Costs, `[m]` for Metrics
+**Best for**: Standard terminals, laptop screens
+
+#### 📱 Narrow Mode (<120 columns × 20+ rows)
+**Single-view mode** - Switch between views using hotkeys:
+```
+┌─ FORGE Dashboard - Overview ─────────────────────────────┐
+│ Worker Pool              │ Utilization                   │
+│ Total: 17 (4 active)     │ Worker Utilization: 23%       │
+│ Unhealthy: 12            │ 4/17 workers active (23%)     │
+├──────────────────────────┴───────────────────────────────┤
+│ Task Queue: Ready: 0 | In Progress: 0 | Blocked: 0      │
+│ No pending tasks.                                        │
+├──────────────────────────────────────────────────────────┤
+│ Activity Log                                             │
+│ 21:55:48 claude-code-glm-47-bravo stopped                │
+│ 21:50:39 claude-code-glm-47-alpha stopped                │
+└──────────────────────────────────────────────────────────┘
+[o]Overview [w]Workers [t]Tasks [c]Costs [m]Metrics [:]Chat
+```
+**Navigate with hotkeys**: `o` Overview, `w` Workers, `t` Tasks, `c` Costs, `m` Metrics, `l` Logs, `:` Chat
+**Best for**: SSH sessions, tmux panes, small terminals
+
+#### Features Across All Modes
+- **6 available views**: Workers, Tasks, Costs, Metrics, Activity Log, Chat
 - Real-time worker status and health metrics
 - Task queue visualization with bead integration
 - Live activity logs and performance metrics
@@ -137,7 +190,7 @@ FORGE operates as a **federated orchestration system** with a "dumb orchestrator
 
 | Component | Purpose |
 |-----------|---------|
-| **Dashboard (TUI)** | 6-panel Textual UI for monitoring and control |
+| **Dashboard (TUI)** | Responsive multi-panel UI with 6 available views |
 | **Chat Backend** | Translates natural language to tool calls via AI |
 | **Worker Launchers** | Spawns AI coding agents in tmux/subprocess/docker |
 | **Status Watcher** | Monitors worker status files for real-time updates |
@@ -245,7 +298,9 @@ pip install -e .
 forge dashboard
 ```
 
-You'll see the 6-panel dashboard:
+The dashboard will adapt to your terminal size (see [Beautiful TUI Dashboard](#-beautiful-tui-dashboard) for layout details).
+
+**Ultra-Wide Mode** (199+ columns × 38+ rows) - All 6 panels visible:
 
 ```
 ┌─ FORGE Control Panel ──────────────────────────────────────────────────┐
@@ -265,6 +320,8 @@ You'll see the 6-panel dashboard:
 │  [Press : for chat | ? for help | q to quit]                            │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
+
+**Narrow/Wide Mode** (<199 columns) - Use hotkeys to switch between views (see [Beautiful TUI Dashboard](#-beautiful-tui-dashboard) for details).
 
 ### Your First Commands
 
