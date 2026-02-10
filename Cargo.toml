@@ -28,6 +28,7 @@ members = [
     "crates/forge-worker",
     "crates/forge-tui",
     "crates/forge-chat",
+    "crates/forge-init",
 ]
 
 [workspace.package]
