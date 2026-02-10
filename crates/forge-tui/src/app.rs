@@ -218,6 +218,7 @@ impl App {
     /// Returns None if config is missing or initialization fails.
     /// Errors are logged but don't prevent app startup.
     fn init_chat_backend() -> Option<ChatBackend> {
+        use forge_chat::config::{ClaudeCliConfig, ProviderConfig, RateLimitConfig, AuditConfig, ConfirmationConfig};
         use tracing::{debug, warn};
 
         // Load config from ~/.forge/config.yaml
@@ -236,12 +237,44 @@ impl App {
             }
         };
 
-        let chat_config: ChatConfig = match serde_yaml::from_str(&config_str) {
-            Ok(c) => c,
+        // Parse the full config YAML
+        let yaml: serde_yaml::Value = match serde_yaml::from_str(&config_str) {
+            Ok(v) => v,
             Err(e) => {
-                warn!("Failed to parse chat config: {}", e);
+                warn!("Failed to parse config YAML: {}", e);
                 return None;
             }
+        };
+
+        // Extract chat_backend section
+        let chat_backend = yaml.get("chat_backend")?;
+        let command = chat_backend.get("command")?.as_str()?;
+        let args = chat_backend
+            .get("args")?
+            .as_sequence()?
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect::<Vec<_>>();
+
+        // Build ChatConfig
+        let model = chat_backend
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("sonnet")
+            .to_string();
+
+        let cli_config = ClaudeCliConfig {
+            binary_path: command.to_string(),
+            model,
+            extra_args: args,
+            ..Default::default()
+        };
+
+        let chat_config = ChatConfig {
+            provider: ProviderConfig::ClaudeCli(cli_config),
+            rate_limit: RateLimitConfig::default(),
+            audit: AuditConfig::default(),
+            confirmations: ConfirmationConfig::default(),
         };
 
         // Initialize backend (async, but we block here during startup)
