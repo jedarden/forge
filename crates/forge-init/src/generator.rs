@@ -66,6 +66,7 @@ chat_backend:
     - --dangerously-skip-permissions
     - --output-format
     - stream-json
+    - --verbose
   model: sonnet
   timeout: 30
   max_retries: 3
@@ -141,6 +142,7 @@ chat_backend:
   args:
     - --output-format
     - stream-json
+    - --verbose
   model: sonnet
   timeout: 30
   max_retries: 3
@@ -269,6 +271,7 @@ tmux new-session -d -s "$SESSION_NAME" \
      {binary_path} --model=$MODEL_ID \
            --dangerously-skip-permissions \
            --output-format stream-json \
+           --verbose \
            2>&1 | tee ~/.forge/logs/$SESSION_NAME.log"
 
 # Get PID
@@ -337,6 +340,7 @@ tmux new-session -d -s "$SESSION_NAME" \
     "cd \"$WORKSPACE\" && \
      {binary_path} --model=$MODEL \
            --output-format stream-json \
+           --verbose \
            2>&1 | tee ~/.forge/logs/$SESSION_NAME.log"
 
 # Get PID
