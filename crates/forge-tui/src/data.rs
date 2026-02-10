@@ -478,9 +478,9 @@ impl DataManager {
         // Initialize metrics data
         let metrics_data = MetricsPanelData::loading();
 
-        // Initialize subscription data with demo data for now
-        // In a real implementation, this would load from ~/.forge/subscriptions.yaml
-        let subscription_data = SubscriptionData::with_demo_data();
+        // Initialize subscription data (empty until real subscription tracking is implemented)
+        // TODO: Load from ~/.forge/subscriptions.yaml when subscription tracking is added
+        let subscription_data = SubscriptionData::new();
 
         let mut manager = Self {
             watcher,
@@ -547,8 +547,9 @@ impl DataManager {
         // Initialize metrics data
         let metrics_data = MetricsPanelData::loading();
 
-        // Initialize subscription data with demo data
-        let subscription_data = SubscriptionData::with_demo_data();
+        // Initialize subscription data (empty until real subscription tracking is implemented)
+        // TODO: Load from ~/.forge/subscriptions.yaml when subscription tracking is added
+        let subscription_data = SubscriptionData::new();
 
         let mut manager = Self {
             watcher,
