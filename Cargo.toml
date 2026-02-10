@@ -15,9 +15,11 @@ path = "src/main.rs"
 [dependencies]
 forge-core = { path = "crates/forge-core" }
 forge-tui = { path = "crates/forge-tui" }
+forge-init = { path = "crates/forge-init" }
 clap.workspace = true
 crossterm.workspace = true
 tracing.workspace = true
+dirs = "5.0"
 
 [workspace]
 resolver = "2"
