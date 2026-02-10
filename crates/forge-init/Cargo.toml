@@ -27,5 +27,8 @@ dirs = "5.0"
 # Process execution
 which = "6.0"
 
+# Date/time
+chrono = "0.4"
+
 [dev-dependencies]
 tempfile = "3.8"
