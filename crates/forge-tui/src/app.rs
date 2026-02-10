@@ -74,6 +74,10 @@ pub struct App {
     cached_layout_mode: Option<LayoutMode>,
     /// Last terminal width for layout mode detection
     last_terminal_width: u16,
+    /// Whether an update is available
+    update_available: bool,
+    /// Last time we checked for updates
+    last_update_check: Instant,
 }
 
 impl Default for App {
@@ -105,6 +109,8 @@ impl App {
             last_timestamp_update: now,
             cached_layout_mode: None,
             last_terminal_width: 0,
+            update_available: false,
+            last_update_check: now,
         }
     }
 
@@ -131,6 +137,8 @@ impl App {
             last_timestamp_update: now,
             cached_layout_mode: None,
             last_terminal_width: 0,
+            update_available: false,
+            last_update_check: now,
         }
     }
 
@@ -369,6 +377,40 @@ impl App {
         }
     }
 
+    /// Check if an update is available by comparing source binary timestamp.
+    fn check_for_update(&mut self) {
+        use std::fs;
+        use std::env;
+
+        // Check every 10 seconds
+        if self.last_update_check.elapsed() < Duration::from_secs(10) {
+            return;
+        }
+        self.last_update_check = Instant::now();
+
+        let forge_src = env::var("FORGE_SRC")
+            .unwrap_or_else(|_| "/home/coder/forge".to_string());
+
+        let source_binary = format!("{}/target/release/forge", forge_src);
+        let installed_binary = env::current_exe()
+            .ok()
+            .or_else(|| env::var("HOME").ok().map(|h| format!("{}/.cargo/bin/forge", h).into()))
+            .unwrap_or_else(|| "forge".into());
+
+        // Compare modification times
+        if let (Ok(source_meta), Ok(installed_meta)) = (
+            fs::metadata(&source_binary),
+            fs::metadata(&installed_binary)
+        ) {
+            if let (Ok(source_time), Ok(installed_time)) = (
+                source_meta.modified(),
+                installed_meta.modified()
+            ) {
+                self.update_available = source_time > installed_time;
+            }
+        }
+    }
+
     /// Trigger forge update/rebuild and restart.
     fn trigger_update(&mut self) {
         use std::process::Command;
@@ -467,6 +509,9 @@ impl App {
                 }
             }
 
+            // Check for updates periodically
+            self.check_for_update();
+
             // Only draw if dirty or at minimum rate (timestamp updates every second)
             let needs_redraw = self.take_dirty() ||
                 self.last_timestamp_update.elapsed() >= TIMESTAMP_CACHE_DURATION;
@@ -533,6 +578,11 @@ impl App {
         // Draw help overlay if active
         if self.show_help {
             self.draw_help_overlay(frame, area);
+        }
+
+        // Draw update notification banner if update available
+        if self.update_available {
+            self.draw_update_banner(frame, area);
         }
     }
 
@@ -1112,6 +1162,37 @@ Press any key to close this help.";
             .wrap(Wrap { trim: false });
 
         frame.render_widget(help, overlay_area);
+    }
+
+    /// Draw update notification banner at the top of the screen.
+    fn draw_update_banner(&self, frame: &mut Frame, area: Rect) {
+        // Create banner area at the top (below header)
+        let banner_y = 3; // Right below the header (which is 3 lines)
+        let banner_height = 3;
+        let banner_area = Rect::new(
+            area.width / 4, // Center horizontally
+            banner_y,
+            area.width / 2,
+            banner_height,
+        );
+
+        // Clear background
+        frame.render_widget(Clear, banner_area);
+
+        let banner_text = " ⚠️  Update Available! Press Ctrl+U to update forge ";
+        let banner = Paragraph::new(banner_text)
+            .style(Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Yellow))
+            )
+            .alignment(ratatui::layout::Alignment::Center);
+
+        frame.render_widget(banner, banner_area);
     }
 }
 
