@@ -540,7 +540,8 @@ impl App {
     fn draw_header(&mut self, frame: &mut Frame, area: Rect) {
         let now = self.get_cached_timestamp();
         let theme = self.theme_manager.current();
-        let title = format!(" FORGE Dashboard - {} ", self.current_view.title());
+        let version = env!("CARGO_PKG_VERSION");
+        let title = format!(" FORGE v{} - {} ", version, self.current_view.title());
         let title_len = title.len();
 
         // Terminal dimensions display
