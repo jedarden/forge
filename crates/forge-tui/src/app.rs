@@ -151,7 +151,33 @@ impl Default for App {
 impl App {
     /// Create a new app instance with default state.
     pub fn new() -> Self {
+        use tracing::info;
+
+        let start = Instant::now();
+        info!("⏱️ App::new() started");
+
         let now = Instant::now();
+
+        // Time DataManager initialization
+        let dm_start = Instant::now();
+        info!("⏱️ Creating DataManager...");
+        let data_manager = DataManager::new();
+        info!("⏱️ DataManager created in {:?}", dm_start.elapsed());
+
+        // Time ThemeManager initialization
+        let theme_start = Instant::now();
+        info!("⏱️ Loading ThemeManager...");
+        let theme_manager = ThemeManager::load_config();
+        info!("⏱️ ThemeManager loaded in {:?}", theme_start.elapsed());
+
+        // Time chat backend initialization
+        let chat_start = Instant::now();
+        info!("⏱️ Initializing chat backend...");
+        let chat_backend = Self::init_chat_backend().map(Arc::new);
+        info!("⏱️ Chat backend initialized in {:?}", chat_start.elapsed());
+
+        info!("⏱️ App::new() completed in {:?}", start.elapsed());
+
         Self {
             current_view: View::default(),
             previous_view: None,
@@ -162,8 +188,8 @@ impl App {
             chat_input: String::new(),
             status_message: None,
             scroll_offset: 0,
-            data_manager: DataManager::new(),
-            theme_manager: ThemeManager::load_config(),
+            data_manager,
+            theme_manager,
             dirty: true,
             cached_size: None,
             last_poll_time: now,
@@ -173,7 +199,7 @@ impl App {
             last_terminal_width: 0,
             update_available: false,
             last_update_check: now,
-            chat_backend: Self::init_chat_backend().map(Arc::new),
+            chat_backend,
             chat_response_tx: None,
             chat_response_rx: None,
             chat_pending: false,
@@ -222,32 +248,39 @@ impl App {
         use forge_chat::config::{ClaudeCliConfig, ProviderConfig, RateLimitConfig, AuditConfig, ConfirmationConfig};
         use tracing::{debug, warn, info, error};
 
+        let start = std::time::Instant::now();
+        info!("⏱️ init_chat_backend() started");
+
         // Load config from ~/.forge/config.yaml
         let config_path = dirs::home_dir()?.join(".forge/config.yaml");
 
-        info!("Initializing chat backend from {}", config_path.display());
+        info!("⏱️ Initializing chat backend from {}", config_path.display());
 
         if !config_path.exists() {
-            warn!("Chat config not found at {}", config_path.display());
+            warn!("⏱️ Chat config not found at {} (took {:?})", config_path.display(), start.elapsed());
             return None;
         }
 
+        let read_start = std::time::Instant::now();
         let config_str = match std::fs::read_to_string(&config_path) {
             Ok(s) => s,
             Err(e) => {
-                error!("Failed to read chat config: {}", e);
+                error!("⏱️ Failed to read chat config: {} (took {:?})", e, start.elapsed());
                 return None;
             }
         };
+        info!("⏱️ Config file read in {:?}", read_start.elapsed());
 
         // Parse the full config YAML
+        let parse_start = std::time::Instant::now();
         let yaml: serde_yaml::Value = match serde_yaml::from_str(&config_str) {
             Ok(v) => v,
             Err(e) => {
-                warn!("Failed to parse config YAML: {}", e);
+                warn!("⏱️ Failed to parse config YAML: {} (took {:?})", e, start.elapsed());
                 return None;
             }
         };
+        info!("⏱️ YAML parsed in {:?}", parse_start.elapsed());
 
         // Extract chat_backend section
         let chat_backend = yaml.get("chat_backend")?;
@@ -281,22 +314,24 @@ impl App {
         };
 
         // Initialize backend (async, but we block here during startup)
+        let runtime_start = std::time::Instant::now();
         match tokio::runtime::Runtime::new() {
             Ok(rt) => {
-                info!("Created tokio runtime for chat backend");
+                info!("⏱️ Created tokio runtime for chat backend in {:?}", runtime_start.elapsed());
+                let backend_start = std::time::Instant::now();
                 match rt.block_on(ChatBackend::new(chat_config)) {
                     Ok(backend) => {
-                        info!("✅ Chat backend initialized successfully");
+                        info!("⏱️ ✅ Chat backend initialized successfully in {:?} (total: {:?})", backend_start.elapsed(), start.elapsed());
                         Some(backend)
                     }
                     Err(e) => {
-                        error!("❌ Failed to initialize chat backend: {}", e);
+                        error!("⏱️ ❌ Failed to initialize chat backend: {} (took {:?})", e, start.elapsed());
                         None
                     }
                 }
             }
             Err(e) => {
-                error!("❌ Failed to create tokio runtime: {}", e);
+                error!("⏱️ ❌ Failed to create tokio runtime: {} (took {:?})", e, start.elapsed());
                 None
             }
         }

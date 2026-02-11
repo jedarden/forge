@@ -243,6 +243,17 @@ fn run_onboarding() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Run the TUI application.
 fn run_app() -> forge_tui::AppResult<()> {
+    use std::time::Instant;
+
+    let start = Instant::now();
+    info!("⏱️ run_app() started - creating App...");
     let mut app = App::new();
-    app.run()
+    info!("⏱️ App created in {:?}", start.elapsed());
+
+    let run_start = Instant::now();
+    info!("⏱️ Starting app.run()...");
+    let result = app.run();
+    info!("⏱️ app.run() completed in {:?}", run_start.elapsed());
+
+    result
 }
