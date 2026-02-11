@@ -7,107 +7,96 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., 0.1.6). Leave empty to auto-detect from Cargo.toml.'
+        description: 'Version to release (e.g., 0.1.6). Leave empty to use tag version.'
         required: false
         type: string
-      prerelease:
-        description: 'Mark as prerelease'
-        required: false
-        type: boolean
-        default: false
-      draft:
-        description: 'Create as draft'
-        required: false
-        type: boolean
-        default: false
-      strict:
-        description: 'Use exact Cargo.toml version (skip auto-increment check)'
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: write
 
 jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: self-hosted
+            artifact: forge-linux-x86_64
+          - target: aarch64-unknown-linux-gnu
+            os: self-hosted
+            artifact: forge-linux-aarch64
+            cross: true
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Rename binary
+        run: cp target/${{ matrix.target }}/release/forge ${{ matrix.artifact }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
   release:
+    needs: build
     runs-on: self-hosted
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
         with:
-          fetch-depth: 0
+          path: artifacts
 
-      - name: Install Dagger
-        run: |
-          curl -fsSL https://dl.dagger.io/dagger/install.sh | sh
-          sudo mv bin/dagger /usr/local/bin/
-
-      - name: Extract version from tag
+      - name: Determine version
         id: version
         run: |
           if [ -n "${{ inputs.version }}" ]; then
             echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+            echo "tag=v${{ inputs.version }}" >> $GITHUB_OUTPUT
           elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "version=${TAG#v}" >> $GITHUB_OUTPUT
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
           else
-            # Extract from Cargo.toml
             VERSION=$(grep -A5 '\[workspace.package\]' Cargo.toml | grep 'version' | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
             echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           fi
 
-      - name: Create GitHub Release with Dagger
+      - name: Create Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ARGS="--source=. --github-token=env:GITHUB_TOKEN"
+          # Flatten artifacts
+          mkdir -p release
+          find artifacts -type f -exec cp {} release/ \;
 
-          if [ -n "${{ steps.version.outputs.version }}" ]; then
-            ARGS="$ARGS --version=${{ steps.version.outputs.version }}"
-          fi
+          # Create release
+          gh release create ${{ steps.version.outputs.tag }} \
+            release/* \
+            --title "Forge ${{ steps.version.outputs.tag }}" \
+            --generate-notes \
+            || echo "Release may already exist, uploading assets..."
 
-          if [ "${{ inputs.prerelease }}" == "true" ]; then
-            ARGS="$ARGS --prerelease=true"
-          fi
-
-          if [ "${{ inputs.draft }}" == "true" ]; then
-            ARGS="$ARGS --draft=true"
-          fi
-
-          if [ "${{ inputs.strict }}" == "true" ]; then
-            ARGS="$ARGS --strict=true"
-          fi
-
-          cd .dagger && dagger call release $ARGS
-
-  # Build binaries for platforms not supported by Dagger cross-compilation
-  build-macos:
-    runs-on: macos-latest
-    needs: release
-    if: false  # Disabled until we have macOS runners
-    strategy:
-      matrix:
-        target:
-          - x86_64-apple-darwin
-          - aarch64-apple-darwin
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-action@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Upload to release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION=$(grep -A5 '\[workspace.package\]' Cargo.toml | grep 'version' | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
-          ARCH=$(echo ${{ matrix.target }} | cut -d'-' -f1)
-          gh release upload "v${VERSION}" \
-            "target/${{ matrix.target }}/release/forge#forge-darwin-${ARCH}" \
-            --clobber
+          # Upload if release exists
+          gh release upload ${{ steps.version.outputs.tag }} \
+            release/* \
+            --clobber \
+            || true
