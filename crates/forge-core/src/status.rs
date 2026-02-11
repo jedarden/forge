@@ -35,6 +35,35 @@ use tracing::{debug, warn};
 use crate::error::{ForgeError, Result};
 use crate::types::WorkerStatus;
 
+/// Custom deserializer for current_task field that handles both string and object formats.
+///
+/// Accepts:
+/// - String: "bd-abc"
+/// - Object: {"bead_id": "bd-abc", "bead_title": "...", "priority": 1}
+fn deserialize_current_task<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Deserialize};
+    use serde_json::Value;
+
+    let value = Value::deserialize(deserializer)?;
+
+    match value {
+        Value::Null => Ok(None),
+        Value::String(s) => Ok(Some(s)),
+        Value::Object(map) => {
+            // Extract bead_id from object format
+            if let Some(Value::String(bead_id)) = map.get("bead_id") {
+                Ok(Some(bead_id.clone()))
+            } else {
+                Err(de::Error::custom("current_task object must have bead_id field"))
+            }
+        }
+        _ => Err(de::Error::custom("current_task must be a string or object")),
+    }
+}
+
 /// Complete worker status information as stored in status files.
 ///
 /// This struct represents the full contents of a worker's status file
@@ -68,8 +97,8 @@ pub struct WorkerStatusInfo {
     #[serde(default)]
     pub last_activity: Option<DateTime<Utc>>,
 
-    /// ID of the bead/task currently being processed
-    #[serde(default)]
+    /// ID of the bead/task currently being processed (handles both string and object formats)
+    #[serde(default, deserialize_with = "deserialize_current_task")]
     pub current_task: Option<String>,
 
     /// Number of tasks completed by this worker
@@ -541,5 +570,117 @@ mod tests {
         assert_eq!(original.pid, deserialized.pid);
         assert_eq!(original.current_task, deserialized.current_task);
         assert_eq!(original.tasks_completed, deserialized.tasks_completed);
+    }
+
+    // ============================================================
+    // current_task Custom Deserializer Tests (fg-3bq)
+    // ============================================================
+
+    /// Test current_task as a simple string format.
+    #[test]
+    fn test_current_task_string_format() {
+        let json = r#"{"worker_id": "w", "current_task": "bd-abc"}"#;
+        let info: WorkerStatusInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.current_task, Some("bd-abc".to_string()));
+    }
+
+    /// Test current_task as object format with bead_id.
+    #[test]
+    fn test_current_task_object_format() {
+        let json = r#"{"worker_id": "w", "current_task": {"bead_id": "fg-123", "bead_title": "Test task", "priority": 0}}"#;
+        let info: WorkerStatusInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.current_task, Some("fg-123".to_string()));
+    }
+
+    /// Test current_task as null.
+    #[test]
+    fn test_current_task_null() {
+        let json = r#"{"worker_id": "w", "current_task": null}"#;
+        let info: WorkerStatusInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.current_task, None);
+    }
+
+    /// Test current_task absent (uses default).
+    #[test]
+    fn test_current_task_absent() {
+        let json = r#"{"worker_id": "w"}"#;
+        let info: WorkerStatusInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.current_task, None);
+    }
+
+    /// Test current_task object format with minimal fields.
+    #[test]
+    fn test_current_task_object_minimal() {
+        let json = r#"{"worker_id": "w", "current_task": {"bead_id": "bd-xyz"}}"#;
+        let info: WorkerStatusInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.current_task, Some("bd-xyz".to_string()));
+    }
+
+    /// Test current_task object format without bead_id fails.
+    #[test]
+    fn test_current_task_object_missing_bead_id() {
+        let json = r#"{"worker_id": "w", "current_task": {"title": "no bead_id"}}"#;
+        let result: std::result::Result<WorkerStatusInfo, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("bead_id"), "Error should mention bead_id: {}", err);
+    }
+
+    /// Test current_task invalid type (number) fails.
+    #[test]
+    fn test_current_task_invalid_number() {
+        let json = r#"{"worker_id": "w", "current_task": 12345}"#;
+        let result: std::result::Result<WorkerStatusInfo, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    /// Test current_task invalid type (array) fails.
+    #[test]
+    fn test_current_task_invalid_array() {
+        let json = r#"{"worker_id": "w", "current_task": ["bd-a", "bd-b"]}"#;
+        let result: std::result::Result<WorkerStatusInfo, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    /// Test StatusReader handles both current_task formats.
+    #[test]
+    fn test_status_reader_mixed_current_task_formats() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        // Create worker with string format
+        create_test_status_file(
+            tmp_dir.path(),
+            "worker-string",
+            r#"{"worker_id": "worker-string", "status": "active", "current_task": "bd-string"}"#,
+        );
+
+        // Create worker with object format
+        create_test_status_file(
+            tmp_dir.path(),
+            "worker-object",
+            r#"{"worker_id": "worker-object", "status": "active", "current_task": {"bead_id": "fg-object", "priority": 1}}"#,
+        );
+
+        // Create worker with null
+        create_test_status_file(
+            tmp_dir.path(),
+            "worker-null",
+            r#"{"worker_id": "worker-null", "status": "idle", "current_task": null}"#,
+        );
+
+        let reader = StatusReader::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        let workers = reader.read_all().unwrap();
+
+        assert_eq!(workers.len(), 3);
+
+        // Find each worker by id
+        let w_string = workers.iter().find(|w| w.worker_id == "worker-string").unwrap();
+        assert_eq!(w_string.current_task, Some("bd-string".to_string()));
+
+        let w_object = workers.iter().find(|w| w.worker_id == "worker-object").unwrap();
+        assert_eq!(w_object.current_task, Some("fg-object".to_string()));
+
+        let w_null = workers.iter().find(|w| w.worker_id == "worker-null").unwrap();
+        assert_eq!(w_null.current_task, None);
     }
 }
