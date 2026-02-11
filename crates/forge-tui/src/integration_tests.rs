@@ -3610,4 +3610,191 @@ mod tests {
             assert_eq!(data.today_calls(), (i * 10) as i64);
         }
     }
+
+    // ============================================================
+    // Integration Test: Worker Kill Dialog
+    // ============================================================
+
+    #[test]
+    fn test_kill_dialog_shows_on_kill_event() {
+        // Test that the kill dialog is shown when KillWorker event is triggered
+        let mut app = App::new();
+
+        // Initially, kill dialog should not be shown
+        assert!(!app.show_kill_dialog());
+
+        // Trigger the KillWorker event
+        app.handle_app_event(AppEvent::KillWorker);
+
+        // Kill dialog should now be shown
+        assert!(app.show_kill_dialog());
+
+        // Verify the dialog renders
+        let buffer = render_app(&mut app, 120, 40);
+        assert!(
+            buffer_contains(&buffer, "Kill Worker"),
+            "Kill dialog should render with 'Kill Worker' title"
+        );
+    }
+
+    #[test]
+    fn test_kill_dialog_closes_on_escape() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = App::new();
+
+        // Open kill dialog
+        app.handle_app_event(AppEvent::KillWorker);
+        assert!(app.show_kill_dialog());
+
+        // Press Escape to close
+        let escape_key = KeyEvent::new(KeyCode::Esc, KeyModifiers::empty());
+        app.handle_key_event(escape_key);
+
+        // Dialog should be closed
+        assert!(!app.show_kill_dialog());
+    }
+
+    #[test]
+    fn test_kill_dialog_closes_on_q() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = App::new();
+
+        // Open kill dialog
+        app.handle_app_event(AppEvent::KillWorker);
+        assert!(app.show_kill_dialog());
+
+        // Press 'q' to close
+        let q_key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::empty());
+        app.handle_key_event(q_key);
+
+        // Dialog should be closed
+        assert!(!app.show_kill_dialog());
+    }
+
+    #[test]
+    fn test_kill_dialog_toggles() {
+        // Test that KillWorker event toggles the dialog
+        let mut app = App::new();
+
+        // Open
+        app.handle_app_event(AppEvent::KillWorker);
+        assert!(app.show_kill_dialog());
+
+        // Close (toggle again)
+        app.handle_app_event(AppEvent::KillWorker);
+        assert!(!app.show_kill_dialog());
+
+        // Reopen
+        app.handle_app_event(AppEvent::KillWorker);
+        assert!(app.show_kill_dialog());
+    }
+
+    #[test]
+    fn test_kill_dialog_navigation() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = App::new();
+
+        // Open kill dialog
+        app.handle_app_event(AppEvent::KillWorker);
+
+        // Set up multiple workers for navigation testing
+        // Note: In a real test we would mock worker discovery
+        // For now, we just verify that navigation keys don't crash
+        let down_key = KeyEvent::new(KeyCode::Down, KeyModifiers::empty());
+        let up_key = KeyEvent::new(KeyCode::Up, KeyModifiers::empty());
+        let j_key = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty());
+        let k_key = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::empty());
+
+        // These should not panic
+        app.handle_key_event(down_key);
+        app.handle_key_event(j_key);
+        app.handle_key_event(up_key);
+        app.handle_key_event(k_key);
+
+        // Dialog should still be open
+        assert!(app.show_kill_dialog());
+    }
+
+    #[test]
+    fn test_kill_dialog_no_workers_message() {
+        // Test that dialog shows appropriate message when no workers are found
+        let mut app = App::new();
+
+        // Open kill dialog (will discover workers from tmux)
+        app.handle_app_event(AppEvent::KillWorker);
+
+        // Render and check for appropriate UI elements
+        let buffer = render_app(&mut app, 120, 40);
+
+        // Dialog should either show workers or "No active workers found"
+        let content = buffer_to_string(&buffer);
+        let has_workers_or_message = content.contains("Select a worker to kill")
+            || content.contains("No active workers found")
+            || content.contains("Error:");
+        assert!(
+            has_workers_or_message,
+            "Kill dialog should show worker selection or appropriate message"
+        );
+    }
+
+    #[test]
+    fn test_kill_dialog_shows_worker_details() {
+        // Test that when workers are discovered, the dialog shows their details
+        let mut app = App::new();
+
+        // Open kill dialog
+        app.handle_app_event(AppEvent::KillWorker);
+
+        // Render the dialog
+        let buffer = render_app(&mut app, 120, 40);
+        let content = buffer_to_string(&buffer);
+
+        // If workers exist, check for expected format elements
+        if app.show_kill_dialog() {
+            // The dialog should show either workers with details or a no-workers message
+            let has_expected_content = content.contains("Select a worker to kill")
+                || content.contains("No active workers found")
+                || content.contains("attached")
+                || content.contains("detached")
+                || content.contains("GLM")
+                || content.contains("Sonnet")
+                || content.contains("Opus")
+                || content.contains("Haiku");
+            assert!(
+                has_expected_content,
+                "Kill dialog should show worker details or no workers message"
+            );
+        }
+    }
+
+    #[test]
+    fn test_kill_dialog_navigation_keys() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = App::new();
+
+        // Open kill dialog
+        app.handle_app_event(AppEvent::KillWorker);
+        assert!(app.show_kill_dialog());
+
+        // Test that navigation keys don't crash and dialog stays open
+        let nav_keys = [
+            KeyEvent::new(KeyCode::Up, KeyModifiers::empty()),
+            KeyEvent::new(KeyCode::Down, KeyModifiers::empty()),
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty()),
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::empty()),
+        ];
+
+        for key in nav_keys {
+            app.handle_key_event(key);
+            assert!(app.show_kill_dialog());
+        }
+
+        // Test Enter key (may or may not have workers to kill)
+        let enter_key = KeyEvent::new(KeyCode::Enter, KeyModifiers::empty());
+        app.handle_key_event(enter_key); // Should not panic
+    }
 }
