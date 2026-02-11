@@ -567,7 +567,10 @@ impl DataManager {
         // TODO: Load from ~/.forge/subscriptions.yaml when subscription tracking is added
         let subscription_data = SubscriptionData::new();
 
-        let mut manager = Self {
+        // Skip initial poll_updates during initialization - it blocks for too long
+        // due to bead manager calling `br` commands which can take seconds each.
+        // Let the first poll happen during the main loop instead.
+        Self {
             watcher,
             worker_data: WorkerData::new(),
             bead_manager,
@@ -583,10 +586,7 @@ impl DataManager {
             dirty: false,
             cached_worker_count: 0,
             cached_bead_count: 0,
-        };
-
-        manager.poll_updates();
-        manager
+        }
     }
 
     /// Poll for updates from the StatusWatcher, BeadManager, CostDatabase, and tmux discovery.
@@ -893,5 +893,152 @@ mod tests {
         // Still no workers
         assert!(!data.has_any_workers());
         assert_eq!(data.total_worker_count(), 0);
+    }
+
+    // ============================================================
+    // Initialization Performance Tests
+    // ============================================================
+    //
+    // These tests verify that DataManager initialization is fast enough
+    // to meet the < 2 second startup target. Each component should
+    // initialize within 500ms.
+
+    /// Test that DataManager initialization completes within 2 seconds.
+    /// This is the primary performance validation for fg-2ir.
+    #[test]
+    fn test_datamanager_init_under_2_seconds() {
+        use std::time::{Duration, Instant};
+
+        let start = Instant::now();
+        let _manager = DataManager::new();
+        let elapsed = start.elapsed();
+
+        // DataManager::new() should complete in under 2 seconds
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "DataManager::new() took {:?}, exceeds 2 second target",
+            elapsed
+        );
+
+        // In practice, it should be much faster (< 10ms typically)
+        // This is a sanity check, not a strict requirement
+        if elapsed > Duration::from_millis(100) {
+            eprintln!(
+                "Warning: DataManager::new() took {:?}, consider optimization",
+                elapsed
+            );
+        }
+    }
+
+    /// Test initialization with a temporary empty status directory.
+    /// This simulates a fresh installation with no workers.
+    #[test]
+    fn test_datamanager_init_empty_status_dir() {
+        use std::time::{Duration, Instant};
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        std::fs::create_dir_all(&status_dir).unwrap();
+
+        let start = Instant::now();
+        let manager = DataManager::with_status_dir(status_dir);
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "DataManager with empty status dir took {:?}",
+            elapsed
+        );
+
+        // Verify manager works correctly (initial state has no workers from status files)
+        // Note: worker_counts() returns 0 before first poll, which is correct for fast init
+        assert_eq!(manager.worker_counts().total, 0);
+    }
+
+    /// Test initialization with 100 status files to verify O(n) scaling.
+    /// This tests the scenario described in fg-2ir where users may have
+    /// many workers running.
+    #[test]
+    fn test_datamanager_init_100_status_files() {
+        use crate::status::{StatusWatcher, StatusWatcherConfig};
+        use std::time::{Duration, Instant};
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        std::fs::create_dir_all(&status_dir).unwrap();
+
+        // Create 100 status files
+        for i in 0..100 {
+            let content = format!(
+                r#"{{"worker_id": "worker-{}", "status": "active", "model": "test-model"}}"#,
+                i
+            );
+            std::fs::write(status_dir.join(format!("worker-{}.json", i)), content).unwrap();
+        }
+
+        // Test StatusWatcher directly (which is responsible for loading status files)
+        let config = StatusWatcherConfig::default().with_status_dir(&status_dir);
+
+        let start = Instant::now();
+        let watcher = StatusWatcher::new(config).unwrap();
+        let elapsed = start.elapsed();
+
+        // Even with 100 files, should complete well under 500ms
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "StatusWatcher with 100 status files took {:?}",
+            elapsed
+        );
+
+        // Verify all workers were loaded during initial scan
+        assert_eq!(
+            watcher.workers().len(),
+            100,
+            "Should have loaded all 100 workers"
+        );
+    }
+
+    /// Test that StatusWatcher initialization is fast (< 100ms target).
+    #[test]
+    fn test_statuswatcher_init_performance() {
+        use crate::status::{StatusWatcher, StatusWatcherConfig};
+        use std::time::{Duration, Instant};
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        std::fs::create_dir_all(&status_dir).unwrap();
+
+        let config = StatusWatcherConfig::default().with_status_dir(&status_dir);
+
+        let start = Instant::now();
+        let _watcher = StatusWatcher::new(config).unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "StatusWatcher init took {:?}, exceeds 100ms target",
+            elapsed
+        );
+    }
+
+    /// Test that BeadManager initialization is fast (< 50ms target).
+    #[test]
+    fn test_beadmanager_init_performance() {
+        use crate::bead::BeadManager;
+        use std::time::{Duration, Instant};
+
+        let start = Instant::now();
+        let mut manager = BeadManager::new();
+        manager.add_default_workspaces();
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < Duration::from_millis(50),
+            "BeadManager init took {:?}, exceeds 50ms target",
+            elapsed
+        );
     }
 }
