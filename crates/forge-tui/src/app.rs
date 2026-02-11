@@ -219,20 +219,22 @@ impl App {
     /// Errors are logged but don't prevent app startup.
     fn init_chat_backend() -> Option<ChatBackend> {
         use forge_chat::config::{ClaudeCliConfig, ProviderConfig, RateLimitConfig, AuditConfig, ConfirmationConfig};
-        use tracing::{debug, warn};
+        use tracing::{debug, warn, info, error};
 
         // Load config from ~/.forge/config.yaml
         let config_path = dirs::home_dir()?.join(".forge/config.yaml");
 
+        info!("Initializing chat backend from {}", config_path.display());
+
         if !config_path.exists() {
-            debug!("Chat config not found at {}", config_path.display());
+            warn!("Chat config not found at {}", config_path.display());
             return None;
         }
 
         let config_str = match std::fs::read_to_string(&config_path) {
             Ok(s) => s,
             Err(e) => {
-                warn!("Failed to read chat config: {}", e);
+                error!("Failed to read chat config: {}", e);
                 return None;
             }
         };
@@ -280,19 +282,20 @@ impl App {
         // Initialize backend (async, but we block here during startup)
         match tokio::runtime::Runtime::new() {
             Ok(rt) => {
+                info!("Created tokio runtime for chat backend");
                 match rt.block_on(ChatBackend::new(chat_config)) {
                     Ok(backend) => {
-                        debug!("Chat backend initialized successfully");
+                        info!("✅ Chat backend initialized successfully");
                         Some(backend)
                     }
                     Err(e) => {
-                        warn!("Failed to initialize chat backend: {}", e);
+                        error!("❌ Failed to initialize chat backend: {}", e);
                         None
                     }
                 }
             }
             Err(e) => {
-                warn!("Failed to create tokio runtime: {}", e);
+                error!("❌ Failed to create tokio runtime: {}", e);
                 None
             }
         }
