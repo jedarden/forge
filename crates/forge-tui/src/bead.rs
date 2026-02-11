@@ -22,10 +22,14 @@ use thiserror::Error;
 use tracing::debug;
 
 /// Default polling interval in seconds for bead updates.
-const DEFAULT_POLL_INTERVAL_SECS: u64 = 5;
+const DEFAULT_POLL_INTERVAL_SECS: u64 = 30;  // Increased from 5 to reduce blocking
 
 /// Maximum age before considering cached data stale (in seconds).
-const CACHE_STALE_SECS: u64 = 30;
+const CACHE_STALE_SECS: u64 = 60;  // Increased from 30
+
+/// Timeout for br CLI commands in milliseconds.
+/// Keep short to prevent blocking the UI.
+const BR_COMMAND_TIMEOUT_MS: u64 = 2000;
 
 /// Errors that can occur during bead operations.
 #[derive(Error, Debug)]
@@ -463,87 +467,191 @@ impl BeadManager {
     }
 
     /// Query beads using the `br ready` or `br blocked` command.
+    /// Uses a timeout to avoid blocking the UI.
     fn query_beads(workspace: &PathBuf, subcommand: &str) -> BeadResult<Vec<Bead>> {
-        let output = Command::new("br")
+        use std::process::Stdio;
+        use std::io::Read;
+
+        let mut child = Command::new("br")
             .arg(subcommand)
             .arg("--format")
             .arg("json")
             .current_dir(workspace)
-            .output()?;
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // Not finding beads directory is expected for some workspaces
-            if stderr.contains("no .beads") || stderr.contains("beads workspace") {
-                return Ok(Vec::new());
+        // Wait with timeout
+        let start = Instant::now();
+        let timeout = Duration::from_millis(BR_COMMAND_TIMEOUT_MS);
+
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    // Process finished
+                    if !status.success() {
+                        let mut stderr = String::new();
+                        if let Some(mut err) = child.stderr {
+                            let _ = err.read_to_string(&mut stderr);
+                        }
+                        if stderr.contains("no .beads") || stderr.contains("beads workspace") {
+                            return Ok(Vec::new());
+                        }
+                        return Err(BeadError::CliError(stderr));
+                    }
+
+                    let mut stdout = String::new();
+                    if let Some(mut out) = child.stdout {
+                        let _ = out.read_to_string(&mut stdout);
+                    }
+
+                    if stdout.trim().is_empty() || stdout.trim() == "[]" {
+                        return Ok(Vec::new());
+                    }
+
+                    let beads: Vec<Bead> = serde_json::from_str(&stdout)?;
+                    return Ok(beads);
+                }
+                Ok(None) => {
+                    // Still running
+                    if start.elapsed() > timeout {
+                        // Kill the process and return empty
+                        let _ = child.kill();
+                        debug!(workspace = ?workspace, subcommand, "br command timed out");
+                        return Ok(Vec::new());
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(e) => {
+                    return Err(BeadError::CliExecution(e));
+                }
             }
-            return Err(BeadError::CliError(stderr.to_string()));
         }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if stdout.trim().is_empty() || stdout.trim() == "[]" {
-            return Ok(Vec::new());
-        }
-
-        let beads: Vec<Bead> = serde_json::from_str(&stdout)?;
-        Ok(beads)
     }
 
     /// Query beads with a status filter using `br list`.
+    /// Uses a timeout to avoid blocking the UI.
     fn query_beads_filtered(workspace: &PathBuf, status: Option<&str>) -> BeadResult<Vec<Bead>> {
+        use std::process::Stdio;
+        use std::io::Read;
+
         let mut cmd = Command::new("br");
         cmd.arg("list")
             .arg("--format")
             .arg("json")
-            .current_dir(workspace);
+            .current_dir(workspace)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
         if let Some(status) = status {
             cmd.arg("--status").arg(status);
         }
 
-        let output = cmd.output()?;
+        let mut child = cmd.spawn()?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("no .beads") || stderr.contains("beads workspace") {
-                return Ok(Vec::new());
+        // Wait with timeout
+        let start = Instant::now();
+        let timeout = Duration::from_millis(BR_COMMAND_TIMEOUT_MS);
+
+        loop {
+            match child.try_wait() {
+                Ok(Some(exit_status)) => {
+                    if !exit_status.success() {
+                        let mut stderr = String::new();
+                        if let Some(mut err) = child.stderr {
+                            let _ = err.read_to_string(&mut stderr);
+                        }
+                        if stderr.contains("no .beads") || stderr.contains("beads workspace") {
+                            return Ok(Vec::new());
+                        }
+                        return Err(BeadError::CliError(stderr));
+                    }
+
+                    let mut stdout = String::new();
+                    if let Some(mut out) = child.stdout {
+                        let _ = out.read_to_string(&mut stdout);
+                    }
+
+                    if stdout.trim().is_empty() || stdout.trim() == "[]" {
+                        return Ok(Vec::new());
+                    }
+
+                    let beads: Vec<Bead> = serde_json::from_str(&stdout)?;
+                    return Ok(beads);
+                }
+                Ok(None) => {
+                    if start.elapsed() > timeout {
+                        let _ = child.kill();
+                        debug!(workspace = ?workspace, status, "br list command timed out");
+                        return Ok(Vec::new());
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(e) => {
+                    return Err(BeadError::CliExecution(e));
+                }
             }
-            return Err(BeadError::CliError(stderr.to_string()));
         }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if stdout.trim().is_empty() || stdout.trim() == "[]" {
-            return Ok(Vec::new());
-        }
-
-        let beads: Vec<Bead> = serde_json::from_str(&stdout)?;
-        Ok(beads)
     }
 
     /// Query statistics using `br stats`.
+    /// Uses a timeout to avoid blocking the UI.
     fn query_stats(workspace: &PathBuf) -> BeadResult<BeadStats> {
-        let output = Command::new("br")
+        use std::process::Stdio;
+        use std::io::Read;
+
+        let mut child = Command::new("br")
             .arg("stats")
             .arg("--format")
             .arg("json")
             .current_dir(workspace)
-            .output()?;
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("no .beads") || stderr.contains("beads workspace") {
-                return Ok(BeadStats::default());
+        // Wait with timeout
+        let start = Instant::now();
+        let timeout = Duration::from_millis(BR_COMMAND_TIMEOUT_MS);
+
+        loop {
+            match child.try_wait() {
+                Ok(Some(exit_status)) => {
+                    if !exit_status.success() {
+                        let mut stderr = String::new();
+                        if let Some(mut err) = child.stderr {
+                            let _ = err.read_to_string(&mut stderr);
+                        }
+                        if stderr.contains("no .beads") || stderr.contains("beads workspace") {
+                            return Ok(BeadStats::default());
+                        }
+                        return Err(BeadError::CliError(stderr));
+                    }
+
+                    let mut stdout = String::new();
+                    if let Some(mut out) = child.stdout {
+                        let _ = out.read_to_string(&mut stdout);
+                    }
+
+                    if stdout.trim().is_empty() {
+                        return Ok(BeadStats::default());
+                    }
+
+                    let stats: BeadStats = serde_json::from_str(&stdout)?;
+                    return Ok(stats);
+                }
+                Ok(None) => {
+                    if start.elapsed() > timeout {
+                        let _ = child.kill();
+                        debug!(workspace = ?workspace, "br stats command timed out");
+                        return Ok(BeadStats::default());
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(e) => {
+                    return Err(BeadError::CliExecution(e));
+                }
             }
-            return Err(BeadError::CliError(stderr.to_string()));
         }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if stdout.trim().is_empty() {
-            return Ok(BeadStats::default());
-        }
-
-        let stats: BeadStats = serde_json::from_str(&stdout)?;
-        Ok(stats)
     }
 
     /// Get aggregated bead data across all workspaces.

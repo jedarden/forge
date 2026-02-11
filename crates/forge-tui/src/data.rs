@@ -456,24 +456,37 @@ impl DataManager {
 
     /// Create a new DataManager, initializing the StatusWatcher, BeadManager, and CostDatabase.
     pub fn new() -> Self {
+        use tracing::info;
+        use std::time::Instant;
+
+        let start = Instant::now();
+        info!("⏱️ DataManager::new() started");
+
         let (watcher, init_error) = match StatusWatcher::new(StatusWatcherConfig::default()) {
             Ok(w) => (Some(w), None),
             Err(e) => (None, Some(format!("Failed to initialize status watcher: {}", e))),
         };
+        info!("⏱️ StatusWatcher initialized in {:?}", start.elapsed());
 
         // Create a tokio runtime for async tmux discovery
+        let runtime_start = Instant::now();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .ok();
+        info!("⏱️ Tokio runtime created in {:?}", runtime_start.elapsed());
 
         // Initialize bead manager with default workspaces
+        let bead_start = Instant::now();
         let mut bead_manager = BeadManager::new();
         bead_manager.add_default_workspaces();
+        info!("⏱️ BeadManager initialized in {:?}", bead_start.elapsed());
 
         // Initialize cost database from default location
+        let cost_start = Instant::now();
         let cost_db = Self::init_cost_database();
         let cost_data = CostPanelData::loading();
+        info!("⏱️ Cost database initialized in {:?}", cost_start.elapsed());
 
         // Initialize metrics data
         let metrics_data = MetricsPanelData::loading();
@@ -500,9 +513,12 @@ impl DataManager {
             cached_bead_count: 0,
         };
 
-        // Initial data load
-        manager.poll_updates();
+        // Skip initial poll_updates during initialization - it blocks for too long
+        // due to bead manager calling `br` commands which can take 20+ seconds each.
+        // Let the first poll happen during the main loop instead.
+        info!("⏱️ Skipping initial poll_updates (will poll in main loop)");
 
+        info!("⏱️ DataManager::new() completed in {:?}", start.elapsed());
         manager
     }
 

@@ -419,24 +419,35 @@ impl App {
 
     /// Poll for chat responses from background thread.
     fn poll_chat_responses(&mut self) {
-        use tracing::debug;
+        use tracing::{debug, info};
 
         // Non-blocking check for responses (need to avoid borrow checker issues)
         let mut responses = Vec::new();
         if let Some(rx) = &self.chat_response_rx {
-            while let Ok(response) = rx.try_recv() {
-                responses.push(response);
+            match rx.try_recv() {
+                Ok(response) => {
+                    info!("📥 Got response from channel!");
+                    responses.push(response);
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    // No response yet, this is normal
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    info!("❌ Channel disconnected!");
+                }
             }
         }
 
         // Process responses after releasing the borrow
         for (query, result) in responses {
-                debug!("Received chat response from background thread");
+                info!("Processing response for: {}", query);
 
                 let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
 
                 match result {
                     Ok(response) => {
+                        info!("✅ Success! Response text length: {} chars", response.text.len());
+                        info!("Response preview: {}", response.text.chars().take(100).collect::<String>());
                         self.chat_history.push(ChatExchange {
                             user_query: query,
                             assistant_response: response.text,
@@ -446,6 +457,7 @@ impl App {
                         self.status_message = Some("✅ Response received".to_string());
                     }
                     Err(e) => {
+                        info!("❌ Error response: {}", e);
                         self.chat_history.push(ChatExchange {
                             user_query: query,
                             assistant_response: format!("Error: {}", e),
@@ -461,8 +473,11 @@ impl App {
                     self.chat_history.remove(0);
                 }
 
+            info!("📊 Chat history now has {} exchanges", self.chat_history.len());
+            info!("🖥️ Current view: {:?}", self.current_view);
             self.chat_pending = false;
             self.mark_dirty();
+            info!("🔄 UI marked dirty for redraw");
         }
     }
 
@@ -577,7 +592,10 @@ impl App {
                             info!("Chat request completed, result: {:?}", result.is_ok());
 
                             // Send result back to UI thread
-                            let _ = tx.send((query_clone, result));
+                            match tx.send((query_clone, result)) {
+                                Ok(_) => info!("✅ Sent response to UI thread via channel"),
+                                Err(e) => info!("❌ Failed to send response: {:?}", e),
+                            }
                         });
                     } else {
                         self.status_message = Some("Chat backend not initialized".to_string());
@@ -748,6 +766,10 @@ impl App {
         while !self.should_quit {
             let frame_start = Instant::now();
 
+            // Poll for chat responses FIRST - this is non-blocking and must happen
+            // frequently to ensure responsive chat UX. Don't let data polling block it.
+            self.poll_chat_responses();
+
             // Optimized data polling - only poll if interval elapsed
             let needs_poll = self.last_poll_time.elapsed() >= DATA_POLL_INTERVAL;
             if needs_poll {
@@ -760,7 +782,8 @@ impl App {
                 }
             }
 
-            // Poll for chat responses from background thread
+            // Poll for chat responses again after data polling in case a response
+            // arrived while we were doing the (potentially slow) data poll
             self.poll_chat_responses();
 
             // Check for updates periodically
