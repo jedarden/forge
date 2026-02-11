@@ -1,0 +1,205 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Check formatting
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  # Run clippy lints
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-clippy-
+            ${{ runner.os }}-cargo-
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # Build and test
+  check:
+    name: Check & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-check-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-check-
+            ${{ runner.os }}-cargo-
+
+      - name: Run cargo check
+        run: cargo check --all-targets --all-features
+
+      - name: Run tests
+        run: cargo test --all-features
+
+  # Validate version consistency across workspace
+  version-check:
+    name: Version Consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check version consistency
+        run: |
+          # Extract workspace version from Cargo.toml
+          WORKSPACE_VERSION=$(grep -A 10 '^\[workspace\.package\]' Cargo.toml | grep '^version' | head -1 | sed 's/.*= *"\([^"]*\)".*/\1/')
+
+          if [ -z "$WORKSPACE_VERSION" ]; then
+            echo "Error: Could not find workspace version in Cargo.toml"
+            exit 1
+          fi
+
+          echo "Workspace version: $WORKSPACE_VERSION"
+
+          # Check that all workspace members use workspace = true for version
+          errors=0
+          for crate_toml in crates/*/Cargo.toml; do
+            crate_name=$(basename $(dirname "$crate_toml"))
+
+            # Check if version.workspace = true is set
+            if ! grep -q 'version\.workspace *= *true' "$crate_toml" && ! grep -q 'version.workspace = true' "$crate_toml"; then
+              # Check if version = ... uses workspace reference
+              if ! grep -qE 'version\s*=\s*\{\s*workspace\s*=\s*true' "$crate_toml"; then
+                echo "Warning: $crate_name may not use workspace version"
+                # Check the actual version value
+                CRATE_VERSION=$(grep -E '^version\s*=' "$crate_toml" | head -1 | sed 's/.*= *"\([^"]*\)".*/\1/' || echo "")
+                if [ -n "$CRATE_VERSION" ] && [ "$CRATE_VERSION" != "$WORKSPACE_VERSION" ]; then
+                  echo "Error: $crate_name has version $CRATE_VERSION, expected $WORKSPACE_VERSION"
+                  errors=$((errors + 1))
+                fi
+              fi
+            fi
+          done
+
+          if [ $errors -gt 0 ]; then
+            echo ""
+            echo "Version consistency check failed with $errors error(s)"
+            exit 1
+          fi
+
+          echo "All versions are consistent!"
+
+  # Run automated tmux tests (quick suite only in CI)
+  tmux-tests:
+    name: TUI Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-tmux-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-tmux-
+            ${{ runner.os }}-cargo-
+
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - name: Build forge
+        run: cargo build --release
+
+      - name: Install forge
+        run: cargo install --path .
+
+      - name: Create forge config directory
+        run: mkdir -p ~/.forge
+
+      - name: Run quick TUI tests
+        run: |
+          export CI=true
+          export GITHUB_ACTIONS=true
+          chmod +x tests/*.sh tests/lib/*.sh
+          ./tests/run-all-tests.sh --quick
+        timeout-minutes: 10
+
+  # Build release artifacts (only on main branch)
+  build-release:
+    name: Build Release
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    needs: [fmt, clippy, check, version-check]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-
+            ${{ runner.os }}-cargo-
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-linux-x86_64
+          path: target/release/forge
+          retention-days: 7
