@@ -285,7 +285,11 @@ impl ForgeError {
     }
 
     /// Create an I/O error
-    pub fn io(operation: impl Into<String>, path: impl Into<PathBuf>, source: std::io::Error) -> Self {
+    pub fn io(
+        operation: impl Into<String>,
+        path: impl Into<PathBuf>,
+        source: std::io::Error,
+    ) -> Self {
         Self::Io {
             operation: operation.into(),
             path: path.into(),
@@ -389,9 +393,7 @@ impl ForgeError {
             Self::BackendNotConfigured => {
                 Some("Configure a chat backend in ~/.forge/config.yaml or run 'forge init'")
             }
-            Self::WorkerHealth { .. } => {
-                Some("Check worker logs in ~/.forge/logs/ for details")
-            }
+            Self::WorkerHealth { .. } => Some("Check worker logs in ~/.forge/logs/ for details"),
             Self::ToolRateLimited { .. } => Some("Wait and try again"),
             Self::TerminalInit { .. } => Some("Try running in a different terminal"),
             _ => None,
@@ -422,10 +424,12 @@ mod tests {
     #[test]
     fn test_error_classification() {
         assert!(ForgeError::LauncherTimeout { timeout_secs: 30 }.is_recoverable());
-        assert!(ForgeError::Internal {
-            message: "bug".into()
-        }
-        .is_fatal());
+        assert!(
+            ForgeError::Internal {
+                message: "bug".into()
+            }
+            .is_fatal()
+        );
     }
 
     #[test]
@@ -433,6 +437,9 @@ mod tests {
         let err = ForgeError::LauncherNotExecutable {
             path: "/some/launcher".into(),
         };
-        assert_eq!(err.guidance(), Some("Run 'chmod +x' on the launcher script"));
+        assert_eq!(
+            err.guidance(),
+            Some("Run 'chmod +x' on the launcher script")
+        );
     }
 }

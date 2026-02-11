@@ -188,12 +188,12 @@ impl AuditLogger {
         let line = format!("{}\n", json);
 
         let mut file = file.lock().await;
-        file.write_all(line.as_bytes()).await.map_err(|e| {
-            ChatError::AuditError(format!("Failed to write audit log: {}", e))
-        })?;
-        file.flush().await.map_err(|e| {
-            ChatError::AuditError(format!("Failed to flush audit log: {}", e))
-        })?;
+        file.write_all(line.as_bytes())
+            .await
+            .map_err(|e| ChatError::AuditError(format!("Failed to write audit log: {}", e)))?;
+        file.flush()
+            .await
+            .map_err(|e| ChatError::AuditError(format!("Failed to flush audit log: {}", e)))?;
 
         Ok(())
     }

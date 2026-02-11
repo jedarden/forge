@@ -3,7 +3,7 @@
 use chrono::Utc;
 use forge_cost::{ApiCall, CostDatabase, CostQuery, LogParser};
 use std::io::Write;
-use tempfile::{tempdir, NamedTempFile};
+use tempfile::{NamedTempFile, tempdir};
 
 /// Create a mock log file with various API events.
 fn create_mock_log_file(content: &str) -> NamedTempFile {
@@ -82,8 +82,14 @@ fn test_parse_directory_multiple_files() {
     assert_eq!(calls.len(), 5);
 
     // Verify worker IDs extracted from filenames
-    let opus_calls: Vec<_> = calls.iter().filter(|c| c.worker_id == "claude-code-opus-alpha").collect();
-    let glm_calls: Vec<_> = calls.iter().filter(|c| c.worker_id == "claude-code-glm-47-alpha").collect();
+    let opus_calls: Vec<_> = calls
+        .iter()
+        .filter(|c| c.worker_id == "claude-code-opus-alpha")
+        .collect();
+    let glm_calls: Vec<_> = calls
+        .iter()
+        .filter(|c| c.worker_id == "claude-code-glm-47-alpha")
+        .collect();
 
     assert_eq!(opus_calls.len(), 3);
     assert_eq!(glm_calls.len(), 2);
@@ -127,7 +133,11 @@ fn test_insert_performance() {
             ApiCall::new(
                 Utc::now(),
                 format!("worker-{}", i % 10),
-                if i % 3 == 0 { "claude-opus" } else { "claude-sonnet" },
+                if i % 3 == 0 {
+                    "claude-opus"
+                } else {
+                    "claude-sonnet"
+                },
                 (100 + i * 10) as i64,
                 (50 + i * 5) as i64,
                 0.01 + (i as f64 * 0.001),
@@ -143,7 +153,11 @@ fn test_insert_performance() {
 
     // Acceptance criteria: <100ms per API call (1000 calls should be <100s)
     // In practice, batched insert should be much faster
-    assert!(duration.as_millis() < 5000, "Insert took too long: {:?}", duration);
+    assert!(
+        duration.as_millis() < 5000,
+        "Insert took too long: {:?}",
+        duration
+    );
 }
 
 #[test]
@@ -175,7 +189,11 @@ fn test_query_performance() {
     let duration = start.elapsed();
 
     // Acceptance criteria: <50ms for dashboard queries
-    assert!(duration.as_millis() < 50, "Query took too long: {:?}", duration);
+    assert!(
+        duration.as_millis() < 50,
+        "Query took too long: {:?}",
+        duration
+    );
 }
 
 #[test]
@@ -217,12 +235,9 @@ fn test_bead_cost_tracking() {
     let db = CostDatabase::open_in_memory().unwrap();
 
     let calls = vec![
-        ApiCall::new(Utc::now(), "worker-1", "claude-opus", 1000, 500, 1.0)
-            .with_bead("fg-a8z"),
-        ApiCall::new(Utc::now(), "worker-1", "claude-opus", 2000, 1000, 2.0)
-            .with_bead("fg-a8z"),
-        ApiCall::new(Utc::now(), "worker-2", "claude-sonnet", 500, 250, 0.1)
-            .with_bead("fg-b9y"),
+        ApiCall::new(Utc::now(), "worker-1", "claude-opus", 1000, 500, 1.0).with_bead("fg-a8z"),
+        ApiCall::new(Utc::now(), "worker-1", "claude-opus", 2000, 1000, 2.0).with_bead("fg-a8z"),
+        ApiCall::new(Utc::now(), "worker-2", "claude-sonnet", 500, 250, 0.1).with_bead("fg-b9y"),
     ];
     db.insert_api_calls(&calls).unwrap();
 
@@ -270,9 +285,14 @@ fn test_projected_costs_calculation() {
     let db = CostDatabase::open_in_memory().unwrap();
 
     // Insert $100 of costs for today
-    let calls = vec![
-        ApiCall::new(Utc::now(), "worker-1", "claude-opus", 1000, 500, 100.0),
-    ];
+    let calls = vec![ApiCall::new(
+        Utc::now(),
+        "worker-1",
+        "claude-opus",
+        1000,
+        500,
+        100.0,
+    )];
     db.insert_api_calls(&calls).unwrap();
 
     let query = CostQuery::new(&db);
@@ -289,8 +309,7 @@ fn test_cache_token_tracking() {
     let db = CostDatabase::open_in_memory().unwrap();
 
     let calls = vec![
-        ApiCall::new(Utc::now(), "worker-1", "claude-opus", 100, 50, 0.5)
-            .with_cache(1000, 5000),
+        ApiCall::new(Utc::now(), "worker-1", "claude-opus", 100, 50, 0.5).with_cache(1000, 5000),
     ];
     db.insert_api_calls(&calls).unwrap();
 
@@ -480,8 +499,22 @@ fn test_monthly_costs() {
     let now = Utc::now();
     let calls = vec![
         ApiCall::new(now, "worker-1", "claude-opus", 100, 50, 100.0),
-        ApiCall::new(now - Duration::days(1), "worker-1", "claude-sonnet", 200, 100, 50.0),
-        ApiCall::new(now - Duration::days(2), "worker-2", "claude-haiku", 500, 250, 10.0),
+        ApiCall::new(
+            now - Duration::days(1),
+            "worker-1",
+            "claude-sonnet",
+            200,
+            100,
+            50.0,
+        ),
+        ApiCall::new(
+            now - Duration::days(2),
+            "worker-2",
+            "claude-haiku",
+            500,
+            250,
+            10.0,
+        ),
     ];
     db.insert_api_calls(&calls).unwrap();
 
@@ -561,11 +594,9 @@ fn test_cache_efficiency_tracking() {
 
     let calls = vec![
         // High cache hit ratio
-        ApiCall::new(Utc::now(), "worker-1", "claude-opus", 100, 50, 0.5)
-            .with_cache(500, 10000), // 500 created, 10000 read
+        ApiCall::new(Utc::now(), "worker-1", "claude-opus", 100, 50, 0.5).with_cache(500, 10000), // 500 created, 10000 read
         // Low cache hit ratio
-        ApiCall::new(Utc::now(), "worker-2", "claude-opus", 1000, 500, 5.0)
-            .with_cache(5000, 0), // 5000 created, 0 read
+        ApiCall::new(Utc::now(), "worker-2", "claude-opus", 1000, 500, 5.0).with_cache(5000, 0), // 5000 created, 0 read
     ];
     db.insert_api_calls(&calls).unwrap();
 
@@ -620,8 +651,22 @@ fn test_model_cost_comparison() {
         ApiCall::new(Utc::now(), "worker-1", "claude-opus-4.5", 1000, 500, 50.0),
         ApiCall::new(Utc::now(), "worker-1", "claude-opus-4.5", 1000, 500, 50.0),
         // Mid-tier model
-        ApiCall::new(Utc::now(), "worker-2", "claude-sonnet-4.5", 2000, 1000, 10.0),
-        ApiCall::new(Utc::now(), "worker-2", "claude-sonnet-4.5", 2000, 1000, 10.0),
+        ApiCall::new(
+            Utc::now(),
+            "worker-2",
+            "claude-sonnet-4.5",
+            2000,
+            1000,
+            10.0,
+        ),
+        ApiCall::new(
+            Utc::now(),
+            "worker-2",
+            "claude-sonnet-4.5",
+            2000,
+            1000,
+            10.0,
+        ),
         // Cheap model
         ApiCall::new(Utc::now(), "worker-3", "claude-haiku-3", 5000, 2500, 1.0),
     ];
@@ -778,15 +823,17 @@ fn test_subscription_usage_tracking() {
     let end = now + Duration::days(20);
 
     // Create subscription with 50% usage
-    let mut sub =
-        Subscription::new("Claude Pro", SubscriptionType::FixedQuota, 20.0, start, end)
-            .with_quota(500);
+    let mut sub = Subscription::new("Claude Pro", SubscriptionType::FixedQuota, 20.0, start, end)
+        .with_quota(500);
     sub.quota_used = 250;
 
     db.upsert_subscription(&sub).unwrap();
 
     let query = CostQuery::new(&db);
-    let summary = query.get_subscription_summary("Claude Pro").unwrap().unwrap();
+    let summary = query
+        .get_subscription_summary("Claude Pro")
+        .unwrap()
+        .unwrap();
 
     assert_eq!(summary.quota_used, 250);
     assert!((summary.usage_percentage - 50.0).abs() < 0.1);
@@ -805,17 +852,27 @@ fn test_subscription_recommendations() {
     // Over-utilized subscription (90% used, only 33% through period)
     let start1 = now - Duration::days(10);
     let end1 = now + Duration::days(20);
-    let mut sub1 =
-        Subscription::new("High Usage", SubscriptionType::FixedQuota, 20.0, start1, end1)
-            .with_quota(500);
+    let mut sub1 = Subscription::new(
+        "High Usage",
+        SubscriptionType::FixedQuota,
+        20.0,
+        start1,
+        end1,
+    )
+    .with_quota(500);
     sub1.quota_used = 450;
 
     // Under-utilized subscription (10% used, 80% through period)
     let start2 = now - Duration::days(24);
     let end2 = now + Duration::days(6);
-    let mut sub2 =
-        Subscription::new("Low Usage", SubscriptionType::FixedQuota, 20.0, start2, end2)
-            .with_quota(500);
+    let mut sub2 = Subscription::new(
+        "Low Usage",
+        SubscriptionType::FixedQuota,
+        20.0,
+        start2,
+        end2,
+    )
+    .with_quota(500);
     sub2.quota_used = 50;
 
     db.upsert_subscription(&sub1).unwrap();

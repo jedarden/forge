@@ -24,7 +24,12 @@ pub enum ThemeName {
 impl ThemeName {
     /// All available themes in cycle order.
     pub fn all() -> &'static [ThemeName] {
-        &[ThemeName::Default, ThemeName::Dark, ThemeName::Light, ThemeName::Cyberpunk]
+        &[
+            ThemeName::Default,
+            ThemeName::Dark,
+            ThemeName::Light,
+            ThemeName::Cyberpunk,
+        ]
     }
 
     /// Get the next theme in the cycle.
@@ -382,11 +387,7 @@ mod dirs {
         std::env::var("HOME")
             .ok()
             .map(PathBuf::from)
-            .or_else(|| {
-                std::env::var("USERPROFILE")
-                    .ok()
-                    .map(PathBuf::from)
-            })
+            .or_else(|| std::env::var("USERPROFILE").ok().map(PathBuf::from))
     }
 }
 
@@ -467,10 +468,9 @@ mod tests {
         for (i, theme_a) in themes.iter().enumerate() {
             for theme_b in themes.iter().skip(i + 1) {
                 // At least one color should differ
-                let colors_match =
-                    theme_a.colors.header == theme_b.colors.header &&
-                    theme_a.colors.hotkey == theme_b.colors.hotkey &&
-                    theme_a.colors.text == theme_b.colors.text;
+                let colors_match = theme_a.colors.header == theme_b.colors.header
+                    && theme_a.colors.hotkey == theme_b.colors.hotkey
+                    && theme_a.colors.text == theme_b.colors.text;
 
                 assert!(!colors_match, "Themes should have different colors");
             }

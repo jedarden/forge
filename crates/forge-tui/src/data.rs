@@ -77,9 +77,7 @@ impl WorkerData {
         if !self.workers.is_empty() {
             self.workers.len()
         } else {
-            self.tmux_sessions
-                .as_ref()
-                .map_or(0, |s| s.workers.len())
+            self.tmux_sessions.as_ref().map_or(0, |s| s.workers.len())
         }
     }
 
@@ -143,7 +141,10 @@ impl WorkerData {
                         .count();
 
                     let display_name = format_model_name(&model);
-                    lines.push(format!("{:<10} {} active, {} idle", display_name, active, idle));
+                    lines.push(format!(
+                        "{:<10} {} active, {} idle",
+                        display_name, active, idle
+                    ));
                 }
             }
         }
@@ -223,7 +224,10 @@ impl WorkerData {
             lines.push("└─────────────────┴──────────┴──────────┴─────────────┘".to_string());
 
             if self.workers.len() > 10 {
-                lines.push(format!("\n... and {} more workers", self.workers.len() - 10));
+                lines.push(format!(
+                    "\n... and {} more workers",
+                    self.workers.len() - 10
+                ));
             }
         } else if let Some(ref tmux) = self.tmux_sessions {
             // Fall back to tmux session table
@@ -237,7 +241,11 @@ impl WorkerData {
             for worker in workers.iter().take(10) {
                 let session = truncate_string(&worker.session_name, 22);
                 let model = worker.worker_type.short_name();
-                let status = if worker.is_attached { "attached" } else { "detached" };
+                let status = if worker.is_attached {
+                    "attached"
+                } else {
+                    "detached"
+                };
                 let age = worker.age();
 
                 lines.push(format!(
@@ -249,7 +257,10 @@ impl WorkerData {
             lines.push("└────────────────────────┴──────────┴──────────┴──────────┘".to_string());
 
             if tmux.workers.len() > 10 {
-                lines.push(format!("\n... and {} more sessions", tmux.workers.len() - 10));
+                lines.push(format!(
+                    "\n... and {} more sessions",
+                    tmux.workers.len() - 10
+                ));
             }
         }
 
@@ -327,7 +338,11 @@ impl WorkerData {
             for worker in workers.iter().take(10) {
                 let time_str = worker.last_activity.format("%H:%M:%S").to_string();
                 let icon = if worker.is_attached { "⟳" } else { "💤" };
-                let status = if worker.is_attached { "attached" } else { "detached" };
+                let status = if worker.is_attached {
+                    "attached"
+                } else {
+                    "detached"
+                };
                 let message = format!("{} {} ({})", worker.session_name, status, worker.age());
 
                 lines.push(format!("{} {} {}", time_str, icon, message));
@@ -456,15 +471,18 @@ impl DataManager {
 
     /// Create a new DataManager, initializing the StatusWatcher, BeadManager, and CostDatabase.
     pub fn new() -> Self {
-        use tracing::info;
         use std::time::Instant;
+        use tracing::info;
 
         let start = Instant::now();
         info!("⏱️ DataManager::new() started");
 
         let (watcher, init_error) = match StatusWatcher::new(StatusWatcherConfig::default()) {
             Ok(w) => (Some(w), None),
-            Err(e) => (None, Some(format!("Failed to initialize status watcher: {}", e))),
+            Err(e) => (
+                None,
+                Some(format!("Failed to initialize status watcher: {}", e)),
+            ),
         };
         info!("⏱️ StatusWatcher initialized in {:?}", start.elapsed());
 
@@ -495,7 +513,7 @@ impl DataManager {
         // TODO: Load from ~/.forge/subscriptions.yaml when subscription tracking is added
         let subscription_data = SubscriptionData::new();
 
-        let mut manager = Self {
+        let manager = Self {
             watcher,
             worker_data: WorkerData::new(),
             bead_manager,
@@ -544,7 +562,10 @@ impl DataManager {
         let config = StatusWatcherConfig::default().with_status_dir(status_dir);
         let (watcher, init_error) = match StatusWatcher::new(config) {
             Ok(w) => (Some(w), None),
-            Err(e) => (None, Some(format!("Failed to initialize status watcher: {}", e))),
+            Err(e) => (
+                None,
+                Some(format!("Failed to initialize status watcher: {}", e)),
+            ),
         };
 
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -620,9 +641,9 @@ impl DataManager {
         }
 
         // Periodically poll tmux discovery (less frequently)
-        let should_poll_tmux = self
-            .last_tmux_poll
-            .map_or(true, |t| t.elapsed().as_secs() >= TMUX_DISCOVERY_INTERVAL_SECS);
+        let should_poll_tmux = self.last_tmux_poll.map_or(true, |t| {
+            t.elapsed().as_secs() >= TMUX_DISCOVERY_INTERVAL_SECS
+        });
 
         if should_poll_tmux {
             self.poll_tmux_discovery();
@@ -640,9 +661,9 @@ impl DataManager {
         }
 
         // Periodically poll metrics data (every 10 seconds)
-        let should_poll_metrics = self
-            .last_metrics_poll
-            .map_or(true, |t| t.elapsed().as_secs() >= METRICS_POLL_INTERVAL_SECS);
+        let should_poll_metrics = self.last_metrics_poll.map_or(true, |t| {
+            t.elapsed().as_secs() >= METRICS_POLL_INTERVAL_SECS
+        });
 
         if should_poll_metrics {
             self.poll_metrics_data();
@@ -653,8 +674,10 @@ impl DataManager {
         self.cached_worker_count = self.worker_data.total_worker_count();
         self.cached_bead_count = self.bead_manager.total_bead_count();
 
-        if changed || previous_worker_count != self.cached_worker_count ||
-           previous_bead_count != self.cached_bead_count {
+        if changed
+            || previous_worker_count != self.cached_worker_count
+            || previous_bead_count != self.cached_bead_count
+        {
             self.dirty = true;
         }
 
@@ -697,11 +720,15 @@ impl DataManager {
                         } else {
                             0.0
                         },
-                        total_tokens: b.input_tokens + b.output_tokens + b.cache_creation_tokens + b.cache_read_tokens,
+                        total_tokens: b.input_tokens
+                            + b.output_tokens
+                            + b.cache_creation_tokens
+                            + b.cache_read_tokens,
                     })
                     .collect();
 
-                self.cost_data.set_monthly(monthly.total_cost_usd, model_costs);
+                self.cost_data
+                    .set_monthly(monthly.total_cost_usd, model_costs);
 
                 // Build daily trend from monthly data
                 let trend: Vec<(chrono::NaiveDate, f64)> = monthly

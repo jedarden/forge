@@ -77,16 +77,16 @@ impl RateLimiter {
                 }
             }
 
-            if window.len() >= self.config.max_per_hour as usize {
-                if let Some(oldest) = window.front() {
-                    let wait_time = one_hour
-                        .checked_sub(now.duration_since(*oldest))
-                        .unwrap_or(Duration::ZERO);
-                    return Err(ChatError::RateLimitExceeded(
-                        self.config.max_per_hour,
-                        wait_time.as_secs() + 1,
-                    ));
-                }
+            if window.len() >= self.config.max_per_hour as usize
+                && let Some(oldest) = window.front()
+            {
+                let wait_time = one_hour
+                    .checked_sub(now.duration_since(*oldest))
+                    .unwrap_or(Duration::ZERO);
+                return Err(ChatError::RateLimitExceeded(
+                    self.config.max_per_hour,
+                    wait_time.as_secs() + 1,
+                ));
             }
         }
 
@@ -173,7 +173,8 @@ impl RateLimitUsage {
 
     /// Remaining commands in the current minute.
     pub fn remaining_minute(&self) -> u32 {
-        self.max_per_minute.saturating_sub(self.commands_last_minute)
+        self.max_per_minute
+            .saturating_sub(self.commands_last_minute)
     }
 
     /// Remaining commands in the current hour.

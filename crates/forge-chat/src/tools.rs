@@ -190,22 +190,18 @@ impl ToolRegistry {
     }
 
     /// Execute a tool call.
-    pub async fn execute(
-        &self,
-        call: &ToolCall,
-        context: &DashboardContext,
-    ) -> Result<ToolResult> {
+    pub async fn execute(&self, call: &ToolCall, context: &DashboardContext) -> Result<ToolResult> {
         let tool = self
             .get(&call.name)
             .ok_or_else(|| ChatError::ToolNotFound(call.name.clone()))?;
 
         // Check if confirmation is required
-        if tool.requires_confirmation() {
-            if let Some(confirmation) = tool.get_confirmation(&call.parameters, context).await {
-                return Err(ChatError::ConfirmationRequired(serde_json::to_string(
-                    &confirmation,
-                )?));
-            }
+        if tool.requires_confirmation()
+            && let Some(confirmation) = tool.get_confirmation(&call.parameters, context).await
+        {
+            return Err(ChatError::ConfirmationRequired(serde_json::to_string(
+                &confirmation,
+            )?));
         }
 
         tool.execute(call.parameters.clone(), context).await
@@ -328,7 +324,10 @@ impl ChatTool for GetWorkerStatusTool {
                 "unhealthy": total - healthy,
                 "workers": filtered
             }),
-            format!("Found {} workers ({} healthy, {} idle)", total, healthy, idle),
+            format!(
+                "Found {} workers ({} healthy, {} idle)",
+                total, healthy, idle
+            ),
         ))
     }
 }
@@ -374,10 +373,7 @@ impl ChatTool for GetTaskQueueTool {
     ) -> Result<ToolResult> {
         let workspace = params.get("workspace").and_then(|v| v.as_str());
         let priority = params.get("priority").and_then(|v| v.as_str());
-        let limit = params
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(20) as usize;
+        let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
 
         let mut tasks = context.tasks.clone();
 
@@ -523,7 +519,10 @@ impl ChatTool for GetActivityLogTool {
         context: &DashboardContext,
     ) -> Result<ToolResult> {
         let _hours = params.get("hours").and_then(|v| v.as_u64()).unwrap_or(1);
-        let filter = params.get("filter").and_then(|v| v.as_str()).unwrap_or("all");
+        let filter = params
+            .get("filter")
+            .and_then(|v| v.as_str())
+            .unwrap_or("all");
 
         let mut events = context.recent_events.clone();
 
@@ -820,13 +819,15 @@ impl ChatTool for AssignTaskTool {
         params: serde_json::Value,
         _context: &DashboardContext,
     ) -> Result<ToolResult> {
-        let bead_id = params.get("bead_id").and_then(|v| v.as_str()).ok_or_else(|| {
-            ChatError::ToolExecutionFailed("bead_id is required".to_string())
-        })?;
+        let bead_id = params
+            .get("bead_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ChatError::ToolExecutionFailed("bead_id is required".to_string()))?;
 
-        let model = params.get("model").and_then(|v| v.as_str()).ok_or_else(|| {
-            ChatError::ToolExecutionFailed("model is required".to_string())
-        })?;
+        let model = params
+            .get("model")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ChatError::ToolExecutionFailed("model is required".to_string()))?;
 
         Ok(ToolResult::success(
             serde_json::json!({
@@ -924,7 +925,11 @@ impl ChatTool for PauseWorkersTool {
                 "duration_minutes": duration,
                 "resume_at": chrono::Utc::now() + chrono::Duration::minutes(duration as i64)
             }),
-            format!("Paused {} workers for {} minutes", context.workers.len(), duration),
+            format!(
+                "Paused {} workers for {} minutes",
+                context.workers.len(),
+                duration
+            ),
         ))
     }
 }
@@ -985,10 +990,7 @@ mod tests {
         let tool = GetWorkerStatusTool;
         let context = create_test_context();
 
-        let result = tool
-            .execute(serde_json::json!({}), &context)
-            .await
-            .unwrap();
+        let result = tool.execute(serde_json::json!({}), &context).await.unwrap();
 
         assert!(result.success);
     }

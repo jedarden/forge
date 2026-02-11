@@ -2,7 +2,10 @@
 
 use crate::db::CostDatabase;
 use crate::error::{CostError, Result};
-use crate::models::{CostBreakdown, DailyCost, ModelCost, MonthlyCost, ProjectedCost, Subscription, SubscriptionSummary};
+use crate::models::{
+    CostBreakdown, DailyCost, ModelCost, MonthlyCost, ProjectedCost, Subscription,
+    SubscriptionSummary,
+};
 use chrono::{Datelike, NaiveDate, Utc};
 use rusqlite::params;
 /// Query interface for cost analysis.
@@ -31,9 +34,9 @@ impl<'a> CostQuery<'a> {
 
         // Fall back to querying api_calls directly
         let conn = self.db.connection();
-        let conn = conn.lock().map_err(|e| {
-            CostError::Query(format!("failed to acquire lock: {}", e))
-        })?;
+        let conn = conn
+            .lock()
+            .map_err(|e| CostError::Query(format!("failed to acquire lock: {}", e)))?;
 
         let date_str = date.format("%Y-%m-%d").to_string();
 
@@ -61,7 +64,7 @@ impl<'a> CostQuery<'a> {
              FROM api_calls
              WHERE DATE(timestamp) = ?1
              GROUP BY model
-             ORDER BY SUM(cost_usd) DESC"
+             ORDER BY SUM(cost_usd) DESC",
         )?;
 
         let by_model: Vec<CostBreakdown> = stmt
@@ -91,9 +94,9 @@ impl<'a> CostQuery<'a> {
     /// Get monthly costs aggregated.
     pub fn get_monthly_costs(&self, year: i32, month: u32) -> Result<MonthlyCost> {
         let conn = self.db.connection();
-        let conn = conn.lock().map_err(|e| {
-            CostError::Query(format!("failed to acquire lock: {}", e))
-        })?;
+        let conn = conn
+            .lock()
+            .map_err(|e| CostError::Query(format!("failed to acquire lock: {}", e)))?;
 
         let start_date = format!("{:04}-{:02}-01", year, month);
         let end_date = format!("{:04}-{:02}-31", year, month);
@@ -117,13 +120,21 @@ impl<'a> CostQuery<'a> {
                     total_cache_creation_tokens + total_cache_read_tokens
              FROM daily_costs
              WHERE date BETWEEN ?1 AND ?2
-             ORDER BY date"
+             ORDER BY date",
         )?;
 
-        for row in stmt.query_map(params![start_date, end_date], |row| {
-            let date_str: String = row.get(0)?;
-            Ok((date_str, row.get::<_, f64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?))
-        })?.filter_map(|r| r.ok()) {
+        for row in stmt
+            .query_map(params![start_date, end_date], |row| {
+                let date_str: String = row.get(0)?;
+                Ok((
+                    date_str,
+                    row.get::<_, f64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })?
+            .filter_map(|r| r.ok())
+        {
             if let Ok(date) = NaiveDate::parse_from_str(&row.0, "%Y-%m-%d") {
                 by_day.push(DailyCost {
                     date,
@@ -147,7 +158,7 @@ impl<'a> CostQuery<'a> {
              FROM model_costs
              WHERE date BETWEEN ?1 AND ?2
              GROUP BY model
-             ORDER BY SUM(cost_usd) DESC"
+             ORDER BY SUM(cost_usd) DESC",
         )?;
 
         let by_model: Vec<CostBreakdown> = stmt
@@ -184,9 +195,9 @@ impl<'a> CostQuery<'a> {
     /// Get cost for a specific bead/task.
     pub fn get_cost_per_task(&self, bead_id: &str) -> Result<CostBreakdown> {
         let conn = self.db.connection();
-        let conn = conn.lock().map_err(|e| {
-            CostError::Query(format!("failed to acquire lock: {}", e))
-        })?;
+        let conn = conn
+            .lock()
+            .map_err(|e| CostError::Query(format!("failed to acquire lock: {}", e)))?;
 
         let (total_cost_usd, call_count, input_tokens, output_tokens, cache_creation, cache_read):
             (f64, i64, i64, i64, i64, i64) = conn
@@ -244,14 +255,22 @@ impl<'a> CostQuery<'a> {
     }
 
     /// Get model cost statistics.
-    pub fn get_model_costs(&self, start_date: Option<NaiveDate>, end_date: Option<NaiveDate>) -> Result<Vec<ModelCost>> {
+    pub fn get_model_costs(
+        &self,
+        start_date: Option<NaiveDate>,
+        end_date: Option<NaiveDate>,
+    ) -> Result<Vec<ModelCost>> {
         let conn = self.db.connection();
-        let conn = conn.lock().map_err(|e| {
-            CostError::Query(format!("failed to acquire lock: {}", e))
-        })?;
+        let conn = conn
+            .lock()
+            .map_err(|e| CostError::Query(format!("failed to acquire lock: {}", e)))?;
 
-        let start = start_date.map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or("1970-01-01".to_string());
-        let end = end_date.map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or("2100-12-31".to_string());
+        let start = start_date
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or("1970-01-01".to_string());
+        let end = end_date
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or("2100-12-31".to_string());
 
         let mut stmt = conn.prepare(
             "SELECT model,
@@ -284,16 +303,16 @@ impl<'a> CostQuery<'a> {
     /// Get top spending workers.
     pub fn get_top_workers(&self, limit: usize) -> Result<Vec<(String, f64, i64)>> {
         let conn = self.db.connection();
-        let conn = conn.lock().map_err(|e| {
-            CostError::Query(format!("failed to acquire lock: {}", e))
-        })?;
+        let conn = conn
+            .lock()
+            .map_err(|e| CostError::Query(format!("failed to acquire lock: {}", e)))?;
 
         let mut stmt = conn.prepare(
             "SELECT worker_id, SUM(cost_usd), COUNT(*)
              FROM api_calls
              GROUP BY worker_id
              ORDER BY SUM(cost_usd) DESC
-             LIMIT ?1"
+             LIMIT ?1",
         )?;
 
         let workers: Vec<(String, f64, i64)> = stmt
@@ -361,14 +380,14 @@ impl<'a> CostQuery<'a> {
         // Rough API pricing estimates per message/request
         // These are approximations for cost comparison
         let cost_per_unit = match model.to_lowercase().as_str() {
-            m if m.contains("opus") => 0.075,    // ~$75/MTok output avg
-            m if m.contains("sonnet") => 0.018,  // ~$18/MTok output avg
-            m if m.contains("haiku") => 0.00125, // ~$1.25/MTok output avg
-            m if m.contains("gpt-4") => 0.06,    // ~$60/MTok output avg
-            m if m.contains("gpt-3.5") => 0.002, // ~$2/MTok output avg
+            m if m.contains("opus") => 0.075,       // ~$75/MTok output avg
+            m if m.contains("sonnet") => 0.018,     // ~$18/MTok output avg
+            m if m.contains("haiku") => 0.00125,    // ~$1.25/MTok output avg
+            m if m.contains("gpt-4") => 0.06,       // ~$60/MTok output avg
+            m if m.contains("gpt-3.5") => 0.002,    // ~$2/MTok output avg
             m if m.contains("deepseek") => 0.00028, // ~$0.28/MTok output avg
-            m if m.contains("glm") => 0.0,       // Free tier
-            _ => 0.02,                           // Default estimate
+            m if m.contains("glm") => 0.0,          // Free tier
+            _ => 0.02,                              // Default estimate
         };
 
         // Assume average ~5000 tokens per request for estimation
@@ -377,11 +396,14 @@ impl<'a> CostQuery<'a> {
     }
 
     /// Get subscription usage by worker.
-    pub fn get_subscription_usage_by_worker(&self, subscription_name: &str) -> Result<Vec<(String, i64, f64)>> {
+    pub fn get_subscription_usage_by_worker(
+        &self,
+        subscription_name: &str,
+    ) -> Result<Vec<(String, i64, f64)>> {
         let conn = self.db.connection();
-        let conn = conn.lock().map_err(|e| {
-            CostError::Query(format!("failed to acquire lock: {}", e))
-        })?;
+        let conn = conn
+            .lock()
+            .map_err(|e| CostError::Query(format!("failed to acquire lock: {}", e)))?;
 
         // Get subscription ID
         let subscription_id: i64 = conn
@@ -390,14 +412,16 @@ impl<'a> CostQuery<'a> {
                 params![subscription_name],
                 |row| row.get(0),
             )
-            .map_err(|_| CostError::Query(format!("subscription not found: {}", subscription_name)))?;
+            .map_err(|_| {
+                CostError::Query(format!("subscription not found: {}", subscription_name))
+            })?;
 
         let mut stmt = conn.prepare(
             "SELECT worker_id, SUM(units), COUNT(*)
              FROM subscription_usage
              WHERE subscription_id = ?1 AND worker_id IS NOT NULL
              GROUP BY worker_id
-             ORDER BY SUM(units) DESC"
+             ORDER BY SUM(units) DESC",
         )?;
 
         let usage: Vec<(String, i64, f64)> = stmt
@@ -405,7 +429,11 @@ impl<'a> CostQuery<'a> {
                 let worker_id: String = row.get(0)?;
                 let total_units: i64 = row.get(1)?;
                 let count: i64 = row.get(2)?;
-                let avg = if count > 0 { total_units as f64 / count as f64 } else { 0.0 };
+                let avg = if count > 0 {
+                    total_units as f64 / count as f64
+                } else {
+                    0.0
+                };
                 Ok((worker_id, total_units, avg))
             })?
             .filter_map(|r| r.ok())
@@ -415,11 +443,14 @@ impl<'a> CostQuery<'a> {
     }
 
     /// Get subscription usage by bead/task.
-    pub fn get_subscription_usage_by_bead(&self, subscription_name: &str) -> Result<Vec<(String, i64)>> {
+    pub fn get_subscription_usage_by_bead(
+        &self,
+        subscription_name: &str,
+    ) -> Result<Vec<(String, i64)>> {
         let conn = self.db.connection();
-        let conn = conn.lock().map_err(|e| {
-            CostError::Query(format!("failed to acquire lock: {}", e))
-        })?;
+        let conn = conn
+            .lock()
+            .map_err(|e| CostError::Query(format!("failed to acquire lock: {}", e)))?;
 
         // Get subscription ID
         let subscription_id: i64 = conn
@@ -428,7 +459,9 @@ impl<'a> CostQuery<'a> {
                 params![subscription_name],
                 |row| row.get(0),
             )
-            .map_err(|_| CostError::Query(format!("subscription not found: {}", subscription_name)))?;
+            .map_err(|_| {
+                CostError::Query(format!("subscription not found: {}", subscription_name))
+            })?;
 
         let mut stmt = conn.prepare(
             "SELECT bead_id, SUM(units)
@@ -436,7 +469,7 @@ impl<'a> CostQuery<'a> {
              WHERE subscription_id = ?1 AND bead_id IS NOT NULL
              GROUP BY bead_id
              ORDER BY SUM(units) DESC
-             LIMIT 20"
+             LIMIT 20",
         )?;
 
         let usage: Vec<(String, i64)> = stmt
@@ -450,11 +483,15 @@ impl<'a> CostQuery<'a> {
     }
 
     /// Get daily usage trend for a subscription.
-    pub fn get_subscription_daily_trend(&self, subscription_name: &str, days: i32) -> Result<Vec<(NaiveDate, i64)>> {
+    pub fn get_subscription_daily_trend(
+        &self,
+        subscription_name: &str,
+        days: i32,
+    ) -> Result<Vec<(NaiveDate, i64)>> {
         let conn = self.db.connection();
-        let conn = conn.lock().map_err(|e| {
-            CostError::Query(format!("failed to acquire lock: {}", e))
-        })?;
+        let conn = conn
+            .lock()
+            .map_err(|e| CostError::Query(format!("failed to acquire lock: {}", e)))?;
 
         // Get subscription ID
         let subscription_id: i64 = conn
@@ -463,7 +500,9 @@ impl<'a> CostQuery<'a> {
                 params![subscription_name],
                 |row| row.get(0),
             )
-            .map_err(|_| CostError::Query(format!("subscription not found: {}", subscription_name)))?;
+            .map_err(|_| {
+                CostError::Query(format!("subscription not found: {}", subscription_name))
+            })?;
 
         let start_date = Utc::now()
             .date_naive()
@@ -477,7 +516,7 @@ impl<'a> CostQuery<'a> {
              FROM subscription_usage
              WHERE subscription_id = ?1 AND DATE(timestamp) >= ?2
              GROUP BY DATE(timestamp)
-             ORDER BY date"
+             ORDER BY date",
         )?;
 
         let trend: Vec<(NaiveDate, i64)> = stmt
@@ -529,10 +568,7 @@ impl<'a> CostQuery<'a> {
 
         let total_monthly_cost: f64 = subscriptions.iter().map(|s| s.monthly_cost).sum();
         let total_quota_used: i64 = subscriptions.iter().map(|s| s.quota_used).sum();
-        let total_quota_limit: i64 = subscriptions
-            .iter()
-            .filter_map(|s| s.quota_limit)
-            .sum();
+        let total_quota_limit: i64 = subscriptions.iter().filter_map(|s| s.quota_limit).sum();
 
         let overall_utilization = if total_quota_limit > 0 {
             (total_quota_used as f64 / total_quota_limit as f64) * 100.0
@@ -573,7 +609,8 @@ impl<'a> CostQuery<'a> {
         }
 
         if recommendations.is_empty() {
-            recommendations.push("✅ All subscriptions are on-pace. No immediate action needed.".to_string());
+            recommendations
+                .push("✅ All subscriptions are on-pace. No immediate action needed.".to_string());
         }
 
         Ok(SubscriptionOptimizationReport {
@@ -668,12 +705,9 @@ mod tests {
         let db = CostDatabase::open_in_memory().unwrap();
 
         let calls = vec![
-            ApiCall::new(Utc::now(), "worker-1", "claude-opus", 100, 50, 0.50)
-                .with_bead("bd-123"),
-            ApiCall::new(Utc::now(), "worker-1", "claude-opus", 200, 100, 1.00)
-                .with_bead("bd-123"),
-            ApiCall::new(Utc::now(), "worker-2", "claude-sonnet", 50, 25, 0.10)
-                .with_bead("bd-456"),
+            ApiCall::new(Utc::now(), "worker-1", "claude-opus", 100, 50, 0.50).with_bead("bd-123"),
+            ApiCall::new(Utc::now(), "worker-1", "claude-opus", 200, 100, 1.00).with_bead("bd-123"),
+            ApiCall::new(Utc::now(), "worker-2", "claude-sonnet", 50, 25, 0.10).with_bead("bd-456"),
         ];
         db.insert_api_calls(&calls).unwrap();
 
@@ -693,9 +727,14 @@ mod tests {
     fn test_get_projected_costs() {
         let db = CostDatabase::open_in_memory().unwrap();
 
-        let calls = vec![
-            ApiCall::new(Utc::now(), "worker-1", "claude-opus", 100, 50, 10.0),
-        ];
+        let calls = vec![ApiCall::new(
+            Utc::now(),
+            "worker-1",
+            "claude-opus",
+            100,
+            50,
+            10.0,
+        )];
         db.insert_api_calls(&calls).unwrap();
 
         let query = CostQuery::new(&db);
@@ -710,7 +749,14 @@ mod tests {
         let db = CostDatabase::open_in_memory().unwrap();
 
         let calls = vec![
-            ApiCall::new(Utc::now(), "expensive-worker", "claude-opus", 100, 50, 100.0),
+            ApiCall::new(
+                Utc::now(),
+                "expensive-worker",
+                "claude-opus",
+                100,
+                50,
+                100.0,
+            ),
             ApiCall::new(Utc::now(), "cheap-worker", "claude-haiku", 100, 50, 1.0),
             ApiCall::new(Utc::now(), "medium-worker", "claude-sonnet", 100, 50, 10.0),
         ];
@@ -745,13 +791,20 @@ mod tests {
         let end = Utc::now() + Duration::days(15);
 
         // Add subscriptions
-        let mut sub1 = Subscription::new("Claude Pro", SubscriptionType::FixedQuota, 20.0, start, end)
-            .with_quota(500)
-            .with_model("claude-sonnet-4.5");
+        let mut sub1 =
+            Subscription::new("Claude Pro", SubscriptionType::FixedQuota, 20.0, start, end)
+                .with_quota(500)
+                .with_model("claude-sonnet-4.5");
         sub1.quota_used = 250;
 
-        let mut sub2 = Subscription::new("ChatGPT Plus", SubscriptionType::FixedQuota, 20.0, start, end)
-            .with_quota(100);
+        let mut sub2 = Subscription::new(
+            "ChatGPT Plus",
+            SubscriptionType::FixedQuota,
+            20.0,
+            start,
+            end,
+        )
+        .with_quota(100);
         sub2.quota_used = 50;
 
         db.upsert_subscription(&sub1).unwrap();
@@ -802,15 +855,22 @@ mod tests {
         // On-pace subscription (50% through, 50% used)
         let start1 = Utc::now() - Duration::days(15);
         let end1 = Utc::now() + Duration::days(15);
-        let mut sub1 = Subscription::new("On Pace", SubscriptionType::FixedQuota, 20.0, start1, end1)
-            .with_quota(500);
+        let mut sub1 =
+            Subscription::new("On Pace", SubscriptionType::FixedQuota, 20.0, start1, end1)
+                .with_quota(500);
         sub1.quota_used = 250;
 
         // Under-utilized subscription (80% through, only 30% used) - should accelerate
         let start2 = Utc::now() - Duration::days(24);
         let end2 = Utc::now() + Duration::days(6);
-        let mut sub2 = Subscription::new("Under Utilized", SubscriptionType::FixedQuota, 20.0, start2, end2)
-            .with_quota(500);
+        let mut sub2 = Subscription::new(
+            "Under Utilized",
+            SubscriptionType::FixedQuota,
+            20.0,
+            start2,
+            end2,
+        )
+        .with_quota(500);
         sub2.quota_used = 150;
 
         db.upsert_subscription(&sub1).unwrap();
@@ -835,7 +895,13 @@ mod tests {
         let end = start + Duration::days(30);
 
         let sub1 = Subscription::new("Claude Pro", SubscriptionType::FixedQuota, 20.0, start, end);
-        let sub2 = Subscription::new("ChatGPT Plus", SubscriptionType::FixedQuota, 20.0, start, end);
+        let sub2 = Subscription::new(
+            "ChatGPT Plus",
+            SubscriptionType::FixedQuota,
+            20.0,
+            start,
+            end,
+        );
         let sub3 = Subscription::new("Cursor Pro", SubscriptionType::FixedQuota, 20.0, start, end);
 
         db.upsert_subscription(&sub1).unwrap();
@@ -858,13 +924,20 @@ mod tests {
         let start = Utc::now() - Duration::days(15);
         let end = Utc::now() + Duration::days(15);
 
-        let mut sub1 = Subscription::new("Claude Pro", SubscriptionType::FixedQuota, 20.0, start, end)
-            .with_quota(500)
-            .with_model("claude-sonnet-4.5");
+        let mut sub1 =
+            Subscription::new("Claude Pro", SubscriptionType::FixedQuota, 20.0, start, end)
+                .with_quota(500)
+                .with_model("claude-sonnet-4.5");
         sub1.quota_used = 250;
 
-        let mut sub2 = Subscription::new("ChatGPT Plus", SubscriptionType::FixedQuota, 20.0, start, end)
-            .with_quota(100);
+        let mut sub2 = Subscription::new(
+            "ChatGPT Plus",
+            SubscriptionType::FixedQuota,
+            20.0,
+            start,
+            end,
+        )
+        .with_quota(100);
         sub2.quota_used = 50;
 
         db.upsert_subscription(&sub1).unwrap();

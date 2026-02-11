@@ -106,12 +106,7 @@ impl CliToolDetection {
     }
 
     /// Set API key requirements.
-    pub fn with_api_key(
-        mut self,
-        required: bool,
-        env_var: Option<String>,
-        detected: bool,
-    ) -> Self {
+    pub fn with_api_key(mut self, required: bool, env_var: Option<String>, detected: bool) -> Self {
         self.api_key_required = required;
         self.api_key_env_var = env_var;
         self.api_key_detected = detected;
@@ -211,11 +206,10 @@ fn detect_claude_code() -> Result<Option<CliToolDetection>> {
     let mut tool = CliToolDetection::new("claude-code", binary_path.clone());
 
     // Get version
-    if let Ok(output) = Command::new(&binary_path).arg("--version").output() {
-        if let Ok(version_str) = String::from_utf8(output.stdout) {
-            let version = version_str.trim().to_string();
-            tool = tool.with_version(version);
-        }
+    if let Ok(output) = Command::new(&binary_path).arg("--version").output()
+        && let Ok(version_str) = String::from_utf8(output.stdout)
+    {
+        tool = tool.with_version(version_str.trim());
     }
 
     // Check for headless support
@@ -270,18 +264,16 @@ fn detect_opencode() -> Result<Option<CliToolDetection>> {
     let mut tool = CliToolDetection::new("opencode", binary_path.clone());
 
     // Get version
-    if let Ok(output) = Command::new(&binary_path).arg("--version").output() {
-        if let Ok(version_str) = String::from_utf8(output.stdout) {
-            let version = version_str.trim().to_string();
-            tool = tool.with_version(version);
-        }
+    if let Ok(output) = Command::new(&binary_path).arg("--version").output()
+        && let Ok(version_str) = String::from_utf8(output.stdout)
+    {
+        tool = tool.with_version(version_str.trim());
     }
 
     // Check for headless support - OpenCode uses "serve" command
     if let Ok(output) = Command::new(&binary_path).arg("--help").output() {
         let help_text = String::from_utf8_lossy(&output.stdout);
-        let has_headless = help_text.contains("serve")
-            || help_text.contains("headless");
+        let has_headless = help_text.contains("serve") || help_text.contains("headless");
         // OpenCode doesn't use skip-permissions flag
         let has_skip_perms = true; // Not applicable for OpenCode
 
@@ -331,11 +323,10 @@ fn detect_aider() -> Result<Option<CliToolDetection>> {
     let mut tool = CliToolDetection::new("aider", binary_path.clone());
 
     // Get version
-    if let Ok(output) = Command::new(&binary_path).arg("--version").output() {
-        if let Ok(version_str) = String::from_utf8(output.stdout) {
-            let version = version_str.trim().to_string();
-            tool = tool.with_version(version);
-        }
+    if let Ok(output) = Command::new(&binary_path).arg("--version").output()
+        && let Ok(version_str) = String::from_utf8(output.stdout)
+    {
+        tool = tool.with_version(version_str.trim());
     }
 
     // Aider doesn't have the same headless mode as Claude Code

@@ -6,7 +6,7 @@ use crate::models::{
     SubscriptionType, SubscriptionUsageRecord, WorkerEfficiency,
 };
 use chrono::{DateTime, NaiveDate, Utc};
-use rusqlite::{params, Connection, Transaction};
+use rusqlite::{Connection, Transaction, params};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tracing::{debug, info};
@@ -42,9 +42,10 @@ impl CostDatabase {
 
     /// Run database migrations.
     fn migrate(&self) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Migration(format!("failed to acquire lock: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| CostError::Migration(format!("failed to acquire lock: {}", e)))?;
 
         // Create schema version table
         conn.execute(
@@ -450,7 +451,7 @@ impl CostDatabase {
             "INSERT INTO api_calls
              (timestamp, worker_id, session_id, model, input_tokens, output_tokens,
               cache_creation_tokens, cache_read_tokens, cost_usd, bead_id, event_type)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         )?;
 
         let mut count = 0;
@@ -512,7 +513,7 @@ impl CostDatabase {
                 input_tokens = input_tokens + excluded.input_tokens,
                 output_tokens = output_tokens + excluded.output_tokens,
                 cache_creation_tokens = cache_creation_tokens + excluded.cache_creation_tokens,
-                cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens"
+                cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens",
         )?;
 
         for ((date, _), breakdown) in &by_date_model {
@@ -601,7 +602,7 @@ impl CostDatabase {
         let mut stmt = conn.prepare(
             "SELECT model, cost_usd, call_count, input_tokens, output_tokens,
                     cache_creation_tokens, cache_read_tokens
-             FROM model_costs WHERE date = ?1"
+             FROM model_costs WHERE date = ?1",
         )?;
 
         let by_model: Vec<CostBreakdown> = stmt
@@ -646,7 +647,12 @@ impl CostDatabase {
     }
 
     /// Check if an API call already exists (for deduplication).
-    pub fn exists(&self, worker_id: &str, timestamp: &str, session_id: Option<&str>) -> Result<bool> {
+    pub fn exists(
+        &self,
+        worker_id: &str,
+        timestamp: &str,
+        session_id: Option<&str>,
+    ) -> Result<bool> {
         let conn = self.conn.lock().map_err(|e| {
             CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
@@ -725,9 +731,7 @@ impl CostDatabase {
                     quota_used, billing_start, billing_end, active, updated_at
              FROM subscriptions WHERE name = ?1",
             params![name],
-            |row| {
-                Ok(Self::row_to_subscription(row)?)
-            },
+            Self::row_to_subscription,
         );
 
         match result {
@@ -747,11 +751,11 @@ impl CostDatabase {
             "SELECT id, name, model, subscription_type, monthly_cost, quota_limit,
                     quota_used, billing_start, billing_end, active, updated_at
              FROM subscriptions WHERE active = 1
-             ORDER BY name"
+             ORDER BY name",
         )?;
 
         let subscriptions: Vec<Subscription> = stmt
-            .query_map([], |row| Self::row_to_subscription(row))?
+            .query_map([], Self::row_to_subscription)?
             .filter_map(|r| r.ok())
             .collect();
 
@@ -767,11 +771,11 @@ impl CostDatabase {
         let mut stmt = conn.prepare(
             "SELECT id, name, model, subscription_type, monthly_cost, quota_limit,
                     quota_used, billing_start, billing_end, active, updated_at
-             FROM subscriptions ORDER BY active DESC, name"
+             FROM subscriptions ORDER BY active DESC, name",
         )?;
 
         let subscriptions: Vec<Subscription> = stmt
-            .query_map([], |row| Self::row_to_subscription(row))?
+            .query_map([], Self::row_to_subscription)?
             .filter_map(|r| r.ok())
             .collect();
 
@@ -818,7 +822,12 @@ impl CostDatabase {
     }
 
     /// Reset subscription billing period.
-    pub fn reset_subscription_billing(&self, name: &str, new_start: DateTime<Utc>, new_end: DateTime<Utc>) -> Result<()> {
+    pub fn reset_subscription_billing(
+        &self,
+        name: &str,
+        new_start: DateTime<Utc>,
+        new_end: DateTime<Utc>,
+    ) -> Result<()> {
         let conn = self.conn.lock().map_err(|e| {
             CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
@@ -860,12 +869,22 @@ impl CostDatabase {
         )?;
 
         let id = conn.last_insert_rowid();
-        debug!(id, subscription_id = record.subscription_id, units = record.units, "Recorded usage");
+        debug!(
+            id,
+            subscription_id = record.subscription_id,
+            units = record.units,
+            "Recorded usage"
+        );
         Ok(id)
     }
 
     /// Get usage records for a subscription within a date range.
-    pub fn get_subscription_usage(&self, subscription_id: i64, start: DateTime<Utc>, end: DateTime<Utc>) -> Result<Vec<SubscriptionUsageRecord>> {
+    pub fn get_subscription_usage(
+        &self,
+        subscription_id: i64,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<Vec<SubscriptionUsageRecord>> {
         let conn = self.conn.lock().map_err(|e| {
             CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
         })?;
@@ -874,7 +893,7 @@ impl CostDatabase {
             "SELECT id, subscription_id, timestamp, units, worker_id, bead_id, api_call_id
              FROM subscription_usage
              WHERE subscription_id = ?1 AND timestamp BETWEEN ?2 AND ?3
-             ORDER BY timestamp DESC"
+             ORDER BY timestamp DESC",
         )?;
 
         let records: Vec<SubscriptionUsageRecord> = stmt
@@ -985,6 +1004,7 @@ impl CostDatabase {
     // ============ Performance Metrics Methods ============
 
     /// Record a task event (started, completed, failed).
+    #[allow(clippy::too_many_arguments)]
     pub fn record_task_event(
         &self,
         bead_id: &str,
@@ -1016,12 +1036,7 @@ impl CostDatabase {
         )?;
 
         let id = conn.last_insert_rowid();
-        debug!(
-            id,
-            bead_id,
-            event_type,
-            "Recorded task event"
-        );
+        debug!(id, bead_id, event_type, "Recorded task event");
         Ok(id)
     }
 
@@ -1848,7 +1863,9 @@ mod tests {
         let db = CostDatabase::open_in_memory().expect("Failed to open in-memory db");
         // Verify tables exist
         let conn = db.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type='table'").unwrap();
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+            .unwrap();
         let tables: Vec<String> = stmt
             .query_map([], |row| row.get(0))
             .unwrap()
@@ -1874,7 +1891,10 @@ mod tests {
 
         // Verify in daily_costs
         let today = Utc::now().date_naive();
-        let daily = db.get_daily_cost(today).unwrap().expect("Should have daily cost");
+        let daily = db
+            .get_daily_cost(today)
+            .unwrap()
+            .expect("Should have daily cost");
         assert_eq!(daily.call_count, 2);
         assert!((daily.total_cost_usd - 0.03).abs() < 0.0001);
     }
@@ -1896,7 +1916,11 @@ mod tests {
 
         assert_eq!(daily.by_model.len(), 2);
 
-        let opus = daily.by_model.iter().find(|m| m.model == "claude-opus").unwrap();
+        let opus = daily
+            .by_model
+            .iter()
+            .find(|m| m.model == "claude-opus")
+            .unwrap();
         assert_eq!(opus.call_count, 2);
         assert!((opus.total_cost_usd - 0.25).abs() < 0.0001);
     }
@@ -1907,8 +1931,8 @@ mod tests {
         let now = Utc::now();
         let ts = now.to_rfc3339();
 
-        let call = ApiCall::new(now, "worker-1", "claude-opus", 100, 50, 0.01)
-            .with_session("session-123");
+        let call =
+            ApiCall::new(now, "worker-1", "claude-opus", 100, 50, 0.01).with_session("session-123");
 
         db.insert_api_calls(&[call]).unwrap();
 
@@ -1980,8 +2004,15 @@ mod tests {
 
         // Add multiple subscriptions
         let sub1 = Subscription::new("Claude Pro", SubscriptionType::FixedQuota, 20.0, start, end);
-        let sub2 = Subscription::new("ChatGPT Plus", SubscriptionType::FixedQuota, 20.0, start, end);
-        let mut sub3 = Subscription::new("Cursor Pro", SubscriptionType::FixedQuota, 20.0, start, end);
+        let sub2 = Subscription::new(
+            "ChatGPT Plus",
+            SubscriptionType::FixedQuota,
+            20.0,
+            start,
+            end,
+        );
+        let mut sub3 =
+            Subscription::new("Cursor Pro", SubscriptionType::FixedQuota, 20.0, start, end);
         sub3.active = false;
 
         db.upsert_subscription(&sub1).unwrap();
@@ -2062,7 +2093,9 @@ mod tests {
         assert!(usage_id > 0);
 
         // Query usage
-        let records = db.get_subscription_usage(sub_id, start - Duration::days(1), end).unwrap();
+        let records = db
+            .get_subscription_usage(sub_id, start - Duration::days(1), end)
+            .unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].units, 5);
         assert_eq!(records[0].worker_id, Some("glm-alpha".to_string()));
@@ -2077,15 +2110,17 @@ mod tests {
         let start = Utc::now() - Duration::days(30);
         let end = Utc::now();
 
-        let mut sub = Subscription::new("Claude Pro", SubscriptionType::FixedQuota, 20.0, start, end)
-            .with_quota(500);
+        let mut sub =
+            Subscription::new("Claude Pro", SubscriptionType::FixedQuota, 20.0, start, end)
+                .with_quota(500);
         sub.quota_used = 450;
         db.upsert_subscription(&sub).unwrap();
 
         // Reset billing period
         let new_start = Utc::now();
         let new_end = new_start + Duration::days(30);
-        db.reset_subscription_billing("Claude Pro", new_start, new_end).unwrap();
+        db.reset_subscription_billing("Claude Pro", new_start, new_end)
+            .unwrap();
 
         let loaded = db.get_subscription("Claude Pro").unwrap().unwrap();
         assert_eq!(loaded.quota_used, 0);
@@ -2210,10 +2245,26 @@ mod tests {
         db.insert_api_calls(&calls).unwrap();
 
         // Record task events
-        db.record_task_event("bd-1", "started", Some("worker-1"), Some("claude-opus"), 0.0, 0, None)
-            .unwrap();
-        db.record_task_event("bd-1", "completed", Some("worker-1"), Some("claude-opus"), 0.10, 1500, None)
-            .unwrap();
+        db.record_task_event(
+            "bd-1",
+            "started",
+            Some("worker-1"),
+            Some("claude-opus"),
+            0.0,
+            0,
+            None,
+        )
+        .unwrap();
+        db.record_task_event(
+            "bd-1",
+            "completed",
+            Some("worker-1"),
+            Some("claude-opus"),
+            0.10,
+            1500,
+            None,
+        )
+        .unwrap();
 
         // Aggregate hourly stats
         let stat = db.aggregate_hourly_stats(now).unwrap();
@@ -2235,17 +2286,32 @@ mod tests {
 
         // Insert API calls
         let calls = vec![
-            ApiCall::new(now, "worker-1", "claude-opus", 1000, 500, 0.10)
-                .with_cache(200, 100),
+            ApiCall::new(now, "worker-1", "claude-opus", 1000, 500, 0.10).with_cache(200, 100),
             ApiCall::new(now, "worker-2", "claude-sonnet", 2000, 1000, 0.05),
         ];
         db.insert_api_calls(&calls).unwrap();
 
         // Record task events
-        db.record_task_event("bd-1", "completed", Some("worker-1"), Some("claude-opus"), 0.10, 1800, None)
-            .unwrap();
-        db.record_task_event("bd-2", "failed", Some("worker-2"), Some("claude-sonnet"), 0.05, 3000, Some("Timeout"))
-            .unwrap();
+        db.record_task_event(
+            "bd-1",
+            "completed",
+            Some("worker-1"),
+            Some("claude-opus"),
+            0.10,
+            1800,
+            None,
+        )
+        .unwrap();
+        db.record_task_event(
+            "bd-2",
+            "failed",
+            Some("worker-2"),
+            Some("claude-sonnet"),
+            0.05,
+            3000,
+            Some("Timeout"),
+        )
+        .unwrap();
 
         // Aggregate daily stats
         let stat = db.aggregate_daily_stats(today).unwrap();
@@ -2272,10 +2338,26 @@ mod tests {
         db.insert_api_calls(&calls).unwrap();
 
         // Record task events
-        db.record_task_event("bd-1", "completed", Some("worker-1"), Some("claude-opus"), 1.25, 3750, None)
-            .unwrap();
-        db.record_task_event("bd-2", "completed", Some("worker-2"), Some("claude-sonnet"), 0.10, 3000, None)
-            .unwrap();
+        db.record_task_event(
+            "bd-1",
+            "completed",
+            Some("worker-1"),
+            Some("claude-opus"),
+            1.25,
+            3750,
+            None,
+        )
+        .unwrap();
+        db.record_task_event(
+            "bd-2",
+            "completed",
+            Some("worker-2"),
+            Some("claude-sonnet"),
+            0.10,
+            3000,
+            None,
+        )
+        .unwrap();
 
         // Aggregate worker efficiency
         let workers = db.aggregate_worker_efficiency(today).unwrap();
@@ -2300,18 +2382,33 @@ mod tests {
 
         // Insert API calls for different models
         let calls = vec![
-            ApiCall::new(now, "worker-1", "claude-opus", 1000, 500, 0.50)
-                .with_cache(100, 200),
+            ApiCall::new(now, "worker-1", "claude-opus", 1000, 500, 0.50).with_cache(100, 200),
             ApiCall::new(now, "worker-1", "claude-opus", 1500, 750, 0.75),
             ApiCall::new(now, "worker-2", "claude-sonnet", 2000, 1000, 0.10),
         ];
         db.insert_api_calls(&calls).unwrap();
 
         // Record task events
-        db.record_task_event("bd-1", "completed", None, Some("claude-opus"), 1.25, 4050, None)
-            .unwrap();
-        db.record_task_event("bd-2", "completed", None, Some("claude-sonnet"), 0.10, 3000, None)
-            .unwrap();
+        db.record_task_event(
+            "bd-1",
+            "completed",
+            None,
+            Some("claude-opus"),
+            1.25,
+            4050,
+            None,
+        )
+        .unwrap();
+        db.record_task_event(
+            "bd-2",
+            "completed",
+            None,
+            Some("claude-sonnet"),
+            0.10,
+            3000,
+            None,
+        )
+        .unwrap();
 
         // Aggregate model performance
         let models = db.aggregate_model_performance(today).unwrap();
@@ -2334,13 +2431,26 @@ mod tests {
         let now = Utc::now();
 
         // Insert some data
-        let calls = vec![
-            ApiCall::new(now, "worker-1", "claude-opus", 1000, 500, 0.10),
-        ];
+        let calls = vec![ApiCall::new(
+            now,
+            "worker-1",
+            "claude-opus",
+            1000,
+            500,
+            0.10,
+        )];
         db.insert_api_calls(&calls).unwrap();
 
-        db.record_task_event("bd-1", "completed", Some("worker-1"), Some("claude-opus"), 0.10, 1500, None)
-            .unwrap();
+        db.record_task_event(
+            "bd-1",
+            "completed",
+            Some("worker-1"),
+            Some("claude-opus"),
+            0.10,
+            1500,
+            None,
+        )
+        .unwrap();
 
         // Run background aggregation
         db.run_background_aggregation().unwrap();
@@ -2363,9 +2473,14 @@ mod tests {
         let now = Utc::now();
 
         // Aggregate stats first
-        let calls = vec![
-            ApiCall::new(now, "worker-1", "claude-opus", 1000, 500, 0.10),
-        ];
+        let calls = vec![ApiCall::new(
+            now,
+            "worker-1",
+            "claude-opus",
+            1000,
+            500,
+            0.10,
+        )];
         db.insert_api_calls(&calls).unwrap();
         db.aggregate_hourly_stats(now).unwrap();
 
@@ -2383,9 +2498,14 @@ mod tests {
         let now = Utc::now();
 
         // Insert and aggregate
-        let calls = vec![
-            ApiCall::new(now, "worker-1", "claude-opus", 1000, 500, 0.10),
-        ];
+        let calls = vec![ApiCall::new(
+            now,
+            "worker-1",
+            "claude-opus",
+            1000,
+            500,
+            0.10,
+        )];
         db.insert_api_calls(&calls).unwrap();
         db.aggregate_hourly_stats(now).unwrap();
 
@@ -2401,9 +2521,14 @@ mod tests {
         let today = now.date_naive();
 
         // Insert and aggregate
-        let calls = vec![
-            ApiCall::new(now, "worker-1", "claude-opus", 1000, 500, 0.10),
-        ];
+        let calls = vec![ApiCall::new(
+            now,
+            "worker-1",
+            "claude-opus",
+            1000,
+            500,
+            0.10,
+        )];
         db.insert_api_calls(&calls).unwrap();
         db.aggregate_daily_stats(today).unwrap();
 

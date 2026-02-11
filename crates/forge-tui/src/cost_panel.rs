@@ -290,8 +290,18 @@ pub fn render_sparkline(values: &[f64], width: usize) -> String {
 }
 
 /// Renders a horizontal bar chart.
-pub fn render_bar(value: f64, max: f64, width: usize, filled_char: char, empty_char: char) -> String {
-    let pct = if max > 0.0 { (value / max).clamp(0.0, 1.0) } else { 0.0 };
+pub fn render_bar(
+    value: f64,
+    max: f64,
+    width: usize,
+    filled_char: char,
+    empty_char: char,
+) -> String {
+    let pct = if max > 0.0 {
+        (value / max).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     let filled = (pct * width as f64).round() as usize;
     let empty = width.saturating_sub(filled);
 
@@ -380,7 +390,9 @@ impl<'a> CostPanel<'a> {
             Span::raw("Today: "),
             Span::styled(
                 format_usd(self.data.today_total()),
-                Style::default().fg(daily_alert.color()).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(daily_alert.color())
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw(" / "),
             Span::styled(
@@ -401,7 +413,9 @@ impl<'a> CostPanel<'a> {
             Span::raw("Month: "),
             Span::styled(
                 format_usd(self.data.monthly_total),
-                Style::default().fg(monthly_alert.color()).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(monthly_alert.color())
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw(" / "),
             Span::styled(
@@ -478,8 +492,8 @@ impl<'a> CostPanel<'a> {
         };
 
         if models.is_empty() {
-            let msg = Paragraph::new("No model data available")
-                .style(Style::default().fg(Color::Gray));
+            let msg =
+                Paragraph::new("No model data available").style(Style::default().fg(Color::Gray));
             msg.render(area, buf);
             return;
         }
@@ -507,7 +521,11 @@ impl<'a> CostPanel<'a> {
             .collect();
 
         let header = Row::new(vec!["Model", "#", "Tokens", "Cost", ""])
-            .style(Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Gray)
+                    .add_modifier(Modifier::BOLD),
+            )
             .bottom_margin(0);
 
         let widths = [
@@ -518,9 +536,7 @@ impl<'a> CostPanel<'a> {
             Constraint::Length(8),
         ];
 
-        let table = Table::new(rows, widths)
-            .header(header)
-            .column_spacing(1);
+        let table = Table::new(rows, widths).header(header).column_spacing(1);
 
         ratatui::widgets::Widget::render(table, area, buf);
     }
@@ -528,8 +544,7 @@ impl<'a> CostPanel<'a> {
     /// Render the sparkline trend.
     fn render_trend(&self, area: Rect, buf: &mut Buffer) {
         if self.data.daily_trend.is_empty() {
-            let msg = Paragraph::new("No trend data")
-                .style(Style::default().fg(Color::Gray));
+            let msg = Paragraph::new("No trend data").style(Style::default().fg(Color::Gray));
             msg.render(area, buf);
             return;
         }
@@ -584,7 +599,9 @@ impl Widget for CostPanel<'_> {
         };
 
         let title_style = if self.focused {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::White)
         };
@@ -599,15 +616,15 @@ impl Widget for CostPanel<'_> {
 
         // Handle special states
         if self.data.is_loading {
-            let loading = Paragraph::new("Loading cost data...")
-                .style(Style::default().fg(Color::Yellow));
+            let loading =
+                Paragraph::new("Loading cost data...").style(Style::default().fg(Color::Yellow));
             loading.render(inner, buf);
             return;
         }
 
         if let Some(ref error) = self.data.error {
-            let err = Paragraph::new(format!("Error: {}", error))
-                .style(Style::default().fg(Color::Red));
+            let err =
+                Paragraph::new(format!("Error: {}", error)).style(Style::default().fg(Color::Red));
             err.render(inner, buf);
             return;
         }
@@ -629,9 +646,9 @@ impl Widget for CostPanel<'_> {
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(8),  // Summary
-                Constraint::Min(5),     // Model table
-                Constraint::Length(4),  // Trend sparkline
+                Constraint::Length(8), // Summary
+                Constraint::Min(5),    // Model table
+                Constraint::Length(4), // Trend sparkline
             ])
             .split(inner);
 
@@ -656,15 +673,13 @@ impl<'a> CostSummaryCompact<'a> {
 impl Widget for CostSummaryCompact<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if self.data.is_loading {
-            let loading = Paragraph::new("Loading...")
-                .style(Style::default().fg(Color::Yellow));
+            let loading = Paragraph::new("Loading...").style(Style::default().fg(Color::Yellow));
             loading.render(area, buf);
             return;
         }
 
         if !self.data.has_data() {
-            let no_data = Paragraph::new("No cost data")
-                .style(Style::default().fg(Color::Gray));
+            let no_data = Paragraph::new("No cost data").style(Style::default().fg(Color::Gray));
             no_data.render(area, buf);
             return;
         }
@@ -675,33 +690,33 @@ impl Widget for CostSummaryCompact<'_> {
         let mut lines = Vec::new();
 
         // Today's costs
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("{} Today:", daily_alert.icon()),
-                Style::default().fg(daily_alert.color()),
-            ),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            format!("{} Today:", daily_alert.icon()),
+            Style::default().fg(daily_alert.color()),
+        )]));
         lines.push(Line::from(vec![
             Span::raw("  "),
             Span::styled(
                 format_usd(self.data.today_total()),
-                Style::default().fg(daily_alert.color()).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(daily_alert.color())
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
         lines.push(Line::from(""));
 
         // Monthly costs
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("{} Month:", monthly_alert.icon()),
-                Style::default().fg(monthly_alert.color()),
-            ),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            format!("{} Month:", monthly_alert.icon()),
+            Style::default().fg(monthly_alert.color()),
+        )]));
         lines.push(Line::from(vec![
             Span::raw("  "),
             Span::styled(
                 format_usd(self.data.monthly_total),
-                Style::default().fg(monthly_alert.color()).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(monthly_alert.color())
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
 
@@ -736,10 +751,22 @@ mod tests {
 
     #[test]
     fn test_budget_alert_level() {
-        assert_eq!(BudgetAlertLevel::from_percentage(50.0), BudgetAlertLevel::Normal);
-        assert_eq!(BudgetAlertLevel::from_percentage(75.0), BudgetAlertLevel::Warning);
-        assert_eq!(BudgetAlertLevel::from_percentage(95.0), BudgetAlertLevel::Critical);
-        assert_eq!(BudgetAlertLevel::from_percentage(105.0), BudgetAlertLevel::Exceeded);
+        assert_eq!(
+            BudgetAlertLevel::from_percentage(50.0),
+            BudgetAlertLevel::Normal
+        );
+        assert_eq!(
+            BudgetAlertLevel::from_percentage(75.0),
+            BudgetAlertLevel::Warning
+        );
+        assert_eq!(
+            BudgetAlertLevel::from_percentage(95.0),
+            BudgetAlertLevel::Critical
+        );
+        assert_eq!(
+            BudgetAlertLevel::from_percentage(105.0),
+            BudgetAlertLevel::Exceeded
+        );
     }
 
     #[test]
@@ -796,8 +823,14 @@ mod tests {
 
     #[test]
     fn test_truncate_model_name() {
-        assert_eq!(truncate_model_name("claude-opus-4-5-20251101", 15), "opus-4.5");
-        assert_eq!(truncate_model_name("claude-sonnet-4-5-20250929", 15), "sonnet-4.5");
+        assert_eq!(
+            truncate_model_name("claude-opus-4-5-20251101", 15),
+            "opus-4.5"
+        );
+        assert_eq!(
+            truncate_model_name("claude-sonnet-4-5-20250929", 15),
+            "sonnet-4.5"
+        );
         assert_eq!(truncate_model_name("glm-4.7", 10), "GLM-4.7");
     }
 

@@ -223,10 +223,11 @@ impl ProjectedCost {
 }
 
 /// Subscription type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SubscriptionType {
     /// Fixed monthly quota (e.g., Claude Pro: 500 messages)
+    #[default]
     FixedQuota,
     /// Unlimited usage (e.g., unlimited plan)
     Unlimited,
@@ -234,17 +235,12 @@ pub enum SubscriptionType {
     PayPerUse,
 }
 
-impl Default for SubscriptionType {
-    fn default() -> Self {
-        Self::FixedQuota
-    }
-}
-
 /// Subscription quota status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum QuotaStatus {
     /// On track to use quota appropriately
+    #[default]
     OnPace,
     /// Under-utilized, should accelerate usage
     Accelerate,
@@ -252,12 +248,6 @@ pub enum QuotaStatus {
     MaxOut,
     /// Depleted, quota exhausted
     Depleted,
-}
-
-impl Default for QuotaStatus {
-    fn default() -> Self {
-        Self::OnPace
-    }
 }
 
 /// Represents a subscription service for tracking usage.
@@ -343,7 +333,8 @@ impl Subscription {
 
     /// Get remaining quota.
     pub fn remaining_quota(&self) -> Option<i64> {
-        self.quota_limit.map(|limit| (limit - self.quota_used).max(0))
+        self.quota_limit
+            .map(|limit| (limit - self.quota_used).max(0))
     }
 
     /// Calculate time remaining until quota reset.
@@ -997,8 +988,8 @@ mod tests {
 
     #[test]
     fn test_api_call_total_tokens() {
-        let call = ApiCall::new(Utc::now(), "worker-1", "claude-opus", 100, 50, 0.01)
-            .with_cache(200, 300);
+        let call =
+            ApiCall::new(Utc::now(), "worker-1", "claude-opus", 100, 50, 0.01).with_cache(200, 300);
 
         assert_eq!(call.total_tokens(), 650); // 100 + 50 + 200 + 300
     }
@@ -1134,8 +1125,7 @@ mod tests {
         let start = Utc::now() - Duration::days(14);
         let end = Utc::now() + Duration::days(16) + Duration::hours(9);
 
-        let sub =
-            Subscription::new("Claude Pro", SubscriptionType::FixedQuota, 20.0, start, end);
+        let sub = Subscription::new("Claude Pro", SubscriptionType::FixedQuota, 20.0, start, end);
 
         let display = sub.reset_time_display();
         assert!(display.starts_with("16d"));

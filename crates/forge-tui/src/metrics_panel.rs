@@ -83,16 +83,12 @@ impl MetricsPanelData {
 
     /// Get today's completed tasks.
     pub fn today_completed(&self) -> i64 {
-        self.today.as_ref()
-            .map(|t| t.tasks_completed)
-            .unwrap_or(0)
+        self.today.as_ref().map(|t| t.tasks_completed).unwrap_or(0)
     }
 
     /// Get today's failed tasks.
     pub fn today_failed(&self) -> i64 {
-        self.today.as_ref()
-            .map(|t| t.tasks_failed)
-            .unwrap_or(0)
+        self.today.as_ref().map(|t| t.tasks_failed).unwrap_or(0)
     }
 
     /// Get today's total tasks.
@@ -102,21 +98,24 @@ impl MetricsPanelData {
 
     /// Get today's success rate.
     pub fn today_success_rate(&self) -> f64 {
-        self.today.as_ref()
+        self.today
+            .as_ref()
             .map(|t| t.success_rate * 100.0)
             .unwrap_or(100.0)
     }
 
     /// Get today's average cost per task.
     pub fn today_avg_cost(&self) -> f64 {
-        self.today.as_ref()
+        self.today
+            .as_ref()
             .map(|t| t.avg_cost_per_task)
             .unwrap_or(0.0)
     }
 
     /// Get tasks per hour for today.
     pub fn tasks_per_hour(&self) -> f64 {
-        self.today.as_ref()
+        self.today
+            .as_ref()
             .map(|t| {
                 let total_tasks = t.tasks_completed + t.tasks_failed;
                 if total_tasks == 0 {
@@ -171,8 +170,18 @@ pub fn render_sparkline(values: &[i64], width: usize) -> String {
 }
 
 /// Renders a horizontal bar chart.
-pub fn render_bar(value: f64, max: f64, width: usize, filled_char: char, empty_char: char) -> String {
-    let pct = if max > 0.0 { (value / max).clamp(0.0, 1.0) } else { 0.0 };
+pub fn render_bar(
+    value: f64,
+    max: f64,
+    width: usize,
+    filled_char: char,
+    empty_char: char,
+) -> String {
+    let pct = if max > 0.0 {
+        (value / max).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     let filled = (pct * width as f64).round() as usize;
     let empty = width.saturating_sub(filled);
 
@@ -278,18 +287,14 @@ impl<'a> MetricsPanel<'a> {
             Span::raw("Tasks: "),
             Span::styled(
                 format!("{}", completed),
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw(" done, "),
-            Span::styled(
-                format!("{}", failed),
-                Style::default().fg(Color::Red),
-            ),
+            Span::styled(format!("{}", failed), Style::default().fg(Color::Red)),
             Span::raw(" failed of "),
-            Span::styled(
-                format!("{}", total),
-                Style::default().fg(Color::Cyan),
-            ),
+            Span::styled(format!("{}", total), Style::default().fg(Color::Cyan)),
             Span::raw(" total"),
         ]));
 
@@ -297,7 +302,9 @@ impl<'a> MetricsPanel<'a> {
             Span::raw("Success: "),
             Span::styled(
                 format!("{:.1}%", success_rate),
-                Style::default().fg(success_color).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(success_color)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw("  "),
             Span::raw("Avg Cost: "),
@@ -314,7 +321,9 @@ impl<'a> MetricsPanel<'a> {
             Span::raw("Throughput: "),
             Span::styled(
                 format!("{:.1} tasks/hr", tph),
-                Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
 
@@ -325,21 +334,27 @@ impl<'a> MetricsPanel<'a> {
     /// Render the tasks per hour histogram.
     fn render_histogram(&self, area: Rect, buf: &mut Buffer) {
         if self.data.hourly_stats.is_empty() {
-            let msg = Paragraph::new("No hourly data")
-                .style(Style::default().fg(Color::Gray));
+            let msg = Paragraph::new("No hourly data").style(Style::default().fg(Color::Gray));
             msg.render(area, buf);
             return;
         }
 
         let mut lines = Vec::new();
         lines.push(Line::from(vec![
-            Span::styled("Tasks/Hour", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Tasks/Hour",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" (last 24h)"),
         ]));
         lines.push(Line::from(""));
 
         // Get tasks completed per hour
-        let values: Vec<i64> = self.data.hourly_stats
+        let values: Vec<i64> = self
+            .data
+            .hourly_stats
             .iter()
             .map(|h| h.tasks_completed)
             .collect();
@@ -371,10 +386,7 @@ impl<'a> MetricsPanel<'a> {
                 Span::raw(hour_label),
                 Span::raw(" "),
                 Span::styled(bar, Style::default().fg(bar_color)),
-                Span::styled(
-                    format!(" {:>3}", val),
-                    Style::default().fg(Color::Gray),
-                ),
+                Span::styled(format!(" {:>3}", val), Style::default().fg(Color::Gray)),
             ]));
         }
 
@@ -385,8 +397,7 @@ impl<'a> MetricsPanel<'a> {
     /// Render the model efficiency comparison table.
     fn render_model_comparison(&self, area: Rect, buf: &mut Buffer) {
         if self.data.model_performance.is_empty() {
-            let msg = Paragraph::new("No model data")
-                .style(Style::default().fg(Color::Gray));
+            let msg = Paragraph::new("No model data").style(Style::default().fg(Color::Gray));
             msg.render(area, buf);
             return;
         }
@@ -400,7 +411,7 @@ impl<'a> MetricsPanel<'a> {
             .take(6)
             .map(|m| {
                 let success_pct = (m.success_rate * 100.0) as i64;
-                let success_color = if m.success_rate >= 0.9 {
+                let _success_color = if m.success_rate >= 0.9 {
                     Color::Green
                 } else if m.success_rate >= 0.7 {
                     Color::Yellow
@@ -418,7 +429,11 @@ impl<'a> MetricsPanel<'a> {
             .collect();
 
         let header = Row::new(vec!["Model", "Done", "Success", "Avg Cost"])
-            .style(Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Gray)
+                    .add_modifier(Modifier::BOLD),
+            )
             .bottom_margin(0);
 
         let widths = [
@@ -428,9 +443,7 @@ impl<'a> MetricsPanel<'a> {
             Constraint::Length(8),
         ];
 
-        let table = Table::new(rows, widths)
-            .header(header)
-            .column_spacing(1);
+        let table = Table::new(rows, widths).header(header).column_spacing(1);
 
         ratatui::widgets::Widget::render(table, area, buf);
     }
@@ -438,13 +451,14 @@ impl<'a> MetricsPanel<'a> {
     /// Render the trend sparkline.
     fn render_trend(&self, area: Rect, buf: &mut Buffer) {
         if self.data.hourly_stats.is_empty() {
-            let msg = Paragraph::new("No trend data")
-                .style(Style::default().fg(Color::Gray));
+            let msg = Paragraph::new("No trend data").style(Style::default().fg(Color::Gray));
             msg.render(area, buf);
             return;
         }
 
-        let values: Vec<i64> = self.data.hourly_stats
+        let values: Vec<i64> = self
+            .data
+            .hourly_stats
             .iter()
             .map(|h| h.tasks_completed)
             .collect();
@@ -484,7 +498,9 @@ impl Widget for MetricsPanel<'_> {
         };
 
         let title_style = if self.focused {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::White)
         };
@@ -499,15 +515,15 @@ impl Widget for MetricsPanel<'_> {
 
         // Handle special states
         if self.data.is_loading {
-            let loading = Paragraph::new("Loading metrics...")
-                .style(Style::default().fg(Color::Yellow));
+            let loading =
+                Paragraph::new("Loading metrics...").style(Style::default().fg(Color::Yellow));
             loading.render(inner, buf);
             return;
         }
 
         if let Some(ref error) = self.data.error {
-            let err = Paragraph::new(format!("Error: {}", error))
-                .style(Style::default().fg(Color::Red));
+            let err =
+                Paragraph::new(format!("Error: {}", error)).style(Style::default().fg(Color::Red));
             err.render(inner, buf);
             return;
         }
@@ -518,7 +534,7 @@ impl Widget for MetricsPanel<'_> {
                  Metrics tracking requires:\n\
                  - forge-cost database initialized\n\
                  - Worker activity being logged\n\n\
-                 Run: forge costs init"
+                 Run: forge costs init",
             )
             .style(Style::default().fg(Color::Gray));
             no_data.render(inner, buf);
@@ -529,10 +545,10 @@ impl Widget for MetricsPanel<'_> {
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),  // Summary
-                Constraint::Min(8),     // Histogram
-                Constraint::Min(6),     // Model comparison
-                Constraint::Length(3),  // Trend
+                Constraint::Length(3), // Summary
+                Constraint::Min(8),    // Histogram
+                Constraint::Min(6),    // Model comparison
+                Constraint::Length(3), // Trend
             ])
             .split(inner);
 
@@ -558,15 +574,13 @@ impl<'a> MetricsSummaryCompact<'a> {
 impl Widget for MetricsSummaryCompact<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if self.data.is_loading {
-            let loading = Paragraph::new("Loading...")
-                .style(Style::default().fg(Color::Yellow));
+            let loading = Paragraph::new("Loading...").style(Style::default().fg(Color::Yellow));
             loading.render(area, buf);
             return;
         }
 
         if !self.data.has_data() {
-            let no_data = Paragraph::new("No metrics")
-                .style(Style::default().fg(Color::Gray));
+            let no_data = Paragraph::new("No metrics").style(Style::default().fg(Color::Gray));
             no_data.render(area, buf);
             return;
         }
@@ -592,7 +606,9 @@ impl Widget for MetricsSummaryCompact<'_> {
             Span::raw(" Done: "),
             Span::styled(
                 format!("{}", completed),
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
 
@@ -601,10 +617,7 @@ impl Widget for MetricsSummaryCompact<'_> {
             lines.push(Line::from(vec![
                 Span::styled("✗", Style::default().fg(Color::Red)),
                 Span::raw(" Failed: "),
-                Span::styled(
-                    format!("{}", failed),
-                    Style::default().fg(Color::Red),
-                ),
+                Span::styled(format!("{}", failed), Style::default().fg(Color::Red)),
             ]));
         }
 
@@ -613,17 +626,16 @@ impl Widget for MetricsSummaryCompact<'_> {
             Span::raw("Rate: "),
             Span::styled(
                 format!("{:.0}%", success_rate),
-                Style::default().fg(success_color).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(success_color)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
 
         // Throughput
         lines.push(Line::from(vec![
             Span::raw("Rate: "),
-            Span::styled(
-                format!("{:.0}/hr", tph),
-                Style::default().fg(Color::Cyan),
-            ),
+            Span::styled(format!("{:.0}/hr", tph), Style::default().fg(Color::Cyan)),
         ]));
 
         let paragraph = Paragraph::new(lines);
@@ -678,8 +690,14 @@ mod tests {
 
     #[test]
     fn test_truncate_model_name() {
-        assert_eq!(truncate_model_name("claude-opus-4-5-20251101", 15), "Opus-4.5");
-        assert_eq!(truncate_model_name("claude-sonnet-4-5-20250929", 15), "Sonnet-4.5");
+        assert_eq!(
+            truncate_model_name("claude-opus-4-5-20251101", 15),
+            "Opus-4.5"
+        );
+        assert_eq!(
+            truncate_model_name("claude-sonnet-4-5-20250929", 15),
+            "Sonnet-4.5"
+        );
         assert_eq!(truncate_model_name("glm-4.7", 10), "GLM-4.7");
     }
 

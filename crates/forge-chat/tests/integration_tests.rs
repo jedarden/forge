@@ -8,20 +8,20 @@
 //! - Full chat workflow (without API calls)
 
 use chrono::{Duration, Utc};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::TempDir;
 
-use forge_chat::{
-    AuditEntry, AuditLogger, ChatResponse, ContextProvider, DashboardContext, RateLimiter,
-};
 use forge_chat::config::{AuditConfig, AuditLogLevel, RateLimitConfig};
 use forge_chat::context::{
-    ContextSource, CostAnalytics, EventInfo, ModelCost, PriorityCost,
-    SubscriptionInfo, TaskInfo, WorkerInfo,
+    ContextSource, CostAnalytics, EventInfo, ModelCost, PriorityCost, SubscriptionInfo, TaskInfo,
+    WorkerInfo,
 };
 use forge_chat::tools::{
     ActionConfirmation, ConfirmationLevel, SideEffect, ToolCall, ToolRegistry, ToolResult,
+};
+use forge_chat::{
+    AuditEntry, AuditLogger, ChatResponse, ContextProvider, DashboardContext, RateLimiter,
 };
 
 // ============================================================
@@ -436,8 +436,7 @@ async fn test_audit_logger_commands_only_mode() {
 
     let logger = AuditLogger::new(config).await.unwrap();
 
-    let entry = AuditEntry::new("spawn worker")
-        .with_response("Spawned sonnet-1");
+    let entry = AuditEntry::new("spawn worker").with_response("Spawned sonnet-1");
 
     logger.log(&entry).await.unwrap();
 
@@ -535,8 +534,7 @@ async fn test_audit_logger_logs_side_effects() {
         data: Some(serde_json::json!({"session": "sonnet-1"})),
     };
 
-    let entry = AuditEntry::new("spawn sonnet worker")
-        .with_side_effects(vec![side_effect]);
+    let entry = AuditEntry::new("spawn sonnet worker").with_side_effects(vec![side_effect]);
 
     logger.log(&entry).await.unwrap();
 
@@ -647,8 +645,7 @@ async fn test_chat_response_builder_success() {
 
 #[tokio::test]
 async fn test_chat_response_builder_error() {
-    let response = ChatResponse::error("Rate limit exceeded")
-        .with_duration(10);
+    let response = ChatResponse::error("Rate limit exceeded").with_duration(10);
 
     assert!(!response.success);
     assert!(response.text.contains("Error:"));
@@ -687,8 +684,7 @@ async fn test_chat_response_with_confirmation() {
         reversible: true,
     };
 
-    let response = ChatResponse::success("Confirmation required")
-        .with_confirmation(confirmation);
+    let response = ChatResponse::success("Confirmation required").with_confirmation(confirmation);
 
     assert!(response.confirmation_required.is_some());
     let conf = response.confirmation_required.unwrap();
@@ -722,7 +718,9 @@ async fn test_full_workflow_read_only_query() {
         enabled: true,
         log_file: log_path.clone(),
         log_level: AuditLogLevel::All,
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
 
     // Simulate workflow
     assert!(rate_limiter.check().await.is_ok());
@@ -795,7 +793,9 @@ async fn test_full_workflow_rate_limit_exceeded() {
         enabled: true,
         log_file: log_path.clone(),
         log_level: AuditLogLevel::All,
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
 
     // Fill up the rate limit
     rate_limiter.record().await;
@@ -806,8 +806,7 @@ async fn test_full_workflow_rate_limit_exceeded() {
     assert!(result.is_err());
 
     // Log the rate limit error
-    let entry = AuditEntry::new("show costs")
-        .with_error("Rate limit exceeded");
+    let entry = AuditEntry::new("show costs").with_error("Rate limit exceeded");
 
     logger.log(&entry).await.unwrap();
 

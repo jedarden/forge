@@ -188,8 +188,10 @@ impl InputHandler {
 
             // Quick Actions - Spawn workers
             KeyCode::Char('g') | KeyCode::Char('G') => AppEvent::SpawnWorker(WorkerExecutor::Glm),
-            KeyCode::Char('s') | KeyCode::Char('S') => AppEvent::SpawnWorker(WorkerExecutor::Sonnet),
-            KeyCode::Char('o') => AppEvent::SpawnWorker(WorkerExecutor::Opus),  // lowercase only
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                AppEvent::SpawnWorker(WorkerExecutor::Sonnet)
+            }
+            KeyCode::Char('o') => AppEvent::SpawnWorker(WorkerExecutor::Opus), // lowercase only
             KeyCode::Char('h') => AppEvent::SpawnWorker(WorkerExecutor::Haiku),
 
             // Quick Actions - Kill worker
@@ -351,14 +353,20 @@ mod tests {
 
         // Works in normal mode
         assert_eq!(
-            handler.handle_key(key_event_with_mods(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            handler.handle_key(key_event_with_mods(
+                KeyCode::Char('c'),
+                KeyModifiers::CONTROL
+            )),
             AppEvent::ForceQuit
         );
 
         // Also works in chat mode
         handler.set_chat_mode(true);
         assert_eq!(
-            handler.handle_key(key_event_with_mods(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            handler.handle_key(key_event_with_mods(
+                KeyCode::Char('c'),
+                KeyModifiers::CONTROL
+            )),
             AppEvent::ForceQuit
         );
     }

@@ -55,17 +55,15 @@ pub mod tools;
 // Re-export main types
 pub use audit::{AuditEntry, AuditLogger};
 pub use backend::{ChatBackend, ChatResponse};
+pub use claude_api::ClaudeApiProvider;
 pub use config::{
     ChatConfig, ClaudeApiConfig, ClaudeCliConfig, MockConfig, ProviderConfig, ProviderType,
 };
 pub use context::{ContextProvider, DashboardContext};
 pub use error::{ChatError, Result};
-pub use claude_api::ClaudeApiProvider;
 pub use provider::{
-    ChatProvider, ClaudeCliProvider, FinishReason, MockProvider,
-    ProviderResponse, ProviderTool, TokenUsage,
+    ChatProvider, ClaudeCliProvider, FinishReason, MockProvider, ProviderResponse, ProviderTool,
+    TokenUsage,
 };
 pub use rate_limit::RateLimiter;
-pub use tools::{
-    ActionConfirmation, ChatTool, ToolCall, ToolRegistry, ToolResult,
-};
+pub use tools::{ActionConfirmation, ChatTool, ToolCall, ToolRegistry, ToolResult};

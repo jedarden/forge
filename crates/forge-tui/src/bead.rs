@@ -22,10 +22,10 @@ use thiserror::Error;
 use tracing::debug;
 
 /// Default polling interval in seconds for bead updates.
-const DEFAULT_POLL_INTERVAL_SECS: u64 = 30;  // Increased from 5 to reduce blocking
+const DEFAULT_POLL_INTERVAL_SECS: u64 = 30; // Increased from 5 to reduce blocking
 
 /// Maximum age before considering cached data stale (in seconds).
-const CACHE_STALE_SECS: u64 = 60;  // Increased from 30
+const CACHE_STALE_SECS: u64 = 60; // Increased from 30
 
 /// Timeout for br CLI commands in milliseconds.
 /// Keep short to prevent blocking the UI.
@@ -398,9 +398,10 @@ impl BeadManager {
     /// Poll a single workspace for bead updates.
     /// Returns true if data changed.
     fn poll_workspace(&mut self, workspace: &PathBuf) -> bool {
-        let cache = self.cache.entry(workspace.clone()).or_insert_with(|| {
-            WorkspaceBeads::new(workspace.clone())
-        });
+        let cache = self
+            .cache
+            .entry(workspace.clone())
+            .or_insert_with(|| WorkspaceBeads::new(workspace.clone()));
 
         let mut changed = false;
 
@@ -461,7 +462,8 @@ impl BeadManager {
 
     /// Get total bead count across all workspaces.
     pub fn total_bead_count(&self) -> usize {
-        self.cache.values()
+        self.cache
+            .values()
             .map(|w| w.ready.len() + w.blocked.len() + w.in_progress.len())
             .sum()
     }
@@ -469,8 +471,8 @@ impl BeadManager {
     /// Query beads using the `br ready` or `br blocked` command.
     /// Uses a timeout to avoid blocking the UI.
     fn query_beads(workspace: &PathBuf, subcommand: &str) -> BeadResult<Vec<Bead>> {
-        use std::process::Stdio;
         use std::io::Read;
+        use std::process::Stdio;
 
         let mut child = Command::new("br")
             .arg(subcommand)
@@ -532,8 +534,8 @@ impl BeadManager {
     /// Query beads with a status filter using `br list`.
     /// Uses a timeout to avoid blocking the UI.
     fn query_beads_filtered(workspace: &PathBuf, status: Option<&str>) -> BeadResult<Vec<Bead>> {
-        use std::process::Stdio;
         use std::io::Read;
+        use std::process::Stdio;
 
         let mut cmd = Command::new("br");
         cmd.arg("list")
@@ -597,8 +599,8 @@ impl BeadManager {
     /// Query statistics using `br stats`.
     /// Uses a timeout to avoid blocking the UI.
     fn query_stats(workspace: &PathBuf) -> BeadResult<BeadStats> {
-        use std::process::Stdio;
         use std::io::Read;
+        use std::process::Stdio;
 
         let mut child = Command::new("br")
             .arg("stats")
@@ -678,12 +680,14 @@ impl BeadManager {
             data.total_ready += cache.stats.summary.ready_issues;
             data.total_blocked += cache.stats.summary.blocked_issues;
             data.total_in_progress += cache.stats.summary.in_progress_issues;
-            data.total_open += cache.stats.summary.open_issues + cache.stats.summary.in_progress_issues;
+            data.total_open +=
+                cache.stats.summary.open_issues + cache.stats.summary.in_progress_issues;
         }
 
         // Sort by priority (P0 first)
         data.ready.sort_by(|a, b| a.1.priority.cmp(&b.1.priority));
-        data.in_progress.sort_by(|a, b| a.1.priority.cmp(&b.1.priority));
+        data.in_progress
+            .sort_by(|a, b| a.1.priority.cmp(&b.1.priority));
         data.blocked.sort_by(|a, b| a.1.priority.cmp(&b.1.priority));
 
         data

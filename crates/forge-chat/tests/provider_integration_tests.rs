@@ -7,10 +7,10 @@
 //! - Tool execution with providers
 //! - End-to-end workflows with real provider behavior
 
-use forge_chat::{ChatBackend, ChatConfig};
 use forge_chat::config::{ClaudeApiConfig, ClaudeCliConfig, MockConfig, ProviderConfig};
 use forge_chat::context::DashboardContext;
 use forge_chat::provider::{ChatProvider, MockProvider, ProviderResponse, ProviderTool};
+use forge_chat::{ChatBackend, ChatConfig};
 
 // ============================================================
 // Provider Factory Tests
@@ -23,12 +23,11 @@ async fn test_provider_factory_creates_mock_provider() {
         std::env::remove_var("FORGE_CHAT_PROVIDER");
     }
 
-    let config = ChatConfig::default()
-        .with_provider(ProviderConfig::Mock(MockConfig {
-            model: "test-model".to_string(),
-            response: "Factory test response".to_string(),
-            delay_ms: 0,
-        }));
+    let config = ChatConfig::default().with_provider(ProviderConfig::Mock(MockConfig {
+        model: "test-model".to_string(),
+        response: "Factory test response".to_string(),
+        delay_ms: 0,
+    }));
 
     let backend = ChatBackend::new(config).await.unwrap();
     assert_eq!(backend.provider_name(), "mock");
@@ -37,15 +36,14 @@ async fn test_provider_factory_creates_mock_provider() {
 
 #[tokio::test]
 async fn test_provider_factory_creates_claude_cli_provider() {
-    let config = ChatConfig::default()
-        .with_provider(ProviderConfig::ClaudeCli(ClaudeCliConfig {
-            binary_path: "claude-code".to_string(),
-            model: "sonnet".to_string(),
-            config_dir: None,
-            timeout_secs: 30,
-            headless: true,
-            extra_args: vec![],
-        }));
+    let config = ChatConfig::default().with_provider(ProviderConfig::ClaudeCli(ClaudeCliConfig {
+        binary_path: "claude-code".to_string(),
+        model: "sonnet".to_string(),
+        config_dir: None,
+        timeout_secs: 30,
+        headless: true,
+        extra_args: vec![],
+    }));
 
     let backend = ChatBackend::new(config).await.unwrap();
     assert_eq!(backend.provider_name(), "claude-cli");
@@ -64,15 +62,14 @@ async fn test_provider_factory_creates_claude_api_provider() {
         std::env::set_var("TEST_API_KEY_PROVIDER", "test-key-value");
     }
 
-    let config = ChatConfig::default()
-        .with_provider(ProviderConfig::ClaudeApi(ClaudeApiConfig {
-            api_key_env: "TEST_API_KEY_PROVIDER".to_string(),
-            api_base_url: "https://api.anthropic.com".to_string(),
-            model: "claude-sonnet-4.5".to_string(),
-            max_tokens: 4096,
-            temperature: 0.7,
-            timeout_secs: 60,
-        }));
+    let config = ChatConfig::default().with_provider(ProviderConfig::ClaudeApi(ClaudeApiConfig {
+        api_key_env: "TEST_API_KEY_PROVIDER".to_string(),
+        api_base_url: "https://api.anthropic.com".to_string(),
+        model: "claude-sonnet-4.5".to_string(),
+        max_tokens: 4096,
+        temperature: 0.7,
+        timeout_secs: 60,
+    }));
 
     let backend = ChatBackend::new(config).await.unwrap();
     assert_eq!(backend.provider_name(), "claude-api");
@@ -108,12 +105,11 @@ async fn test_backend_with_mock_provider_basic_command() {
 #[tokio::test]
 async fn test_backend_with_mock_provider_multiple_calls() {
     let config = ChatConfig::default();
-    let mock = MockProvider::new()
-        .with_multiple_responses([
-            "First response",
-            "Second response",
-            "Third response",
-        ]);
+    let mock = MockProvider::new().with_multiple_responses([
+        "First response",
+        "Second response",
+        "Third response",
+    ]);
 
     let backend = ChatBackend::with_provider(config, Box::new(mock))
         .await
@@ -219,7 +215,11 @@ async fn test_mock_provider_with_delay() {
     let response = mock.process("test", &context, &[]).await.unwrap();
 
     let elapsed = start.elapsed().as_millis();
-    assert!(elapsed >= 100, "Expected delay of at least 100ms, got {}ms", elapsed);
+    assert!(
+        elapsed >= 100,
+        "Expected delay of at least 100ms, got {}ms",
+        elapsed
+    );
     assert_eq!(response.text, "Delayed response");
 }
 
@@ -287,11 +287,13 @@ async fn test_provider_response_with_tool_calls() {
         },
     ];
 
-    let response = ProviderResponse::new("Executing tools")
-        .with_tool_calls(tool_calls.clone());
+    let response = ProviderResponse::new("Executing tools").with_tool_calls(tool_calls.clone());
 
     assert_eq!(response.tool_calls.len(), 2);
-    assert_eq!(response.finish_reason, forge_chat::provider::FinishReason::ToolCall);
+    assert_eq!(
+        response.finish_reason,
+        forge_chat::provider::FinishReason::ToolCall
+    );
 }
 
 // ============================================================
@@ -301,15 +303,18 @@ async fn test_provider_response_with_tool_calls() {
 #[tokio::test]
 async fn test_end_to_end_workflow_with_mock_provider() {
     let config = ChatConfig::default();
-    let mock = MockProvider::new()
-        .with_response("Worker pool is healthy. All systems operational.");
+    let mock =
+        MockProvider::new().with_response("Worker pool is healthy. All systems operational.");
 
     let backend = ChatBackend::with_provider(config, Box::new(mock))
         .await
         .unwrap();
 
     // Execute a full workflow
-    let response = backend.process_command("show me the worker status").await.unwrap();
+    let response = backend
+        .process_command("show me the worker status")
+        .await
+        .unwrap();
 
     assert!(response.success);
     assert!(response.text.contains("healthy"));
@@ -326,25 +331,28 @@ async fn test_end_to_end_workflow_with_tool_execution() {
     let config = ChatConfig::default();
 
     // Create a mock that will trigger no tool calls (provider response processing)
-    let mock = MockProvider::new()
-        .with_response("Based on the worker status, everything looks good.");
+    let mock =
+        MockProvider::new().with_response("Based on the worker status, everything looks good.");
 
     let backend = ChatBackend::with_provider(config, Box::new(mock))
         .await
         .unwrap();
 
-    let response = backend.process_command("check worker health").await.unwrap();
+    let response = backend
+        .process_command("check worker health")
+        .await
+        .unwrap();
     assert!(response.success);
 }
 
 #[tokio::test]
 async fn test_provider_switching_at_runtime() {
     // Test creating multiple backends with different providers
-    let mock_config = ChatConfig::default()
-        .with_provider(ProviderConfig::Mock(MockConfig::default()));
+    let mock_config =
+        ChatConfig::default().with_provider(ProviderConfig::Mock(MockConfig::default()));
 
-    let cli_config = ChatConfig::default()
-        .with_provider(ProviderConfig::ClaudeCli(ClaudeCliConfig::default()));
+    let cli_config =
+        ChatConfig::default().with_provider(ProviderConfig::ClaudeCli(ClaudeCliConfig::default()));
 
     let mock_backend = ChatBackend::new(mock_config).await.unwrap();
     let cli_backend = ChatBackend::new(cli_config).await.unwrap();
@@ -366,12 +374,11 @@ async fn test_provider_switching_at_runtime() {
 
 #[test]
 fn test_provider_config_builder() {
-    let config = ChatConfig::default()
-        .with_provider(ProviderConfig::Mock(MockConfig {
-            model: "custom-model".to_string(),
-            response: "custom response".to_string(),
-            delay_ms: 50,
-        }));
+    let config = ChatConfig::default().with_provider(ProviderConfig::Mock(MockConfig {
+        model: "custom-model".to_string(),
+        response: "custom response".to_string(),
+        delay_ms: 50,
+    }));
 
     match config.provider {
         ProviderConfig::Mock(ref mock_config) => {
@@ -471,7 +478,7 @@ async fn test_concurrent_backend_calls_with_same_provider() {
     let backend = Arc::new(
         ChatBackend::with_provider(config, Box::new(mock))
             .await
-            .unwrap()
+            .unwrap(),
     );
 
     let mut handles = vec![];

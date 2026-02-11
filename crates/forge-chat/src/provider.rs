@@ -36,12 +36,10 @@ use std::process::Stdio;
 use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::Mutex;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 use tracing::{debug, info};
 
-use crate::config::{
-    ChatConfig, ClaudeApiConfig, ClaudeCliConfig, MockConfig, ProviderConfig,
-};
+use crate::config::{ChatConfig, ClaudeApiConfig, ClaudeCliConfig, MockConfig, ProviderConfig};
 use crate::context::DashboardContext;
 use crate::error::{ChatError, Result};
 use crate::tools::{ToolCall, ToolDefinition};
@@ -118,9 +116,10 @@ impl ProviderResponse {
 }
 
 /// Reason why the provider's response ended.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum FinishReason {
     /// Normal stop sequence.
+    #[default]
     Stop,
     /// Tool calls were made.
     ToolCall,
@@ -128,12 +127,6 @@ pub enum FinishReason {
     MaxTokens,
     /// Error occurred.
     Error(String),
-}
-
-impl Default for FinishReason {
-    fn default() -> Self {
-        Self::Stop
-    }
 }
 
 /// Token usage information for a provider response.
@@ -305,9 +298,9 @@ impl ClaudeCliProvider {
 
         info!("Spawning claude-cli: {:?}", cmd);
 
-        let mut child = cmd.spawn().map_err(|e| {
-            ChatError::ConfigError(format!("Failed to spawn claude-cli: {}", e))
-        })?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| ChatError::ConfigError(format!("Failed to spawn claude-cli: {}", e)))?;
 
         let stdin = child.stdin.take().ok_or_else(|| {
             ChatError::ConfigError("Failed to open stdin for claude-cli".to_string())
@@ -347,23 +340,16 @@ impl ClaudeCliProvider {
             tools: tools.to_vec(),
         };
 
-        let request_json =
-            serde_json::to_string(&request).map_err(|e| ChatError::JsonError(e))?;
+        let request_json = serde_json::to_string(&request).map_err(ChatError::JsonError)?;
 
         // Send request
         use tokio::io::AsyncWriteExt;
         stdin
             .write_all(request_json.as_bytes())
             .await
-            .map_err(|e| ChatError::IoError(e))?;
-        stdin
-            .write_all(b"\n")
-            .await
-            .map_err(|e| ChatError::IoError(e))?;
-        stdin
-            .shutdown()
-            .await
-            .map_err(|e| ChatError::IoError(e))?;
+            .map_err(ChatError::IoError)?;
+        stdin.write_all(b"\n").await.map_err(ChatError::IoError)?;
+        stdin.shutdown().await.map_err(ChatError::IoError)?;
 
         // Read response with timeout
         let response_bytes = timeout(Duration::from_secs(30), async {
@@ -376,7 +362,7 @@ impl ClaudeCliProvider {
         .await
         .map_err(|_| {
             // Kill the child process on timeout
-            let _ = child.kill();
+            drop(child.kill());
             ChatError::ApiError("claude-cli timeout".to_string())
         })??;
 
@@ -408,16 +394,14 @@ impl ClaudeCliProvider {
         }
 
         // Parse response
-        let response_str = String::from_utf8(response_bytes).map_err(|e| {
-            ChatError::ApiError(format!("Invalid UTF-8 from claude-cli: {}", e))
-        })?;
+        let response_str = String::from_utf8(response_bytes)
+            .map_err(|e| ChatError::ApiError(format!("Invalid UTF-8 from claude-cli: {}", e)))?;
 
         debug!("claude-cli response: {}", response_str);
 
-        let response: CliResponse =
-            serde_json::from_str(&response_str).map_err(|e| {
-                ChatError::ApiError(format!("Failed to parse claude-cli response: {}", e))
-            })?;
+        let response: CliResponse = serde_json::from_str(&response_str).map_err(|e| {
+            ChatError::ApiError(format!("Failed to parse claude-cli response: {}", e))
+        })?;
 
         Ok(response)
     }
@@ -662,7 +646,11 @@ impl MockProvider {
     ///
     /// Note: This method may not work correctly when the provider is already
     /// shared. Consider creating responses manually for complex scenarios.
-    pub fn and_then_tool_call(mut self, tool_name: impl Into<String>, parameters: serde_json::Value) -> Self {
+    pub fn and_then_tool_call(
+        mut self,
+        tool_name: impl Into<String>,
+        parameters: serde_json::Value,
+    ) -> Self {
         let responses_arc = self.responses.clone();
         let mut current = match responses_arc.try_lock() {
             Ok(guard) => guard.clone(),
@@ -781,7 +769,9 @@ impl ChatProvider for MockProvider {
         // Check if this is an error response
         if response.is_error {
             return Err(ChatError::ApiError(
-                response.error_message.unwrap_or_else(|| "Mock error".to_string()),
+                response
+                    .error_message
+                    .unwrap_or_else(|| "Mock error".to_string()),
             ));
         }
 
@@ -840,7 +830,9 @@ pub fn create_provider(config: &ChatConfig) -> Result<Box<dyn ChatProvider>> {
     match &config.provider {
         ProviderConfig::ClaudeApi(api_config) => {
             info!("Creating claude-api provider");
-            Ok(Box::new(ClaudeApiProvider::from_config(api_config.clone())?))
+            Ok(Box::new(ClaudeApiProvider::from_config(
+                api_config.clone(),
+            )?))
         }
         ProviderConfig::ClaudeCli(cli_config) => {
             info!("Creating claude-cli provider");
@@ -867,7 +859,7 @@ fn create_provider_by_type(
             info!("Creating mock provider from env var");
             Ok(Box::new(MockProvider::new()))
         }
-        "claude-api" | "" | _ => {
+        _ => {
             info!("Creating claude-api provider from env var");
             Ok(Box::new(ClaudeApiProvider::from_config(
                 ClaudeApiConfig::default(),
@@ -1016,7 +1008,10 @@ mod tests {
         assert_eq!(response_with_tools.text, "I'll help you with that.");
         assert_eq!(response_with_tools.tool_calls.len(), 1);
         assert_eq!(response_with_tools.tool_calls[0].name, "get_worker_status");
-        assert_eq!(response_with_tools.tool_calls[0].id, Some("call_123".to_string()));
+        assert_eq!(
+            response_with_tools.tool_calls[0].id,
+            Some("call_123".to_string())
+        );
     }
 
     #[test]
@@ -1034,10 +1029,7 @@ mod tests {
         let response: CliResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.tool_calls[0].name, "spawn_worker");
         assert!(response.tool_calls[0].id.is_none());
-        assert_eq!(
-            response.tool_calls[0].parameters["worker_type"],
-            "sonnet"
-        );
+        assert_eq!(response.tool_calls[0].parameters["worker_type"], "sonnet");
         assert_eq!(response.tool_calls[0].parameters["count"], 2);
     }
 
@@ -1147,11 +1139,17 @@ mod tests {
         let context = DashboardContext::default();
 
         // Make first call
-        let response1 = provider.process("First prompt", &context, &[]).await.unwrap();
+        let response1 = provider
+            .process("First prompt", &context, &[])
+            .await
+            .unwrap();
         assert_eq!(response1.text, "Response 1");
 
         // Make second call
-        let response2 = provider.process("Second prompt", &context, &[]).await.unwrap();
+        let response2 = provider
+            .process("Second prompt", &context, &[])
+            .await
+            .unwrap();
         assert_eq!(response2.text, "Response 1"); // Same response reused
 
         // Check call tracking
@@ -1170,8 +1168,7 @@ mod tests {
         use crate::context::DashboardContext;
 
         // Use with_multiple_responses for reliable chaining
-        let provider = MockProvider::new()
-            .with_multiple_responses(["First", "Second", "Third"]);
+        let provider = MockProvider::new().with_multiple_responses(["First", "Second", "Third"]);
 
         let context = DashboardContext::default();
 

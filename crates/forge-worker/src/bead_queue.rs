@@ -5,13 +5,13 @@
 //! with queue-specific operations for launcher integration.
 
 use crate::types::{LaunchConfig, SpawnRequest};
-use forge_core::{ForgeError, Result};
 use forge_core::types::BeadId;
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use forge_core::{ForgeError, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::io::BufRead;
+use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 /// Bead queue reader for parsing .beads/*.jsonl files.
@@ -94,9 +94,7 @@ impl BeadQueueReader {
 
         // Verify workspace exists
         if !workspace.exists() {
-            return Err(ForgeError::WorkspaceNotFound {
-                path: workspace,
-            });
+            return Err(ForgeError::WorkspaceNotFound { path: workspace });
         }
 
         Ok(Self {
@@ -119,17 +117,15 @@ impl BeadQueueReader {
             return Ok(Vec::new());
         }
 
-        let file = fs::File::open(&self.bead_file).map_err(|e| {
-            ForgeError::io("opening beads file", &self.bead_file, e)
-        })?;
+        let file = fs::File::open(&self.bead_file)
+            .map_err(|e| ForgeError::io("opening beads file", &self.bead_file, e))?;
 
         let reader = std::io::BufReader::new(file);
         let mut beads = Vec::new();
 
         for line in reader.lines() {
-            let line = line.map_err(|e| {
-                ForgeError::io("reading beads file", &self.bead_file, e)
-            })?;
+            let line =
+                line.map_err(|e| ForgeError::io("reading beads file", &self.bead_file, e))?;
 
             if line.trim().is_empty() {
                 continue;
@@ -155,11 +151,13 @@ impl BeadQueueReader {
 
     /// Parse a bead from JSON value.
     fn parse_bead(value: &serde_json::Value, workspace: &Path) -> Result<QueuedBead> {
-        let id = value["id"].as_str()
+        let id = value["id"]
+            .as_str()
             .ok_or_else(|| ForgeError::parse("bead missing id field"))?
             .to_string();
 
-        let title = value["title"].as_str()
+        let title = value["title"]
+            .as_str()
             .ok_or_else(|| ForgeError::parse("bead missing title field"))?
             .to_string();
 
@@ -168,10 +166,13 @@ impl BeadQueueReader {
         let priority = value["priority"].as_u64().unwrap_or(2) as u8;
         let issue_type = value["issue_type"].as_str().unwrap_or("task").to_string();
 
-        let labels = value["labels"].as_array()
-            .map(|arr| arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect())
+        let labels = value["labels"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         // Check dependencies
@@ -200,14 +201,13 @@ impl BeadQueueReader {
     /// Get ready beads, sorted by priority.
     pub fn get_ready_beads(&mut self) -> Result<Vec<QueuedBead>> {
         let beads = self.read_beads()?;
-        let ready: Vec<_> = beads.into_iter()
-            .filter(|b| b.is_allocatable())
-            .collect();
+        let ready: Vec<_> = beads.into_iter().filter(|b| b.is_allocatable()).collect();
 
         // Sort by priority score (P0 first)
         let mut sorted = ready;
         sorted.sort_by(|a, b| {
-            b.priority_score().cmp(&a.priority_score())
+            b.priority_score()
+                .cmp(&a.priority_score())
                 .then_with(|| a.id.cmp(&b.id))
         });
 
@@ -256,17 +256,10 @@ impl BeadQueueReader {
     }
 
     /// Create a spawn request for a bead allocation.
-    pub fn create_spawn_request(
-        &self,
-        bead: &QueuedBead,
-        config: LaunchConfig,
-    ) -> SpawnRequest {
+    pub fn create_spawn_request(&self, bead: &QueuedBead, config: LaunchConfig) -> SpawnRequest {
         let worker_id = format!("forge-{}-{}", bead.id, config.model);
 
-        SpawnRequest {
-            worker_id,
-            config,
-        }
+        SpawnRequest { worker_id, config }
     }
 }
 
@@ -303,9 +296,7 @@ impl BeadQueueManager {
         }
 
         // Sort by priority across all workspaces
-        candidates.sort_by(|a, b| {
-            b.1.priority_score().cmp(&a.1.priority_score())
-        });
+        candidates.sort_by(|a, b| b.1.priority_score().cmp(&a.1.priority_score()));
 
         candidates.pop()
     }
@@ -322,9 +313,7 @@ impl BeadQueueManager {
             }
         }
 
-        ready.sort_by(|a, b| {
-            b.1.priority_score().cmp(&a.1.priority_score())
-        });
+        ready.sort_by(|a, b| b.1.priority_score().cmp(&a.1.priority_score()));
 
         ready
     }
@@ -332,13 +321,11 @@ impl BeadQueueManager {
     /// Assign a bead to a worker.
     pub fn assign_bead(&mut self, bead_id: &BeadId, worker_id: String) -> Result<()> {
         for reader in &mut self.readers {
-            if reader.has_beads() {
-                // Check if this workspace has the bead
-                if let Ok(beads) = reader.read_beads() {
-                    if beads.iter().any(|b| &b.id == bead_id) {
-                        return reader.assign_bead(bead_id.clone(), worker_id);
-                    }
-                }
+            if reader.has_beads()
+                && let Ok(beads) = reader.read_beads()
+                && beads.iter().any(|b| &b.id == bead_id)
+            {
+                return reader.assign_bead(bead_id.clone(), worker_id);
             }
         }
         Err(ForgeError::BeadNotFound {
@@ -413,9 +400,14 @@ mod tests {
         let dir = create_test_workspace();
         let mut reader = BeadQueueReader::new(dir.path()).unwrap();
 
-        reader.assign_bead("test-1".to_string(), "worker-1".to_string()).unwrap();
+        reader
+            .assign_bead("test-1".to_string(), "worker-1".to_string())
+            .unwrap();
         assert!(reader.is_assigned(&"test-1".to_string()));
-        assert_eq!(reader.get_assigned_worker(&"test-1".to_string()), Some(&"worker-1".to_string()));
+        assert_eq!(
+            reader.get_assigned_worker(&"test-1".to_string()),
+            Some(&"worker-1".to_string())
+        );
     }
 
     #[test]
@@ -423,7 +415,9 @@ mod tests {
         let dir = create_test_workspace();
         let mut reader = BeadQueueReader::new(dir.path()).unwrap();
 
-        reader.assign_bead("test-1".to_string(), "worker-1".to_string()).unwrap();
+        reader
+            .assign_bead("test-1".to_string(), "worker-1".to_string())
+            .unwrap();
         let worker = reader.unassign_bead(&"test-1".to_string());
         assert_eq!(worker, Some("worker-1".to_string()));
         assert!(!reader.is_assigned(&"test-1".to_string()));

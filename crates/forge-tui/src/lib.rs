@@ -1,3 +1,13 @@
+// Clippy allows for TUI code patterns that are intentional
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::unnecessary_map_or)]
+#![allow(clippy::vec_init_then_push)]
+#![allow(clippy::for_kv_map)]
+#![allow(clippy::manual_div_ceil)]
+#![allow(clippy::nonminimal_bool)]
+#![allow(clippy::should_implement_trait)]
+#![allow(clippy::derivable_impls)]
+
 //! Terminal UI for FORGE.
 //!
 //! This crate provides the Ratatui-based terminal interface for FORGE.
@@ -41,22 +51,24 @@ pub mod view;
 pub mod widget;
 
 pub use widget::{
-    render_sparkline, render_sparkline_i64, HotkeyHints, ProgressBar, ProgressColorMode,
-    ProgressFillStyle, QuickAction, QuickActionsPanel, QuickActionType, SparklineDirection,
-    SparklineWidget, StatusIndicator,
+    HotkeyHints, ProgressBar, ProgressColorMode, ProgressFillStyle, QuickAction, QuickActionType,
+    QuickActionsPanel, SparklineDirection, SparklineWidget, StatusIndicator, render_sparkline,
+    render_sparkline_i64,
 };
 
 pub use app::{App, AppResult};
 pub use bead::{Bead, BeadManager, BeadStats};
-pub use cost_panel::{BudgetAlertLevel, BudgetConfig, CostPanel, CostPanelData, CostSummaryCompact};
+pub use cost_panel::{
+    BudgetAlertLevel, BudgetConfig, CostPanel, CostPanelData, CostSummaryCompact,
+};
 pub use data::{DataManager, WorkerData};
 pub use event::{AppEvent, InputHandler, WorkerExecutor};
 pub use log::{LogBuffer, LogEntry, LogEvent, LogLevel, LogTailer, LogTailerConfig};
 pub use metrics_panel::{MetricsPanel, MetricsPanelData, MetricsSummaryCompact};
 pub use status::{StatusEvent, StatusWatcher, StatusWatcherConfig, WorkerStatusFile};
 pub use subscription_panel::{
-    format_subscription_summary, SubscriptionAction, SubscriptionData, SubscriptionPanel,
-    SubscriptionService, SubscriptionStatus, SubscriptionSummaryCompact,
+    SubscriptionAction, SubscriptionData, SubscriptionPanel, SubscriptionService,
+    SubscriptionStatus, SubscriptionSummaryCompact, format_subscription_summary,
 };
 pub use theme::{Theme, ThemeColors, ThemeManager, ThemeName};
 pub use view::{FocusPanel, LayoutMode, View};
