@@ -44,12 +44,15 @@
 //! - Chat history limited to 10 exchanges (~1KB memory)
 
 use std::io;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyEvent};
 use forge_chat::{ChatBackend, ChatConfig, ChatResponse};
+use forge_core::types::WorkerTier;
+use forge_worker::{discovery::DiscoveredWorker, LaunchConfig, SpawnRequest, WorkerLauncher};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
@@ -135,6 +138,18 @@ pub struct App {
     chat_pending: bool,
     /// Chat conversation history (last 10 exchanges)
     chat_history: Vec<ChatExchange>,
+    /// Worker launcher for spawning workers
+    worker_launcher: WorkerLauncher,
+    /// Tokio runtime for async worker spawning
+    worker_runtime: tokio::runtime::Runtime,
+    /// Whether to show the kill worker dialog
+    show_kill_dialog: bool,
+    /// List of discovered workers for kill dialog
+    kill_dialog_workers: Vec<DiscoveredWorker>,
+    /// Currently selected worker index in kill dialog
+    kill_dialog_selected: usize,
+    /// Error message to show in kill dialog (if any)
+    kill_dialog_error: Option<String>,
 }
 
 /// A single chat exchange (user query + assistant response).
@@ -189,6 +204,13 @@ impl App {
         let chat_backend = Self::init_chat_backend().map(Arc::new);
         info!("⏱️ Chat backend initialized in {:?}", chat_start.elapsed());
 
+        // Initialize worker launcher and runtime
+        let worker_launcher = WorkerLauncher::new();
+        let worker_runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create worker runtime");
+
         info!("⏱️ App::new() completed in {:?}", start.elapsed());
 
         Self {
@@ -219,6 +241,12 @@ impl App {
             chat_response_rx: None,
             chat_pending: false,
             chat_history: Vec::new(),
+            worker_launcher,
+            worker_runtime,
+            show_kill_dialog: false,
+            kill_dialog_workers: Vec::new(),
+            kill_dialog_selected: 0,
+            kill_dialog_error: None,
         }
     }
 
@@ -254,6 +282,15 @@ impl App {
             chat_response_rx: None,
             chat_pending: false,
             chat_history: Vec::new(),
+            worker_launcher: WorkerLauncher::new(),
+            worker_runtime: tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create worker runtime"),
+            show_kill_dialog: false,
+            kill_dialog_workers: Vec::new(),
+            kill_dialog_selected: 0,
+            kill_dialog_error: None,
         }
     }
 
@@ -577,6 +614,19 @@ impl App {
 
     /// Handle a key event.
     pub fn handle_key_event(&mut self, key: KeyEvent) {
+        // Handle help overlay first
+        if self.show_help {
+            self.show_help = false;
+            self.mark_dirty();
+            return;
+        }
+
+        // Handle kill dialog if active
+        if self.show_kill_dialog {
+            self.handle_kill_dialog_key(key);
+            return;
+        }
+
         let event = self.input_handler.handle_key(key);
         self.handle_app_event(event);
     }
@@ -700,14 +750,18 @@ impl App {
                 // Panel-specific handling - to be implemented
             }
             AppEvent::SpawnWorker(executor) => {
-                self.status_message = Some(format!("Spawning {} worker...", executor.name()));
-                self.mark_dirty();
-                // TODO: Implement actual worker spawning
+                self.spawn_worker(executor);
             }
             AppEvent::KillWorker => {
-                self.status_message = Some("Kill worker - not yet implemented".to_string());
+                // Toggle kill dialog
+                if self.show_kill_dialog {
+                    self.show_kill_dialog = false;
+                    self.kill_dialog_error = None;
+                } else {
+                    // Discover workers and show dialog
+                    self.discover_workers_for_kill_dialog();
+                }
                 self.mark_dirty();
-                // TODO: Implement actual worker killing
             }
             AppEvent::OpenConfig => {
                 self.status_message = Some("Opening configuration menu...".to_string());
@@ -733,6 +787,229 @@ impl App {
                 self.trigger_update();
             }
             AppEvent::None => {}
+        }
+    }
+
+    /// Spawn a new worker of the specified type.
+    fn spawn_worker(&mut self, executor: crate::event::WorkerExecutor) {
+        use crate::event::WorkerExecutor;
+        use tracing::{error, info};
+
+        // Determine model string and tier based on executor type
+        let (model, tier) = match executor {
+            WorkerExecutor::Glm => ("glm-4.7", WorkerTier::Budget),
+            WorkerExecutor::Sonnet => ("sonnet", WorkerTier::Standard),
+            WorkerExecutor::Opus => ("opus", WorkerTier::Premium),
+            WorkerExecutor::Haiku => ("haiku", WorkerTier::Budget),
+        };
+
+        // Find the launcher script
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/coder".to_string());
+        let forge_src = std::env::var("FORGE_SRC").unwrap_or_else(|_| format!("{}/forge", home));
+
+        // Try multiple launcher paths in order of preference
+        let launcher_paths = vec![
+            PathBuf::from(&forge_src).join("scripts/launchers/bead-worker-launcher.sh"),
+            PathBuf::from(&home).join(".forge/launchers/bead-worker-launcher.sh"),
+            PathBuf::from(&forge_src).join("test/example-launchers/claude-code-launcher.sh"),
+        ];
+
+        let launcher_path = launcher_paths
+            .into_iter()
+            .find(|p| p.exists())
+            .unwrap_or_else(|| {
+                // Fall back to first path even if it doesn't exist (will fail with clear error)
+                PathBuf::from(&forge_src).join("scripts/launchers/bead-worker-launcher.sh")
+            });
+
+        // Generate a unique worker ID
+        let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+        let worker_id = format!("{}-{}-{:04}", model, timestamp, rand::random::<u16>());
+        let session_name = format!("forge-{}", worker_id);
+
+        // Use FORGE_WORKSPACE or default workspace
+        let workspace = std::env::var("FORGE_WORKSPACE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(&home).join("forge"));
+
+        info!(
+            "Spawning {} worker: id={}, session={}, workspace={}",
+            executor.name(),
+            worker_id,
+            session_name,
+            workspace.display()
+        );
+
+        // Create launch config
+        let config = LaunchConfig::new(&launcher_path, &session_name, &workspace, model)
+            .with_tier(tier)
+            .with_timeout(60);
+
+        // Create spawn request
+        let request = SpawnRequest::new(&worker_id, config);
+
+        // Spawn the worker asynchronously using the runtime
+        let worker_id_clone = worker_id.clone();
+        let model_name = executor.name().to_string();
+        let result = self.worker_runtime.block_on(async {
+            self.worker_launcher.spawn(request).await
+        });
+
+        match result {
+            Ok(handle) => {
+                info!(
+                    "Worker spawned successfully: {} (PID: {}, session: {})",
+                    handle.id, handle.pid, handle.session_name
+                );
+                self.status_message = Some(format!(
+                    "Spawned {} worker: {} (PID: {})",
+                    model_name, worker_id_clone, handle.pid
+                ));
+            }
+            Err(e) => {
+                error!("Failed to spawn worker {}: {}", worker_id_clone, e);
+                self.status_message = Some(format!("Failed to spawn {} worker: {}", model_name, e));
+            }
+        }
+
+        self.mark_dirty();
+    }
+
+    /// Discover workers and show the kill dialog.
+    fn discover_workers_for_kill_dialog(&mut self) {
+        use forge_worker::discovery::discover_workers;
+        use tracing::{error, info};
+
+        info!("Discovering workers for kill dialog");
+
+        // Discover workers using the runtime
+        let result = self.worker_runtime.block_on(async { discover_workers().await });
+
+        match result {
+            Ok(discovery) => {
+                let worker_count = discovery.workers.len();
+                info!("Discovered {} workers for kill dialog", worker_count);
+
+                if worker_count == 0 {
+                    self.kill_dialog_error = Some("No active workers found".to_string());
+                    self.kill_dialog_workers = Vec::new();
+                } else {
+                    self.kill_dialog_error = None;
+                    self.kill_dialog_workers = discovery.workers;
+                }
+
+                self.kill_dialog_selected = 0;
+                self.show_kill_dialog = true;
+            }
+            Err(e) => {
+                error!("Failed to discover workers: {}", e);
+                self.kill_dialog_error = Some(format!("Failed to discover workers: {}", e));
+                self.kill_dialog_workers = Vec::new();
+                self.kill_dialog_selected = 0;
+                self.show_kill_dialog = true;
+            }
+        }
+    }
+
+    /// Kill the currently selected worker in the kill dialog.
+    fn kill_selected_worker(&mut self) {
+        use forge_worker::tmux::kill_session;
+        use tracing::{error, info, warn};
+
+        if self.kill_dialog_selected >= self.kill_dialog_workers.len() {
+            self.kill_dialog_error = Some("No worker selected".to_string());
+            self.mark_dirty();
+            return;
+        }
+
+        let worker = &self.kill_dialog_workers[self.kill_dialog_selected].clone();
+        let session_name = worker.session_name.clone();
+
+        info!("Killing worker: {} (session: {})", worker.suffix, session_name);
+
+        // Kill the tmux session
+        let result = self.worker_runtime.block_on(async { kill_session(&session_name).await });
+
+        match result {
+            Ok(()) => {
+                info!("Successfully killed worker session: {}", session_name);
+                self.status_message = Some(format!("Killed worker: {}", worker.suffix));
+
+                // Remove the killed worker from the list
+                self.kill_dialog_workers.remove(self.kill_dialog_selected);
+
+                // Adjust selection if needed
+                if self.kill_dialog_selected >= self.kill_dialog_workers.len() && self.kill_dialog_selected > 0 {
+                    self.kill_dialog_selected -= 1;
+                }
+
+                // Close dialog if no workers left
+                if self.kill_dialog_workers.is_empty() {
+                    self.show_kill_dialog = false;
+                    self.kill_dialog_error = None;
+                }
+            }
+            Err(e) => {
+                error!("Failed to kill worker {}: {}", session_name, e);
+
+                // Check if the session no longer exists
+                let err_str = e.to_string();
+                if err_str.contains("can't find session") || err_str.contains("no session") {
+                    warn!("Worker session already terminated: {}", session_name);
+                    self.kill_dialog_error = Some(format!(
+                        "Worker '{}' already terminated or session not found",
+                        worker.suffix
+                    ));
+
+                    // Remove from list since it's already dead
+                    self.kill_dialog_workers.remove(self.kill_dialog_selected);
+                    if self.kill_dialog_selected >= self.kill_dialog_workers.len() && self.kill_dialog_selected > 0 {
+                        self.kill_dialog_selected -= 1;
+                    }
+                    if self.kill_dialog_workers.is_empty() {
+                        self.show_kill_dialog = false;
+                    }
+                } else {
+                    self.kill_dialog_error = Some(format!("Failed to kill worker: {}", e));
+                }
+            }
+        }
+
+        self.mark_dirty();
+    }
+
+    /// Handle kill dialog key navigation.
+    fn handle_kill_dialog_key(&mut self, key: KeyEvent) {
+        use crossterm::event::KeyCode;
+
+        match key.code {
+            KeyCode::Char('k') | KeyCode::Up => {
+                // Move selection up
+                if self.kill_dialog_selected > 0 {
+                    self.kill_dialog_selected -= 1;
+                    self.kill_dialog_error = None; // Clear error on navigation
+                    self.mark_dirty();
+                }
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                // Move selection down
+                if self.kill_dialog_selected + 1 < self.kill_dialog_workers.len() {
+                    self.kill_dialog_selected += 1;
+                    self.kill_dialog_error = None; // Clear error on navigation
+                    self.mark_dirty();
+                }
+            }
+            KeyCode::Enter => {
+                // Kill the selected worker
+                self.kill_selected_worker();
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                // Close dialog
+                self.show_kill_dialog = false;
+                self.kill_dialog_error = None;
+                self.mark_dirty();
+            }
+            _ => {}
         }
     }
 
@@ -982,6 +1259,11 @@ impl App {
         // Draw help overlay if active
         if self.show_help {
             self.draw_help_overlay(frame, area);
+        }
+
+        // Draw kill worker dialog if active
+        if self.show_kill_dialog {
+            self.draw_kill_dialog(frame, area);
         }
 
         // Draw update notification banner if update available
@@ -1608,6 +1890,106 @@ Press any key to close this help.";
             .wrap(Wrap { trim: false });
 
         frame.render_widget(help, overlay_area);
+    }
+
+    /// Draw the kill worker dialog overlay.
+    fn draw_kill_dialog(&mut self, frame: &mut Frame, area: Rect) {
+        let theme = self.theme_manager.current();
+
+        // Calculate dialog dimensions based on content
+        let overlay_width = 70.min(area.width.saturating_sub(4));
+        let max_height = 20.min(area.height.saturating_sub(4));
+        let overlay_x = (area.width - overlay_width) / 2;
+        let overlay_y = (area.height - max_height) / 2;
+
+        let overlay_area = Rect::new(overlay_x, overlay_y, overlay_width, max_height);
+
+        // Clear background
+        frame.render_widget(Clear, overlay_area);
+
+        // Build dialog content
+        let mut lines: Vec<Line> = Vec::new();
+
+        // Header
+        lines.push(Line::from(Span::styled(
+            "Select a worker to kill:",
+            Style::default().fg(theme.colors.text).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::raw("")); // Empty line
+
+        if self.kill_dialog_workers.is_empty() {
+            // No workers message
+            let msg = self.kill_dialog_error.as_deref().unwrap_or("No active workers found");
+            lines.push(Line::from(Span::styled(
+                msg,
+                Style::default().fg(theme.colors.status_warning),
+            )));
+        } else {
+            // Worker list
+            for (i, worker) in self.kill_dialog_workers.iter().enumerate() {
+                let is_selected = i == self.kill_dialog_selected;
+
+                // Format: [ ] worker-suffix (type, attached/detached, age)
+                let checkbox = if is_selected { "[x] " } else { "[ ] " };
+                let attached_str = if worker.is_attached { "attached" } else { "detached" };
+                let worker_line = format!(
+                    "{}{} ({}, {}, age: {})",
+                    checkbox,
+                    worker.suffix,
+                    worker.worker_type,
+                    attached_str,
+                    worker.age()
+                );
+
+                let style = if is_selected {
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(theme.colors.hotkey)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme.colors.text)
+                };
+
+                lines.push(Line::from(Span::styled(worker_line, style)));
+            }
+        }
+
+        lines.push(Line::raw("")); // Empty line
+
+        // Error message if any
+        if let Some(ref err) = self.kill_dialog_error {
+            if !self.kill_dialog_workers.is_empty() {
+                // Only show if we have workers (otherwise it's the "no workers" message)
+                lines.push(Line::from(Span::styled(
+                    format!("Error: {}", err),
+                    Style::default().fg(Color::Red),
+                )));
+                lines.push(Line::raw(""));
+            }
+        }
+
+        // Footer with instructions
+        lines.push(Line::from(Span::styled(
+            "↑/k: up  ↓/j: down  Enter: kill  Esc/q: cancel",
+            Style::default().fg(theme.colors.text_dim),
+        )));
+
+        let dialog = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Red))
+                    .title(Span::styled(
+                        " Kill Worker ",
+                        Style::default()
+                            .fg(Color::Red)
+                            .add_modifier(Modifier::BOLD),
+                    ))
+                    .style(Style::default().bg(Color::Black)),
+            )
+            .wrap(Wrap { trim: false });
+
+        frame.render_widget(dialog, overlay_area);
     }
 
     /// Draw update notification banner at the top of the screen.
