@@ -45,6 +45,7 @@
 
 use std::io;
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyEvent};
@@ -121,11 +122,11 @@ pub struct App {
     /// Last time we checked for updates
     last_update_check: Instant,
     /// Chat backend (None if initialization failed)
-    chat_backend: Option<ChatBackend>,
-    /// Channel sender for chat requests
-    chat_request_tx: Option<Sender<String>>,
-    /// Channel receiver for chat responses
-    chat_response_rx: Option<Receiver<ChatResponse>>,
+    chat_backend: Option<Arc<ChatBackend>>,
+    /// Channel for sending responses from background thread to UI
+    chat_response_tx: Option<Sender<(String, Result<ChatResponse, forge_chat::ChatError>)>>,
+    /// Channel receiver for chat responses from background thread
+    chat_response_rx: Option<Receiver<(String, Result<ChatResponse, forge_chat::ChatError>)>>,
     /// Whether a chat request is pending
     chat_pending: bool,
     /// Chat conversation history (last 10 exchanges)
@@ -172,8 +173,8 @@ impl App {
             last_terminal_width: 0,
             update_available: false,
             last_update_check: now,
-            chat_backend: Self::init_chat_backend(),
-            chat_request_tx: None,
+            chat_backend: Self::init_chat_backend().map(Arc::new),
+            chat_response_tx: None,
             chat_response_rx: None,
             chat_pending: false,
             chat_history: Vec::new(),
@@ -206,7 +207,7 @@ impl App {
             update_available: false,
             last_update_check: now,
             chat_backend: None,  // Don't initialize in test mode
-            chat_request_tx: None,
+            chat_response_tx: None,
             chat_response_rx: None,
             chat_pending: false,
             chat_history: Vec::new(),
@@ -416,6 +417,55 @@ impl App {
         }
     }
 
+    /// Poll for chat responses from background thread.
+    fn poll_chat_responses(&mut self) {
+        use tracing::debug;
+
+        // Non-blocking check for responses (need to avoid borrow checker issues)
+        let mut responses = Vec::new();
+        if let Some(rx) = &self.chat_response_rx {
+            while let Ok(response) = rx.try_recv() {
+                responses.push(response);
+            }
+        }
+
+        // Process responses after releasing the borrow
+        for (query, result) in responses {
+                debug!("Received chat response from background thread");
+
+                let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+
+                match result {
+                    Ok(response) => {
+                        self.chat_history.push(ChatExchange {
+                            user_query: query,
+                            assistant_response: response.text,
+                            timestamp,
+                            is_error: false,
+                        });
+                        self.status_message = Some("✅ Response received".to_string());
+                    }
+                    Err(e) => {
+                        self.chat_history.push(ChatExchange {
+                            user_query: query,
+                            assistant_response: format!("Error: {}", e),
+                            timestamp,
+                            is_error: true,
+                        });
+                        self.status_message = Some(format!("❌ Chat error: {}", e));
+                    }
+                }
+
+                // Keep only last 10 exchanges
+                if self.chat_history.len() > 10 {
+                    self.chat_history.remove(0);
+                }
+
+            self.chat_pending = false;
+            self.mark_dirty();
+        }
+    }
+
     /// Handle a key event.
     pub fn handle_key_event(&mut self, key: KeyEvent) {
         let event = self.input_handler.handle_key(key);
@@ -491,48 +541,44 @@ impl App {
                     let query = self.chat_input.clone();
                     self.chat_input.clear();
 
-                    // Process chat request
+                    // Process chat request in background thread
                     if let Some(backend) = &self.chat_backend {
-                        self.status_message = Some(format!("Processing: {}...", query));
+                        self.status_message = Some(format!("⏳ Processing: {}...", query));
                         self.chat_pending = true;
 
-                        // Use tokio runtime to execute async request
-                        match tokio::runtime::Runtime::new() {
-                            Ok(rt) => {
-                                match rt.block_on(backend.process_command(&query)) {
-                                    Ok(response) => {
-                                        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-                                        self.chat_history.push(ChatExchange {
-                                            user_query: query,
-                                            assistant_response: response.text,
-                                            timestamp,
-                                            is_error: false,
-                                        });
-                                        self.status_message = Some("Response received".to_string());
+                        // Clone Arc for thread
+                        let backend_clone = Arc::clone(backend);
+                        let query_clone = query.clone();
 
-                                        // Keep only last 10 exchanges
-                                        if self.chat_history.len() > 10 {
-                                            self.chat_history.remove(0);
-                                        }
-                                    }
-                                    Err(e) => {
-                                        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-                                        self.chat_history.push(ChatExchange {
-                                            user_query: query,
-                                            assistant_response: format!("Error: {}", e),
-                                            timestamp,
-                                            is_error: true,
-                                        });
-                                        self.status_message = Some(format!("Chat error: {}", e));
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                self.status_message = Some(format!("Runtime error: {}", e));
-                            }
+                        // Create channel if not already created
+                        if self.chat_response_rx.is_none() {
+                            let (tx, rx) = mpsc::channel();
+                            self.chat_response_tx = Some(tx);
+                            self.chat_response_rx = Some(rx);
                         }
 
-                        self.chat_pending = false;
+                        let tx = self.chat_response_tx.as_ref().unwrap().clone();
+
+                        // Spawn background thread to process request
+                        std::thread::spawn(move || {
+                            use tracing::info;
+
+                            info!("Chat thread started for query: {}", query_clone);
+
+                            let result = match tokio::runtime::Runtime::new() {
+                                Ok(rt) => {
+                                    rt.block_on(backend_clone.process_command(&query_clone))
+                                }
+                                Err(e) => {
+                                    Err(forge_chat::ChatError::ApiError(format!("Runtime error: {}", e)))
+                                }
+                            };
+
+                            info!("Chat request completed, result: {:?}", result.is_ok());
+
+                            // Send result back to UI thread
+                            let _ = tx.send((query_clone, result));
+                        });
                     } else {
                         self.status_message = Some("Chat backend not initialized".to_string());
                     }
@@ -713,6 +759,9 @@ impl App {
                     self.mark_dirty();
                 }
             }
+
+            // Poll for chat responses from background thread
+            self.poll_chat_responses();
 
             // Check for updates periodically
             self.check_for_update();
