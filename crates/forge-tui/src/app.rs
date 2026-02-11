@@ -119,6 +119,10 @@ pub struct App {
     last_terminal_width: u16,
     /// Whether an update is available
     update_available: bool,
+    /// Whether an update is currently in progress
+    update_in_progress: bool,
+    /// Channel receiver for update completion results
+    update_result_rx: Option<Receiver<UpdateResult>>,
     /// Last time we checked for updates
     last_update_check: Instant,
     /// Chat backend (None if initialization failed)
@@ -140,6 +144,15 @@ pub struct ChatExchange {
     pub assistant_response: String,
     pub timestamp: String,
     pub is_error: bool,
+}
+
+/// Result of an update operation.
+#[derive(Clone, Debug)]
+pub enum UpdateResult {
+    /// Update completed successfully
+    Success,
+    /// Update failed with an error message
+    Failed(String),
 }
 
 impl Default for App {
@@ -198,6 +211,8 @@ impl App {
             cached_layout_mode: None,
             last_terminal_width: 0,
             update_available: false,
+            update_in_progress: false,
+            update_result_rx: None,
             last_update_check: now,
             chat_backend,
             chat_response_tx: None,
@@ -231,6 +246,8 @@ impl App {
             cached_layout_mode: None,
             last_terminal_width: 0,
             update_available: false,
+            update_in_progress: false,
+            update_result_rx: None,
             last_update_check: now,
             chat_backend: None, // Don't initialize in test mode
             chat_response_tx: None,
@@ -755,53 +772,86 @@ impl App {
         }
     }
 
-    /// Trigger forge update/rebuild and restart.
+    /// Trigger forge update/rebuild and restart (non-blocking).
+    ///
+    /// Spawns the build process in a background thread and shows immediate
+    /// visual feedback via the update_in_progress overlay.
     fn trigger_update(&mut self) {
         use std::env;
         use std::process::Command;
+        use std::thread;
 
-        self.status_message = Some("Rebuilding forge...".to_string());
+        // Prevent multiple concurrent updates
+        if self.update_in_progress {
+            self.status_message = Some("Update already in progress...".to_string());
+            self.mark_dirty();
+            return;
+        }
+
+        // Show immediate visual feedback
+        self.update_in_progress = true;
+        self.status_message = Some("Building forge... (this may take a moment)".to_string());
         self.mark_dirty();
 
-        // Get the forge source directory (assuming we're in a workspace)
+        // Get the forge source directory
         let forge_src = env::var("FORGE_SRC").unwrap_or_else(|_| "/home/coder/forge".to_string());
 
-        // Spawn background rebuild process
-        match Command::new("sh")
-            .arg("-c")
-            .arg(format!(
-                "cd {} && cargo build --release 2>&1 | tail -5 && cp target/release/forge ~/.cargo/bin/forge",
-                forge_src
-            ))
-            .spawn()
-        {
-            Ok(mut child) => {
-                // Wait for build to complete
-                match child.wait() {
-                    Ok(status) if status.success() => {
-                        self.status_message = Some("Update complete! Restarting...".to_string());
-                        self.mark_dirty();
+        // Create channel for receiving result
+        let (tx, rx) = mpsc::channel();
+        self.update_result_rx = Some(rx);
 
-                        // Give user time to see the message
-                        std::thread::sleep(std::time::Duration::from_secs(1));
-
-                        // Exit gracefully and let the user restart manually
-                        // (exec in Rust TUI is tricky due to terminal state)
-                        self.status_message = Some("Update complete! Please restart forge.".to_string());
-                        self.mark_dirty();
-                    }
-                    Ok(_) => {
-                        self.status_message = Some("Update failed! Check cargo build output.".to_string());
-                        self.mark_dirty();
-                    }
-                    Err(e) => {
-                        self.status_message = Some(format!("Update error: {}", e));
-                        self.mark_dirty();
+        // Spawn background thread to run the build
+        thread::spawn(move || {
+            let result = match Command::new("sh")
+                .arg("-c")
+                .arg(format!(
+                    "cd {} && cargo build --release 2>&1 | tail -5 && cp target/release/forge ~/.cargo/bin/forge",
+                    forge_src
+                ))
+                .output()
+            {
+                Ok(output) => {
+                    if output.status.success() {
+                        UpdateResult::Success
+                    } else {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        let error_msg = if !stderr.is_empty() {
+                            stderr.lines().last().unwrap_or("Build failed").to_string()
+                        } else if !stdout.is_empty() {
+                            stdout.lines().last().unwrap_or("Build failed").to_string()
+                        } else {
+                            "Build failed with unknown error".to_string()
+                        };
+                        UpdateResult::Failed(error_msg)
                     }
                 }
-            }
-            Err(e) => {
-                self.status_message = Some(format!("Failed to start update: {}", e));
+                Err(e) => UpdateResult::Failed(format!("Failed to start build: {}", e)),
+            };
+
+            // Send result back to main thread (ignore error if receiver dropped)
+            let _ = tx.send(result);
+        });
+    }
+
+    /// Poll for update completion (called from event loop).
+    fn poll_update_result(&mut self) {
+        if let Some(ref rx) = self.update_result_rx {
+            // Non-blocking check for result
+            if let Ok(result) = rx.try_recv() {
+                self.update_in_progress = false;
+                self.update_result_rx = None;
+
+                match result {
+                    UpdateResult::Success => {
+                        self.status_message =
+                            Some("Update complete! Please restart forge.".to_string());
+                        self.update_available = false; // Clear the update available flag
+                    }
+                    UpdateResult::Failed(err) => {
+                        self.status_message = Some(format!("Update failed: {}", err));
+                    }
+                }
                 self.mark_dirty();
             }
         }
@@ -859,6 +909,9 @@ impl App {
             // Poll for chat responses again after data polling in case a response
             // arrived while we were doing the (potentially slow) data poll
             self.poll_chat_responses();
+
+            // Poll for update completion
+            self.poll_update_result();
 
             // Check for updates periodically
             self.check_for_update();
@@ -934,6 +987,16 @@ impl App {
         // Draw update notification banner if update available
         if self.update_available {
             self.draw_update_banner(frame, area);
+        }
+
+        // Draw status message overlay if present
+        if let Some(ref msg) = self.status_message {
+            self.draw_status_message(frame, area, msg);
+        }
+
+        // Draw update in progress overlay (higher priority than status message)
+        if self.update_in_progress {
+            self.draw_update_progress_overlay(frame, area);
         }
     }
 
@@ -1578,6 +1641,79 @@ Press any key to close this help.";
             .alignment(ratatui::layout::Alignment::Center);
 
         frame.render_widget(banner, banner_area);
+    }
+
+    /// Draw a status message as a toast/notification at the bottom of the screen.
+    fn draw_status_message(&self, frame: &mut Frame, area: Rect, message: &str) {
+        let theme = self.theme_manager.current();
+
+        // Create a small banner at the bottom center
+        let msg_width = (message.len() + 4).min(area.width as usize - 4) as u16;
+        let banner_x = (area.width.saturating_sub(msg_width)) / 2;
+        let banner_y = area.height.saturating_sub(5); // Just above footer
+
+        let banner_area = Rect::new(banner_x, banner_y, msg_width, 3);
+
+        // Clear background
+        frame.render_widget(Clear, banner_area);
+
+        let banner = Paragraph::new(message)
+            .style(
+                Style::default()
+                    .fg(theme.colors.text)
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme.colors.border_dim)),
+            )
+            .alignment(ratatui::layout::Alignment::Center);
+
+        frame.render_widget(banner, banner_area);
+    }
+
+    /// Draw a prominent overlay when update is in progress.
+    fn draw_update_progress_overlay(&self, frame: &mut Frame, area: Rect) {
+        // Create a centered overlay
+        let overlay_width = 50.min(area.width.saturating_sub(4));
+        let overlay_height = 5;
+        let overlay_x = (area.width.saturating_sub(overlay_width)) / 2;
+        let overlay_y = (area.height.saturating_sub(overlay_height)) / 2;
+
+        let overlay_area = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
+
+        // Clear background
+        frame.render_widget(Clear, overlay_area);
+
+        let status_text = self
+            .status_message
+            .as_deref()
+            .unwrap_or("Updating forge...");
+
+        let content = format!("\n  {}  ", status_text);
+        let overlay = Paragraph::new(content)
+            .style(
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::Blue)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::LightBlue))
+                    .title(Span::styled(
+                        " Forge Update ",
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+            )
+            .alignment(ratatui::layout::Alignment::Center);
+
+        frame.render_widget(overlay, overlay_area);
     }
 }
 
