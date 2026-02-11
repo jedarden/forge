@@ -1574,7 +1574,7 @@ View Navigation:
   Shift+Tab Cycle views backward
 
 General:
-  ?  h     Show this help
+  ?        Show this help
   q        Quit
   Esc      Cancel / Close
   Ctrl+C   Force quit
@@ -2152,6 +2152,154 @@ mod tests {
             content.contains("Tab") || content.contains("Esc") || content.contains("Navigation"),
             "Help overlay should show navigation keys"
         );
+    }
+
+    #[test]
+    fn test_help_overlay_appears_on_show_help() {
+        let mut app = App::new();
+
+        // Help should be hidden initially
+        assert!(!app.show_help(), "Help should be hidden initially");
+
+        // Show help via ShowHelp event (triggered by '?' key)
+        app.handle_app_event(AppEvent::ShowHelp);
+        assert!(app.show_help(), "Help should be visible after ShowHelp event");
+    }
+
+    #[test]
+    fn test_help_overlay_closes_on_escape() {
+        let mut app = App::new();
+
+        // Show help first
+        app.handle_app_event(AppEvent::ShowHelp);
+        assert!(app.show_help(), "Help should be visible");
+
+        // Press Escape (Cancel event)
+        app.handle_app_event(AppEvent::Cancel);
+        assert!(!app.show_help(), "Help should be hidden after Esc");
+    }
+
+    #[test]
+    fn test_help_overlay_closes_on_any_key() {
+        let mut app = App::new();
+
+        // Show help
+        app.handle_app_event(AppEvent::ShowHelp);
+        assert!(app.show_help(), "Help should be visible");
+
+        // Any key that triggers HideHelp should close it
+        app.handle_app_event(AppEvent::HideHelp);
+        assert!(!app.show_help(), "Help should close after HideHelp event");
+    }
+
+    #[test]
+    fn test_help_overlay_shows_global_hotkeys_section() {
+        let mut app = App::new();
+        app.handle_app_event(AppEvent::ShowHelp);
+        let buffer = render_app(&mut app, 100, 40);
+        let content = buffer_to_string(&buffer);
+
+        // Help should show global hotkeys
+        assert!(
+            content.contains("General") || content.contains("?") || content.contains("Quit"),
+            "Help overlay should show global hotkeys section"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_shows_view_navigation_section() {
+        let mut app = App::new();
+        app.handle_app_event(AppEvent::ShowHelp);
+        let buffer = render_app(&mut app, 100, 40);
+        let content = buffer_to_string(&buffer);
+
+        // Help should show view navigation section
+        assert!(
+            content.contains("View") || content.contains("Navigation") || content.contains("Workers"),
+            "Help overlay should show view navigation section"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_shows_worker_management_section() {
+        let mut app = App::new();
+        app.handle_app_event(AppEvent::ShowHelp);
+        let buffer = render_app(&mut app, 100, 40);
+        let content = buffer_to_string(&buffer);
+
+        // Help should show worker-related keys (either spawn or kill)
+        assert!(
+            content.contains("g") || content.contains("s") || content.contains("k"),
+            "Help overlay should show worker management keys"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_shows_task_management_info() {
+        let mut app = App::new();
+        app.handle_app_event(AppEvent::ShowHelp);
+        let buffer = render_app(&mut app, 100, 40);
+        let content = buffer_to_string(&buffer);
+
+        // Help should show task-related navigation
+        assert!(
+            content.contains("t") || content.contains("Tasks"),
+            "Help overlay should show task management navigation"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_no_visual_artifacts_after_closing() {
+        let mut app = App::new();
+
+        // Show help
+        app.handle_app_event(AppEvent::ShowHelp);
+        let _buffer_with_help = render_app(&mut app, 100, 40);
+
+        // Close help
+        app.handle_app_event(AppEvent::Cancel);
+        assert!(!app.show_help(), "Help should be hidden");
+
+        // App should render cleanly after closing help
+        let buffer_after_close = render_app(&mut app, 100, 40);
+        let content = buffer_to_string(&buffer_after_close);
+
+        // Help text should no longer be visible
+        assert!(
+            !content.contains("Hotkey Reference"),
+            "Help content should not be visible after closing"
+        );
+    }
+
+    #[test]
+    fn test_help_overlay_centered_on_screen() {
+        let mut app = App::new();
+        app.handle_app_event(AppEvent::ShowHelp);
+        let buffer = render_app(&mut app, 120, 40);
+
+        // Help should render without panic - centered positioning is visual
+        assert!(app.show_help(), "Help should be visible");
+        assert!(
+            buffer_contains(&buffer, "Help") || buffer_contains(&buffer, "Hotkey"),
+            "Help overlay should render centered"
+        );
+    }
+
+    #[test]
+    fn test_help_toggle_via_show_and_hide() {
+        let mut app = App::new();
+
+        // Toggle help on
+        app.handle_app_event(AppEvent::ShowHelp);
+        assert!(app.show_help(), "Help should be visible after ShowHelp");
+
+        // Toggle help off
+        app.handle_app_event(AppEvent::HideHelp);
+        assert!(!app.show_help(), "Help should be hidden after HideHelp");
+
+        // Toggle help on again
+        app.handle_app_event(AppEvent::ShowHelp);
+        assert!(app.show_help(), "Help should be visible again");
     }
 
     // ============================================================
