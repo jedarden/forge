@@ -159,8 +159,28 @@ jobs:
       - name: Install forge
         run: cargo install --path .
 
-      - name: Create forge config directory
-        run: mkdir -p ~/.forge
+      - name: Create forge config directory and config
+        run: |
+          mkdir -p ~/.forge/logs ~/.forge/status ~/.forge/launchers
+          cat > ~/.forge/config.yaml << 'EOF'
+          # Minimal config for CI testing - prevents onboarding
+          chat_backend:
+            command: echo
+            args: []
+            model: sonnet
+            timeout: 30
+            max_retries: 1
+
+          status_path: ~/.forge/status/
+
+          cost_tracking:
+            enabled: false
+
+          dashboard:
+            refresh_interval_ms: 1000
+            max_fps: 60
+            default_layout: overview
+          EOF
 
       - name: Run quick TUI tests
         run: |
