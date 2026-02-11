@@ -87,6 +87,35 @@ pub enum StatusWatcherError {
 /// Result type for status watcher operations.
 pub type StatusWatcherResult<T> = Result<T, StatusWatcherError>;
 
+/// Custom deserializer for current_task field that handles both string and object formats.
+///
+/// Accepts:
+/// - String: "bd-abc"
+/// - Object: {"bead_id": "bd-abc", "bead_title": "...", "priority": 1}
+fn deserialize_current_task<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Deserialize};
+    use serde_json::Value;
+
+    let value = Value::deserialize(deserializer)?;
+
+    match value {
+        Value::Null => Ok(None),
+        Value::String(s) => Ok(Some(s)),
+        Value::Object(map) => {
+            // Extract bead_id from object format
+            if let Some(Value::String(bead_id)) = map.get("bead_id") {
+                Ok(Some(bead_id.clone()))
+            } else {
+                Err(de::Error::custom("current_task object must have bead_id field"))
+            }
+        }
+        _ => Err(de::Error::custom("current_task must be a string or object")),
+    }
+}
+
 /// Worker status as read from a status file.
 ///
 /// This struct represents the JSON format of worker status files.
@@ -119,8 +148,8 @@ pub struct WorkerStatusFile {
     #[serde(default)]
     pub last_activity: Option<DateTime<Utc>>,
 
-    /// Current task/bead being worked on
-    #[serde(default)]
+    /// Current task/bead being worked on (handles both string and object formats)
+    #[serde(default, deserialize_with = "deserialize_current_task")]
     pub current_task: Option<String>,
 
     /// Number of tasks completed
@@ -1168,5 +1197,226 @@ mod tests {
 
         assert_eq!(watcher.worker_counts().total, 5);
         assert_eq!(watcher.worker_counts().active, 5);
+    }
+
+    // ============================================================
+    // current_task Format Consistency Tests
+    // ============================================================
+    //
+    // These tests verify that the custom deserializer handles both
+    // string and object formats for the current_task field.
+
+    /// Test current_task as a simple string format.
+    #[test]
+    fn test_current_task_string_format() {
+        let json = r#"{
+            "worker_id": "string-task-worker",
+            "status": "active",
+            "model": "test-model",
+            "workspace": "/test",
+            "current_task": "bd-abc"
+        }"#;
+
+        let path = Path::new("test.json");
+        let status = WorkerStatusFile::from_json(json, path).unwrap();
+
+        assert_eq!(status.worker_id, "string-task-worker");
+        assert_eq!(status.current_task, Some("bd-abc".to_string()));
+    }
+
+    /// Test current_task as an object format with bead_id.
+    #[test]
+    fn test_current_task_object_format() {
+        let json = r#"{
+            "worker_id": "object-task-worker",
+            "status": "active",
+            "model": "test-model",
+            "workspace": "/test",
+            "current_task": {
+                "bead_id": "bd-xyz",
+                "bead_title": "Some task title",
+                "priority": 1
+            }
+        }"#;
+
+        let path = Path::new("test.json");
+        let status = WorkerStatusFile::from_json(json, path).unwrap();
+
+        assert_eq!(status.worker_id, "object-task-worker");
+        assert_eq!(status.current_task, Some("bd-xyz".to_string()));
+    }
+
+    /// Test current_task as null (no task).
+    #[test]
+    fn test_current_task_null() {
+        let json = r#"{
+            "worker_id": "no-task-worker",
+            "status": "idle",
+            "model": "test-model",
+            "workspace": "/test",
+            "current_task": null
+        }"#;
+
+        let path = Path::new("test.json");
+        let status = WorkerStatusFile::from_json(json, path).unwrap();
+
+        assert_eq!(status.worker_id, "no-task-worker");
+        assert_eq!(status.current_task, None);
+    }
+
+    /// Test current_task missing from JSON (uses default None).
+    #[test]
+    fn test_current_task_missing() {
+        let json = r#"{
+            "worker_id": "missing-task-worker",
+            "status": "idle",
+            "model": "test-model",
+            "workspace": "/test"
+        }"#;
+
+        let path = Path::new("test.json");
+        let status = WorkerStatusFile::from_json(json, path).unwrap();
+
+        assert_eq!(status.worker_id, "missing-task-worker");
+        assert_eq!(status.current_task, None);
+    }
+
+    /// Test current_task object format with minimal fields.
+    #[test]
+    fn test_current_task_object_minimal() {
+        let json = r#"{
+            "worker_id": "minimal-object-worker",
+            "status": "active",
+            "current_task": {"bead_id": "fg-123"}
+        }"#;
+
+        let path = Path::new("test.json");
+        let status = WorkerStatusFile::from_json(json, path).unwrap();
+
+        assert_eq!(status.current_task, Some("fg-123".to_string()));
+    }
+
+    /// Test current_task object format without bead_id fails.
+    #[test]
+    fn test_current_task_object_missing_bead_id() {
+        let json = r#"{
+            "worker_id": "bad-object-worker",
+            "status": "active",
+            "current_task": {"title": "missing bead_id", "priority": 1}
+        }"#;
+
+        let path = Path::new("test.json");
+        let result = WorkerStatusFile::from_json(json, path);
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("bead_id"));
+    }
+
+    /// Test current_task with various bead ID prefixes.
+    #[test]
+    fn test_current_task_various_prefixes() {
+        let test_cases = [
+            ("bd-abc", "bd-abc"),      // beads format
+            ("fg-xyz", "fg-xyz"),      // forge format
+            ("po-123", "po-123"),      // another prefix
+            ("task-uuid-here", "task-uuid-here"), // longer format
+        ];
+
+        for (input, expected) in test_cases {
+            let json = format!(
+                r#"{{"worker_id": "prefix-worker", "current_task": "{}"}}"#,
+                input
+            );
+            let path = Path::new("test.json");
+            let status = WorkerStatusFile::from_json(&json, path).unwrap();
+            assert_eq!(
+                status.current_task,
+                Some(expected.to_string()),
+                "Failed for input: {}",
+                input
+            );
+        }
+    }
+
+    /// Test file parsing with both current_task formats.
+    #[test]
+    fn test_file_parsing_current_task_formats() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create file with string format
+        let string_path = temp_dir.path().join("string-worker.json");
+        fs::write(
+            &string_path,
+            r#"{"worker_id": "string-worker", "status": "active", "current_task": "bd-string"}"#,
+        )
+        .unwrap();
+
+        // Create file with object format
+        let object_path = temp_dir.path().join("object-worker.json");
+        fs::write(
+            &object_path,
+            r#"{"worker_id": "object-worker", "status": "active", "current_task": {"bead_id": "bd-object", "priority": 0}}"#,
+        )
+        .unwrap();
+
+        // Parse both files
+        let string_status = WorkerStatusFile::from_file(&string_path).unwrap();
+        let object_status = WorkerStatusFile::from_file(&object_path).unwrap();
+
+        assert_eq!(string_status.current_task, Some("bd-string".to_string()));
+        assert_eq!(object_status.current_task, Some("bd-object".to_string()));
+    }
+
+    /// Test StatusWatcher handles mixed current_task formats.
+    #[test]
+    fn test_watcher_mixed_current_task_formats() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        // Create workers with different current_task formats
+        fs::write(
+            status_dir.join("worker-1.json"),
+            r#"{"worker_id": "worker-1", "status": "active", "current_task": "bd-string-task"}"#,
+        )
+        .unwrap();
+
+        fs::write(
+            status_dir.join("worker-2.json"),
+            r#"{"worker_id": "worker-2", "status": "active", "current_task": {"bead_id": "bd-object-task", "title": "Object task"}}"#,
+        )
+        .unwrap();
+
+        fs::write(
+            status_dir.join("worker-3.json"),
+            r#"{"worker_id": "worker-3", "status": "idle", "current_task": null}"#,
+        )
+        .unwrap();
+
+        fs::write(
+            status_dir.join("worker-4.json"),
+            r#"{"worker_id": "worker-4", "status": "idle"}"#,
+        )
+        .unwrap();
+
+        // Initialize watcher
+        let config = StatusWatcherConfig::default().with_status_dir(&status_dir);
+        let watcher = StatusWatcher::new(config).unwrap();
+
+        // Verify all workers are tracked with correct current_task values
+        assert_eq!(watcher.workers().len(), 4);
+
+        let w1 = watcher.get_worker("worker-1").unwrap();
+        assert_eq!(w1.current_task, Some("bd-string-task".to_string()));
+
+        let w2 = watcher.get_worker("worker-2").unwrap();
+        assert_eq!(w2.current_task, Some("bd-object-task".to_string()));
+
+        let w3 = watcher.get_worker("worker-3").unwrap();
+        assert_eq!(w3.current_task, None);
+
+        let w4 = watcher.get_worker("worker-4").unwrap();
+        assert_eq!(w4.current_task, None);
     }
 }
