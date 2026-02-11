@@ -443,6 +443,11 @@ impl App {
         self.show_help
     }
 
+    /// Returns whether kill dialog is visible.
+    pub fn show_kill_dialog(&self) -> bool {
+        self.show_kill_dialog
+    }
+
     /// Mark the UI as dirty (needs redraw).
     fn mark_dirty(&mut self) {
         self.dirty = true;
@@ -913,7 +918,7 @@ impl App {
 
     /// Kill the currently selected worker in the kill dialog.
     fn kill_selected_worker(&mut self) {
-        use forge_worker::tmux::kill_session;
+        use forge_worker::tmux::{kill_session, session_exists};
         use tracing::{error, info, warn};
 
         if self.kill_dialog_selected >= self.kill_dialog_workers.len() {
@@ -927,50 +932,76 @@ impl App {
 
         info!("Killing worker: {} (session: {})", worker.suffix, session_name);
 
-        // Kill the tmux session
-        let result = self.worker_runtime.block_on(async { kill_session(&session_name).await });
+        // First check if session exists (to handle already-dead workers gracefully)
+        let exists = self.worker_runtime.block_on(async { session_exists(&session_name).await });
 
-        match result {
-            Ok(()) => {
-                info!("Successfully killed worker session: {}", session_name);
-                self.status_message = Some(format!("Killed worker: {}", worker.suffix));
+        match exists {
+            Ok(true) => {
+                // Session exists, proceed to kill
+                let result = self.worker_runtime.block_on(async { kill_session(&session_name).await });
 
-                // Remove the killed worker from the list
+                match result {
+                    Ok(()) => {
+                        info!("Successfully killed worker session: {}", session_name);
+                        self.status_message = Some(format!("Killed worker: {}", worker.suffix));
+
+                        // Remove the killed worker from the list
+                        self.kill_dialog_workers.remove(self.kill_dialog_selected);
+
+                        // Adjust selection if needed
+                        if self.kill_dialog_selected >= self.kill_dialog_workers.len() && self.kill_dialog_selected > 0 {
+                            self.kill_dialog_selected -= 1;
+                        }
+
+                        // Close dialog if no workers left
+                        if self.kill_dialog_workers.is_empty() {
+                            self.show_kill_dialog = false;
+                            self.kill_dialog_error = None;
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to kill worker {}: {}", session_name, e);
+                        self.kill_dialog_error = Some(format!("Failed to kill worker: {}", e));
+                    }
+                }
+            }
+            Ok(false) => {
+                // Session doesn't exist - worker already terminated
+                warn!("Worker session already terminated: {}", session_name);
+                self.kill_dialog_error = Some(format!(
+                    "Worker '{}' already terminated or session not found",
+                    worker.suffix
+                ));
+
+                // Remove from list since it's already dead
                 self.kill_dialog_workers.remove(self.kill_dialog_selected);
-
-                // Adjust selection if needed
                 if self.kill_dialog_selected >= self.kill_dialog_workers.len() && self.kill_dialog_selected > 0 {
                     self.kill_dialog_selected -= 1;
                 }
-
-                // Close dialog if no workers left
                 if self.kill_dialog_workers.is_empty() {
                     self.show_kill_dialog = false;
-                    self.kill_dialog_error = None;
                 }
             }
             Err(e) => {
-                error!("Failed to kill worker {}: {}", session_name, e);
-
-                // Check if the session no longer exists
-                let err_str = e.to_string();
-                if err_str.contains("can't find session") || err_str.contains("no session") {
-                    warn!("Worker session already terminated: {}", session_name);
-                    self.kill_dialog_error = Some(format!(
-                        "Worker '{}' already terminated or session not found",
-                        worker.suffix
-                    ));
-
-                    // Remove from list since it's already dead
-                    self.kill_dialog_workers.remove(self.kill_dialog_selected);
-                    if self.kill_dialog_selected >= self.kill_dialog_workers.len() && self.kill_dialog_selected > 0 {
-                        self.kill_dialog_selected -= 1;
+                error!("Failed to check session existence: {}", e);
+                // Try to kill anyway - the kill might still work
+                let result = self.worker_runtime.block_on(async { kill_session(&session_name).await });
+                match result {
+                    Ok(()) => {
+                        info!("Successfully killed worker session: {}", session_name);
+                        self.status_message = Some(format!("Killed worker: {}", worker.suffix));
+                        self.kill_dialog_workers.remove(self.kill_dialog_selected);
+                        if self.kill_dialog_selected >= self.kill_dialog_workers.len() && self.kill_dialog_selected > 0 {
+                            self.kill_dialog_selected -= 1;
+                        }
+                        if self.kill_dialog_workers.is_empty() {
+                            self.show_kill_dialog = false;
+                            self.kill_dialog_error = None;
+                        }
                     }
-                    if self.kill_dialog_workers.is_empty() {
-                        self.show_kill_dialog = false;
+                    Err(e) => {
+                        self.kill_dialog_error = Some(format!("Failed to kill worker: {}", e));
                     }
-                } else {
-                    self.kill_dialog_error = Some(format!("Failed to kill worker: {}", e));
                 }
             }
         }
