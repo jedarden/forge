@@ -142,6 +142,6 @@ pub mod types;
 
 // Re-export main types for convenience
 pub use bead_queue::{BeadAllocation, BeadQueueManager, BeadQueueReader, QueuedBead};
-pub use discovery::{discover_workers, DiscoveredWorker, DiscoveryResult, WorkerType};
+pub use discovery::{DiscoveredWorker, DiscoveryResult, WorkerType, discover_workers};
 pub use launcher::WorkerLauncher;
 pub use types::{LaunchConfig, LauncherOutput, SpawnRequest, WorkerHandle};

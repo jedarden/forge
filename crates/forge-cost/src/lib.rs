@@ -49,7 +49,9 @@ pub mod parser;
 pub mod query;
 
 // Re-export main types
-pub use aggregator::{Aggregator, AggregatorBuilder, AggregatorConfig, DEFAULT_AGGREGATION_INTERVAL_SECS};
+pub use aggregator::{
+    Aggregator, AggregatorBuilder, AggregatorConfig, DEFAULT_AGGREGATION_INTERVAL_SECS,
+};
 pub use db::CostDatabase;
 pub use error::{CostError, Result};
 pub use models::{

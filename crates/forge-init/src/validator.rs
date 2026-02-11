@@ -3,8 +3,7 @@
 //! Validates generated configuration by testing the chat backend connection.
 
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 use thiserror::Error;
 use tracing::{debug, info};
 
@@ -34,7 +33,7 @@ pub enum ValidationError {
 pub type Result<T> = std::result::Result<T, ValidationError>;
 
 /// Validation results with detailed status.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ValidationResults {
     /// Whether config.yaml exists and is valid YAML
     pub config_valid: bool,
@@ -51,13 +50,7 @@ pub struct ValidationResults {
 impl ValidationResults {
     /// Create a new validation result.
     pub fn new() -> Self {
-        Self {
-            config_valid: false,
-            launcher_valid: false,
-            directories_valid: false,
-            passed: false,
-            warnings: Vec::new(),
-        }
+        Self::default()
     }
 
     /// Add a warning.
@@ -107,13 +100,13 @@ pub fn validate_config(forge_dir: &Path) -> Result<ValidationResults> {
 }
 
 /// Validate config.yaml file.
-fn validate_config_file(config_path: &Path, results: &mut ValidationResults) -> Result<bool> {
+fn validate_config_file(config_path: &Path, _results: &mut ValidationResults) -> Result<bool> {
     debug!("Validating config file: {}", config_path.display());
 
     // Check if file exists
     if !config_path.exists() {
         return Err(ValidationError::ConfigNotFound(
-            config_path.display().to_string()
+            config_path.display().to_string(),
         ));
     }
 
@@ -126,9 +119,7 @@ fn validate_config_file(config_path: &Path, results: &mut ValidationResults) -> 
             debug!("Config file is valid YAML");
             Ok(true)
         }
-        Err(e) => {
-            Err(ValidationError::ConfigInvalidYaml(e.to_string()))
-        }
+        Err(e) => Err(ValidationError::ConfigInvalidYaml(e.to_string())),
     }
 }
 
@@ -137,7 +128,10 @@ fn validate_launchers(launchers_dir: &Path, results: &mut ValidationResults) -> 
     debug!("Validating launcher scripts in {}", launchers_dir.display());
 
     if !launchers_dir.exists() {
-        results.add_warning(format!("Launchers directory not found: {}", launchers_dir.display()));
+        results.add_warning(format!(
+            "Launchers directory not found: {}",
+            launchers_dir.display()
+        ));
         return Ok(false);
     }
 
@@ -147,26 +141,21 @@ fn validate_launchers(launchers_dir: &Path, results: &mut ValidationResults) -> 
 
     let mut found_launcher = false;
 
-    for entry in entries {
-        if let Ok(entry) = entry {
-            let path = entry.path();
-            if path.is_file() && path.file_name().is_some() {
-                found_launcher = true;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() && path.file_name().is_some() {
+            found_launcher = true;
 
-                // Check if executable
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    if let Ok(metadata) = fs::metadata(&path) {
-                        let permissions = metadata.permissions();
-                        let is_executable = permissions.mode() & 0o111 != 0;
+            // Check if executable
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(metadata) = fs::metadata(&path) {
+                    let permissions = metadata.permissions();
+                    let is_executable = permissions.mode() & 0o111 != 0;
 
-                        if !is_executable {
-                            results.add_warning(format!(
-                                "Launcher not executable: {}",
-                                path.display()
-                            ));
-                        }
+                    if !is_executable {
+                        results.add_warning(format!("Launcher not executable: {}", path.display()));
                     }
                 }
             }
@@ -210,6 +199,7 @@ pub fn quick_validate(forge_dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
     fn create_test_setup(temp: &TempDir) -> PathBuf {

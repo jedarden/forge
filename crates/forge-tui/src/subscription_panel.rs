@@ -226,11 +226,7 @@ impl SubscriptionStatus {
     pub fn time_until_reset(&self) -> Option<Duration> {
         self.resets_at.map(|r| {
             let now = Utc::now();
-            if r > now {
-                r - now
-            } else {
-                Duration::zero()
-            }
+            if r > now { r - now } else { Duration::zero() }
         })
     }
 
@@ -286,7 +282,8 @@ impl SubscriptionStatus {
                 ResetPeriod::PayPerUse => return SubscriptionAction::Active,
             };
 
-            let hours_remaining = duration.num_hours() as f64 + (duration.num_minutes() % 60) as f64 / 60.0;
+            let hours_remaining =
+                duration.num_hours() as f64 + (duration.num_minutes() % 60) as f64 / 60.0;
             let hours_elapsed = total_hours - hours_remaining;
             let expected_pct = if total_hours > 0.0 {
                 (hours_elapsed / total_hours) * 100.0
@@ -370,17 +367,26 @@ impl SubscriptionData {
             // Claude Pro: 328/500 messages, resets in 16 days
             SubscriptionStatus::new(SubscriptionService::ClaudePro)
                 .with_usage(328, 500, "msgs")
-                .with_reset(now + Duration::days(16) + Duration::hours(9), ResetPeriod::Monthly)
+                .with_reset(
+                    now + Duration::days(16) + Duration::hours(9),
+                    ResetPeriod::Monthly,
+                )
                 .with_active(true),
             // ChatGPT Plus: 12/40 messages per 3 hours
             SubscriptionStatus::new(SubscriptionService::ChatGPTPlus)
                 .with_usage(12, 40, "msg/3hr")
-                .with_reset(now + Duration::hours(23) + Duration::minutes(14), ResetPeriod::Hourly(3))
+                .with_reset(
+                    now + Duration::hours(23) + Duration::minutes(14),
+                    ResetPeriod::Hourly(3),
+                )
                 .with_active(true),
             // Cursor Pro: 487/500 requests
             SubscriptionStatus::new(SubscriptionService::CursorPro)
                 .with_usage(487, 500, "reqs")
-                .with_reset(now + Duration::days(8) + Duration::hours(3), ResetPeriod::Monthly)
+                .with_reset(
+                    now + Duration::days(8) + Duration::hours(3),
+                    ResetPeriod::Monthly,
+                )
                 .with_active(true),
             // DeepSeek: Pay-per-use
             SubscriptionStatus::new(SubscriptionService::DeepSeekAPI)
@@ -509,7 +515,11 @@ impl<'a> SubscriptionPanel<'a> {
             .collect();
 
         let header = Row::new(vec!["Service", "Usage", "Limit", "Resets", "Action"])
-            .style(Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Gray)
+                    .add_modifier(Modifier::BOLD),
+            )
             .bottom_margin(0);
 
         let widths = [
@@ -538,19 +548,20 @@ impl<'a> SubscriptionPanel<'a> {
 
                 // Service name and bar
                 let bar = render_usage_bar(pct, bar_width, color);
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!("{:<12}", sub.service.short_name()),
-                        Style::default().fg(Color::White),
-                    ),
-                ]));
+                lines.push(Line::from(vec![Span::styled(
+                    format!("{:<12}", sub.service.short_name()),
+                    Style::default().fg(Color::White),
+                )]));
                 lines.push(bar);
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!("{:>5}/{:<5} ({:.0}%)", sub.current_usage, sub.limit.unwrap_or(0), pct),
-                        Style::default().fg(Color::Gray),
+                lines.push(Line::from(vec![Span::styled(
+                    format!(
+                        "{:>5}/{:<5} ({:.0}%)",
+                        sub.current_usage,
+                        sub.limit.unwrap_or(0),
+                        pct
                     ),
-                ]));
+                    Style::default().fg(Color::Gray),
+                )]));
                 lines.push(Line::from(""));
             }
         }
@@ -601,8 +612,8 @@ impl Widget for SubscriptionPanel<'_> {
         }
 
         if let Some(ref error) = self.data.error {
-            let err = Paragraph::new(format!("Error: {}", error))
-                .style(Style::default().fg(Color::Red));
+            let err =
+                Paragraph::new(format!("Error: {}", error)).style(Style::default().fg(Color::Red));
             err.render(inner, buf);
             return;
         }
@@ -638,15 +649,14 @@ impl<'a> SubscriptionSummaryCompact<'a> {
 impl Widget for SubscriptionSummaryCompact<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if self.data.is_loading {
-            let loading = Paragraph::new("Loading...")
-                .style(Style::default().fg(Color::Yellow));
+            let loading = Paragraph::new("Loading...").style(Style::default().fg(Color::Yellow));
             loading.render(area, buf);
             return;
         }
 
         if !self.data.has_data() {
-            let no_data = Paragraph::new("No subscription data")
-                .style(Style::default().fg(Color::Gray));
+            let no_data =
+                Paragraph::new("No subscription data").style(Style::default().fg(Color::Gray));
             no_data.render(area, buf);
             return;
         }
@@ -683,10 +693,7 @@ impl Widget for SubscriptionSummaryCompact<'_> {
 
                 lines.push(Line::from(vec![
                     Span::raw("             "),
-                    Span::styled(
-                        sub.format_reset_timer(),
-                        Style::default().fg(Color::Gray),
-                    ),
+                    Span::styled(sub.format_reset_timer(), Style::default().fg(Color::Gray)),
                     Span::raw("  "),
                     Span::styled(
                         format!("{} {}", action.icon(), action.description()),
@@ -702,10 +709,7 @@ impl Widget for SubscriptionSummaryCompact<'_> {
                     ),
                     Span::styled("Pay/Use", Style::default().fg(Color::Gray)),
                     Span::raw("  "),
-                    Span::styled(
-                        format!("${:.2}/d", spend),
-                        Style::default().fg(Color::Cyan),
-                    ),
+                    Span::styled(format!("${:.2}/d", spend), Style::default().fg(Color::Cyan)),
                 ]));
 
                 lines.push(Line::from(vec![
@@ -809,7 +813,10 @@ mod tests {
     fn test_subscription_service_names() {
         assert_eq!(SubscriptionService::ClaudePro.display_name(), "Claude Pro");
         assert_eq!(SubscriptionService::ClaudePro.short_name(), "Claude");
-        assert_eq!(SubscriptionService::DeepSeekAPI.display_name(), "DeepSeek API");
+        assert_eq!(
+            SubscriptionService::DeepSeekAPI.display_name(),
+            "DeepSeek API"
+        );
     }
 
     #[test]
@@ -829,8 +836,8 @@ mod tests {
 
     #[test]
     fn test_subscription_status_usage_pct() {
-        let status = SubscriptionStatus::new(SubscriptionService::ClaudePro)
-            .with_usage(250, 500, "msgs");
+        let status =
+            SubscriptionStatus::new(SubscriptionService::ClaudePro).with_usage(250, 500, "msgs");
 
         assert!((status.usage_pct() - 50.0).abs() < 0.01);
         assert_eq!(status.remaining(), Some(250));
@@ -870,13 +877,13 @@ mod tests {
     #[test]
     fn test_subscription_status_colors() {
         // Low usage - green
-        let low = SubscriptionStatus::new(SubscriptionService::ClaudePro)
-            .with_usage(100, 500, "msgs");
+        let low =
+            SubscriptionStatus::new(SubscriptionService::ClaudePro).with_usage(100, 500, "msgs");
         assert_eq!(low.usage_color(), Color::Green);
 
         // High usage - red
-        let high = SubscriptionStatus::new(SubscriptionService::ClaudePro)
-            .with_usage(480, 500, "msgs");
+        let high =
+            SubscriptionStatus::new(SubscriptionService::ClaudePro).with_usage(480, 500, "msgs");
         assert_eq!(high.usage_color(), Color::Red);
     }
 
@@ -900,20 +907,24 @@ mod tests {
         let now = Utc::now();
 
         // Days and hours
-        let status = SubscriptionStatus::new(SubscriptionService::ClaudePro)
-            .with_reset(now + Duration::days(5) + Duration::hours(12), ResetPeriod::Monthly);
+        let status = SubscriptionStatus::new(SubscriptionService::ClaudePro).with_reset(
+            now + Duration::days(5) + Duration::hours(12),
+            ResetPeriod::Monthly,
+        );
         let timer = status.format_reset_timer();
         assert!(timer.contains("d"));
 
         // Hours and minutes
-        let status = SubscriptionStatus::new(SubscriptionService::ChatGPTPlus)
-            .with_reset(now + Duration::hours(2) + Duration::minutes(30), ResetPeriod::Hourly(3));
+        let status = SubscriptionStatus::new(SubscriptionService::ChatGPTPlus).with_reset(
+            now + Duration::hours(2) + Duration::minutes(30),
+            ResetPeriod::Hourly(3),
+        );
         let timer = status.format_reset_timer();
         assert!(timer.contains("h") || timer.contains("m"));
 
         // Pay-per-use
-        let status = SubscriptionStatus::new(SubscriptionService::DeepSeekAPI)
-            .with_pay_per_use(0.05);
+        let status =
+            SubscriptionStatus::new(SubscriptionService::DeepSeekAPI).with_pay_per_use(0.05);
         let timer = status.format_reset_timer();
         assert_eq!(timer, "Monthly");
     }

@@ -264,15 +264,11 @@ mod tests {
 
     #[test]
     fn test_launch_config_builder() {
-        let config = LaunchConfig::new(
-            "/path/to/launcher.sh",
-            "test-session",
-            "/workspace",
-            "opus",
-        )
-        .with_tier(WorkerTier::Premium)
-        .with_env("FORGE_DEBUG", "1")
-        .with_timeout(60);
+        let config =
+            LaunchConfig::new("/path/to/launcher.sh", "test-session", "/workspace", "opus")
+                .with_tier(WorkerTier::Premium)
+                .with_env("FORGE_DEBUG", "1")
+                .with_timeout(60);
 
         assert_eq!(config.tier, WorkerTier::Premium);
         assert_eq!(config.timeout_secs, 60);

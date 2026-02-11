@@ -64,7 +64,7 @@ impl std::fmt::Display for WorkerStatus {
 }
 
 /// Bead/task priority levels (P0 = critical, P4 = backlog).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub enum Priority {
     /// Critical priority (P0) - blocking, must be done immediately
     #[serde(rename = "0")]
@@ -74,6 +74,7 @@ pub enum Priority {
     P1,
     /// Normal priority (P2) - standard work
     #[serde(rename = "2")]
+    #[default]
     P2,
     /// Low priority (P3) - nice to have
     #[serde(rename = "3")]
@@ -119,12 +120,6 @@ impl std::fmt::Display for Priority {
     }
 }
 
-impl Default for Priority {
-    fn default() -> Self {
-        Self::P2
-    }
-}
-
 /// Worker tier for model routing.
 ///
 /// Per ADR 0003, workers are grouped into tiers for cost optimization.
@@ -150,10 +145,11 @@ impl std::fmt::Display for WorkerTier {
 }
 
 /// Bead/task status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BeadStatus {
     /// Task is open and ready to be worked on
+    #[default]
     Open,
     /// Task is currently being worked on
     InProgress,
@@ -177,17 +173,12 @@ impl std::fmt::Display for BeadStatus {
     }
 }
 
-impl Default for BeadStatus {
-    fn default() -> Self {
-        Self::Open
-    }
-}
-
 /// Type of bead/issue.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BeadType {
     /// Generic task
+    #[default]
     Task,
     /// Bug fix
     Bug,
@@ -211,12 +202,6 @@ impl std::fmt::Display for BeadType {
             Self::Research => write!(f, "research"),
             Self::Docs => write!(f, "docs"),
         }
-    }
-}
-
-impl Default for BeadType {
-    fn default() -> Self {
-        Self::Task
     }
 }
 

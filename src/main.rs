@@ -21,16 +21,15 @@
 //! forge --version
 //! ```
 
-use std::fs;
 use std::io::Write;
 use std::panic;
 use std::process::ExitCode;
 
 use clap::Parser;
-use forge_core::{init_logging, LogGuard};
+use forge_core::{LogGuard, init_logging};
 use forge_init::{detection, generator};
 use forge_tui::App;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 /// FORGE Agent Orchestration Dashboard
 ///
@@ -195,7 +194,8 @@ fn run_onboarding() -> Result<(), Box<dyn std::error::Error>> {
             detection::ToolStatus::MissingApiKey => "⚠️ ",
             _ => "❌",
         };
-        eprintln!("  {} {} - {} ({})",
+        eprintln!(
+            "  {} {} - {} ({})",
             status_icon,
             tool.name,
             tool.status_message(),
@@ -204,19 +204,25 @@ fn run_onboarding() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(version) = &tool.version {
             eprintln!("     Version: {}", version);
         }
-        if tool.api_key_required && !tool.api_key_detected {
-            if let Some(env_var) = &tool.api_key_env_var {
-                eprintln!("     Missing: {}", env_var);
-            }
+        if tool.api_key_required
+            && !tool.api_key_detected
+            && let Some(env_var) = &tool.api_key_env_var
+        {
+            eprintln!("     Missing: {}", env_var);
         }
     }
 
     // Select the first ready tool
-    let selected_tool = tools.iter()
+    let selected_tool = tools
+        .iter()
         .find(|t| t.is_ready())
         .ok_or("No ready tools available. Please set required API keys.")?;
 
-    eprintln!("\n✨ Using: {} ({})", selected_tool.name, selected_tool.binary_path.display());
+    eprintln!(
+        "\n✨ Using: {} ({})",
+        selected_tool.name,
+        selected_tool.binary_path.display()
+    );
 
     // Create directory structure
     let forge_dir = get_forge_dir();

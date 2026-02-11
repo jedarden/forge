@@ -50,7 +50,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode};
-use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, RecommendedCache};
+use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -255,28 +255,26 @@ impl StatusWatcher {
         let debouncer = new_debouncer(
             config.debounce_duration,
             None, // Use default tick rate
-            move |result: DebounceEventResult| {
-                match result {
-                    Ok(events) => {
-                        for event in events {
-                            if let Err(e) = process_event(
-                                &event.event,
-                                &status_dir_clone,
-                                &known_files_clone,
-                                &event_tx_clone,
-                            ) {
-                                warn!("Error processing file event: {}", e);
-                            }
+            move |result: DebounceEventResult| match result {
+                Ok(events) => {
+                    for event in events {
+                        if let Err(e) = process_event(
+                            &event.event,
+                            &status_dir_clone,
+                            &known_files_clone,
+                            &event_tx_clone,
+                        ) {
+                            warn!("Error processing file event: {}", e);
                         }
                     }
-                    Err(errors) => {
-                        for error in errors {
-                            error!("File watcher error: {:?}", error);
-                            let _ = event_tx_clone.blocking_send(StatusEvent::Error {
-                                worker_id: "watcher".to_string(),
-                                error: format!("{:?}", error),
-                            });
-                        }
+                }
+                Err(errors) => {
+                    for error in errors {
+                        error!("File watcher error: {:?}", error);
+                        let _ = event_tx_clone.blocking_send(StatusEvent::Error {
+                            worker_id: "watcher".to_string(),
+                            error: format!("{:?}", error),
+                        });
                     }
                 }
             },
@@ -425,7 +423,10 @@ fn process_event(
 
         // Send the event (non-blocking, drop if channel full)
         if tx.blocking_send(status_event).is_err() {
-            warn!("Event channel full, dropping event for worker {}", worker_id);
+            warn!(
+                "Event channel full, dropping event for worker {}",
+                worker_id
+            );
         }
     }
 
@@ -574,7 +575,8 @@ mod tests {
             .expect("Channel closed");
 
         match event {
-            StatusEvent::Created { worker_id, status } | StatusEvent::Modified { worker_id, status } => {
+            StatusEvent::Created { worker_id, status }
+            | StatusEvent::Modified { worker_id, status } => {
                 assert_eq!(worker_id, "new-worker");
                 assert_eq!(status.worker_id, "new-worker");
             }
@@ -711,7 +713,10 @@ mod tests {
         // Should not receive any events
         let result = tokio::time::timeout(Duration::from_millis(200), rx.recv()).await;
 
-        assert!(result.is_err(), "Should not receive event for non-JSON file");
+        assert!(
+            result.is_err(),
+            "Should not receive event for non-JSON file"
+        );
     }
 
     #[test]

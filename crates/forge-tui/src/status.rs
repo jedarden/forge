@@ -37,7 +37,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use notify::RecursiveMode;
 use notify_debouncer_full::{
-    new_debouncer, DebounceEventResult, DebouncedEvent, Debouncer, RecommendedCache,
+    DebounceEventResult, DebouncedEvent, Debouncer, RecommendedCache, new_debouncer,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -109,7 +109,9 @@ where
             if let Some(Value::String(bead_id)) = map.get("bead_id") {
                 Ok(Some(bead_id.clone()))
             } else {
-                Err(de::Error::custom("current_task object must have bead_id field"))
+                Err(de::Error::custom(
+                    "current_task object must have bead_id field",
+                ))
             }
         }
         _ => Err(de::Error::custom("current_task must be a string or object")),
@@ -203,10 +205,7 @@ pub enum StatusEvent {
     },
 
     /// An error occurred while processing a status file
-    Error {
-        path: PathBuf,
-        error: String,
-    },
+    Error { path: PathBuf, error: String },
 }
 
 /// Configuration for the status watcher.
@@ -760,7 +759,10 @@ mod tests {
     fn test_worker_status_file_from_file_not_found() {
         let result = WorkerStatusFile::from_file(Path::new("/nonexistent/file.json"));
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), StatusWatcherError::ReadFile { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            StatusWatcherError::ReadFile { .. }
+        ));
     }
 
     #[test]
@@ -771,7 +773,10 @@ mod tests {
 
         let result = WorkerStatusFile::from_file(&path);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), StatusWatcherError::ParseJson { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            StatusWatcherError::ParseJson { .. }
+        ));
     }
 
     #[test]
@@ -930,7 +935,10 @@ mod tests {
                         return;
                     }
                 }
-                panic!("Expected WorkerUpdated event with active status, got: {:?}", other);
+                panic!(
+                    "Expected WorkerUpdated event with active status, got: {:?}",
+                    other
+                );
             }
         }
     }
@@ -1013,9 +1021,18 @@ mod tests {
         while watcher.recv_timeout(Duration::from_millis(100)).is_some() {}
 
         // Verify all workers are tracked
-        assert!(watcher.get_worker("worker-a").is_some(), "worker-a should be tracked");
-        assert!(watcher.get_worker("worker-b").is_some(), "worker-b should be tracked");
-        assert!(watcher.get_worker("worker-c").is_some(), "worker-c should be tracked");
+        assert!(
+            watcher.get_worker("worker-a").is_some(),
+            "worker-a should be tracked"
+        );
+        assert!(
+            watcher.get_worker("worker-b").is_some(),
+            "worker-b should be tracked"
+        );
+        assert!(
+            watcher.get_worker("worker-c").is_some(),
+            "worker-c should be tracked"
+        );
 
         // Verify counts
         let counts = watcher.worker_counts();
@@ -1176,7 +1193,8 @@ mod tests {
         for i in 0..5 {
             let content = format!(
                 r#"{{"worker_id": "concurrent-{}", "status": "active", "model": "test", "workspace": "/test", "tasks_completed": {}}}"#,
-                i, i * 10
+                i,
+                i * 10
             );
             fs::write(status_dir.join(format!("concurrent-{}.json", i)), content).unwrap();
         }
@@ -1317,9 +1335,9 @@ mod tests {
     #[test]
     fn test_current_task_various_prefixes() {
         let test_cases = [
-            ("bd-abc", "bd-abc"),      // beads format
-            ("fg-xyz", "fg-xyz"),      // forge format
-            ("po-123", "po-123"),      // another prefix
+            ("bd-abc", "bd-abc"),                 // beads format
+            ("fg-xyz", "fg-xyz"),                 // forge format
+            ("po-123", "po-123"),                 // another prefix
             ("task-uuid-here", "task-uuid-here"), // longer format
         ];
 

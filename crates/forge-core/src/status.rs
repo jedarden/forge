@@ -40,7 +40,9 @@ use crate::types::WorkerStatus;
 /// Accepts:
 /// - String: "bd-abc"
 /// - Object: {"bead_id": "bd-abc", "bead_title": "...", "priority": 1}
-fn deserialize_current_task<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+fn deserialize_current_task<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -57,7 +59,9 @@ where
             if let Some(Value::String(bead_id)) = map.get("bead_id") {
                 Ok(Some(bead_id.clone()))
             } else {
-                Err(de::Error::custom("current_task object must have bead_id field"))
+                Err(de::Error::custom(
+                    "current_task object must have bead_id field",
+                ))
             }
         }
         _ => Err(de::Error::custom("current_task must be a string or object")),
@@ -420,10 +424,7 @@ mod tests {
         assert_eq!(worker.worker_id, "test-worker");
         assert_eq!(worker.status, WorkerStatus::Active);
         assert_eq!(worker.model, Some("sonnet".to_string()));
-        assert_eq!(
-            worker.workspace,
-            Some(PathBuf::from("/home/user/project"))
-        );
+        assert_eq!(worker.workspace, Some(PathBuf::from("/home/user/project")));
         assert_eq!(worker.pid, Some(12345));
         assert_eq!(worker.current_task, Some("bd-123".to_string()));
         assert_eq!(worker.tasks_completed, 5);
@@ -474,11 +475,7 @@ mod tests {
             "worker-b",
             r#"{"worker_id": "worker-b", "status": "idle"}"#,
         );
-        create_test_status_file(
-            tmp_dir.path(),
-            "worker-c",
-            "invalid json",
-        );
+        create_test_status_file(tmp_dir.path(), "worker-c", "invalid json");
 
         // Non-JSON file should be ignored
         std::fs::write(tmp_dir.path().join("readme.txt"), "ignore me").unwrap();
@@ -503,16 +500,8 @@ mod tests {
     fn test_status_reader_list_workers() {
         let tmp_dir = TempDir::new().unwrap();
 
-        create_test_status_file(
-            tmp_dir.path(),
-            "alpha",
-            r#"{"worker_id": "alpha"}"#,
-        );
-        create_test_status_file(
-            tmp_dir.path(),
-            "beta",
-            r#"{"worker_id": "beta"}"#,
-        );
+        create_test_status_file(tmp_dir.path(), "alpha", r#"{"worker_id": "alpha"}"#);
+        create_test_status_file(tmp_dir.path(), "beta", r#"{"worker_id": "beta"}"#);
         std::fs::write(tmp_dir.path().join("readme.txt"), "ignore").unwrap();
 
         let reader = StatusReader::new(Some(tmp_dir.path().to_path_buf())).unwrap();
@@ -532,12 +521,30 @@ mod tests {
     #[test]
     fn test_worker_status_info_deserialize_all_statuses() {
         let test_cases = [
-            (r#"{"worker_id": "w", "status": "active"}"#, WorkerStatus::Active),
-            (r#"{"worker_id": "w", "status": "idle"}"#, WorkerStatus::Idle),
-            (r#"{"worker_id": "w", "status": "failed"}"#, WorkerStatus::Failed),
-            (r#"{"worker_id": "w", "status": "stopped"}"#, WorkerStatus::Stopped),
-            (r#"{"worker_id": "w", "status": "error"}"#, WorkerStatus::Error),
-            (r#"{"worker_id": "w", "status": "starting"}"#, WorkerStatus::Starting),
+            (
+                r#"{"worker_id": "w", "status": "active"}"#,
+                WorkerStatus::Active,
+            ),
+            (
+                r#"{"worker_id": "w", "status": "idle"}"#,
+                WorkerStatus::Idle,
+            ),
+            (
+                r#"{"worker_id": "w", "status": "failed"}"#,
+                WorkerStatus::Failed,
+            ),
+            (
+                r#"{"worker_id": "w", "status": "stopped"}"#,
+                WorkerStatus::Stopped,
+            ),
+            (
+                r#"{"worker_id": "w", "status": "error"}"#,
+                WorkerStatus::Error,
+            ),
+            (
+                r#"{"worker_id": "w", "status": "starting"}"#,
+                WorkerStatus::Starting,
+            ),
         ];
 
         for (json, expected_status) in test_cases {
@@ -623,7 +630,11 @@ mod tests {
         let result: std::result::Result<WorkerStatusInfo, _> = serde_json::from_str(json);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("bead_id"), "Error should mention bead_id: {}", err);
+        assert!(
+            err.contains("bead_id"),
+            "Error should mention bead_id: {}",
+            err
+        );
     }
 
     /// Test current_task invalid type (number) fails.
@@ -674,13 +685,22 @@ mod tests {
         assert_eq!(workers.len(), 3);
 
         // Find each worker by id
-        let w_string = workers.iter().find(|w| w.worker_id == "worker-string").unwrap();
+        let w_string = workers
+            .iter()
+            .find(|w| w.worker_id == "worker-string")
+            .unwrap();
         assert_eq!(w_string.current_task, Some("bd-string".to_string()));
 
-        let w_object = workers.iter().find(|w| w.worker_id == "worker-object").unwrap();
+        let w_object = workers
+            .iter()
+            .find(|w| w.worker_id == "worker-object")
+            .unwrap();
         assert_eq!(w_object.current_task, Some("fg-object".to_string()));
 
-        let w_null = workers.iter().find(|w| w.worker_id == "worker-null").unwrap();
+        let w_null = workers
+            .iter()
+            .find(|w| w.worker_id == "worker-null")
+            .unwrap();
         assert_eq!(w_null.current_task, None);
     }
 }

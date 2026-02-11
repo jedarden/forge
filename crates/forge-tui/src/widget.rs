@@ -74,13 +74,12 @@ impl QuickAction {
         Line::from(vec![
             Span::styled(
                 format!("[{}]", self.hotkey),
-                Style::default().fg(self.action_type.color()).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(self.action_type.color())
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw(" "),
-            Span::styled(
-                &self.description,
-                Style::default().fg(Color::White),
-            ),
+            Span::styled(&self.description, Style::default().fg(Color::White)),
         ])
     }
 }
@@ -183,12 +182,12 @@ impl<'a> QuickActionsPanel<'a> {
         let right_col = &self.actions[mid..];
 
         // Add section header
-        lines.push(Line::from(vec![
-            Span::styled(
-                "Quick Actions",
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-            ),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            "Quick Actions",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )]));
         lines.push(Line::from(""));
 
         // Render in two columns
@@ -225,9 +224,7 @@ impl<'a> QuickActionsPanel<'a> {
 
         format!(
             "[{}] {} {}",
-            action.hotkey,
-            color_marker,
-            action.description
+            action.hotkey, color_marker, action.description
         )
     }
 }
@@ -247,22 +244,33 @@ impl<'a> Widget for QuickActionsPanel<'a> {
         };
 
         let title_style = if self.focused {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::White)
         };
 
         // Build legend line
         let legend = vec![
-            Span::styled("● Spawn", Style::default().fg(QuickActionType::Spawn.color())),
+            Span::styled(
+                "● Spawn",
+                Style::default().fg(QuickActionType::Spawn.color()),
+            ),
             Span::raw(" "),
             Span::styled("● Kill", Style::default().fg(QuickActionType::Kill.color())),
             Span::raw(" "),
-            Span::styled("● Refresh", Style::default().fg(QuickActionType::Refresh.color())),
+            Span::styled(
+                "● Refresh",
+                Style::default().fg(QuickActionType::Refresh.color()),
+            ),
             Span::raw(" "),
             Span::styled("● View", Style::default().fg(QuickActionType::View.color())),
             Span::raw(" "),
-            Span::styled("● Config", Style::default().fg(QuickActionType::Configure.color())),
+            Span::styled(
+                "● Config",
+                Style::default().fg(QuickActionType::Configure.color()),
+            ),
         ];
 
         let mut lines = self.render_lines();
@@ -506,11 +514,7 @@ impl ProgressBar {
             }
             ProgressColorMode::CustomGradient(start, end) => {
                 // Simple interpolation - for full RGB support, we'd need more complex logic
-                if position < 0.5 {
-                    start
-                } else {
-                    end
-                }
+                if position < 0.5 { start } else { end }
             }
         }
     }
@@ -552,7 +556,9 @@ impl ProgressBar {
         let filled_units = (pct * total_units as f64).round() as usize;
         let full_chars = filled_units / 8;
         let partial_level = filled_units % 8;
-        let empty_chars = (self.width as usize).saturating_sub(full_chars).saturating_sub(1);
+        let empty_chars = (self.width as usize)
+            .saturating_sub(full_chars)
+            .saturating_sub(1);
 
         let mut result = String::with_capacity(self.width as usize);
 
@@ -654,7 +660,11 @@ impl Widget for ProgressBar {
         }
 
         // Render label and stats if space permits
-        let stats_width = if self.label.is_empty() { 0 } else { self.label.len() + 2 };
+        let stats_width = if self.label.is_empty() {
+            0
+        } else {
+            self.label.len() + 2
+        };
         let value_width = if self.show_value {
             format!("{}/{}", self.value, self.max).len()
         } else {
@@ -662,7 +672,14 @@ impl Widget for ProgressBar {
         };
         let percent_width = if self.show_percent { 5 } else { 0 }; // "100%"
 
-        let total_stats_width = stats_width + value_width + if value_width > 0 && percent_width > 0 { 1 } else { 0 } + percent_width;
+        let total_stats_width = stats_width
+            + value_width
+            + if value_width > 0 && percent_width > 0 {
+                1
+            } else {
+                0
+            }
+            + percent_width;
 
         if total_stats_width > 0 && area.width > bar_width as u16 + total_stats_width as u16 {
             x = area.left() + bar_width as u16 + 1;
@@ -865,7 +882,9 @@ impl Widget for FocusablePanel<'_> {
         };
 
         let title_style = if self.focused {
-            Style::default().fg(self.focus_color).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(self.focus_color)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::White)
         };
@@ -1099,18 +1118,15 @@ impl<'a> Widget for SparklineWidget<'a> {
 
         // Add label if present
         if let Some(label) = self.label {
-            lines.push(Line::from(vec![
-                Span::styled(label, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            ]));
-            lines.push(Line::from(Span::styled(
-                &sparkline_str,
-                self.style,
-            )));
+            lines.push(Line::from(vec![Span::styled(
+                label,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )]));
+            lines.push(Line::from(Span::styled(&sparkline_str, self.style)));
         } else {
-            lines.push(Line::from(Span::styled(
-                &sparkline_str,
-                self.style,
-            )));
+            lines.push(Line::from(Span::styled(&sparkline_str, self.style)));
         }
 
         // Add range if enabled
@@ -1177,7 +1193,10 @@ mod tests {
 
     #[test]
     fn test_progress_bar_with_label() {
-        let bar = ProgressBar::new(75, 100).width(10).label("Usage").show_value(true);
+        let bar = ProgressBar::new(75, 100)
+            .width(10)
+            .label("Usage")
+            .show_value(true);
         let rendered = bar.render_string();
         assert!(rendered.contains("Usage:"));
         assert!(rendered.contains("75/100"));
@@ -1222,9 +1241,7 @@ mod tests {
 
     #[test]
     fn test_hotkey_hints() {
-        let hints = HotkeyHints::new()
-            .hint('w', "Workers")
-            .hint('t', "Tasks");
+        let hints = HotkeyHints::new().hint('w', "Workers").hint('t', "Tasks");
 
         let line = hints.as_line();
         assert_eq!(line.spans.len(), 4); // 2 keys + 2 descriptions
@@ -1422,8 +1439,7 @@ mod tests {
 
     #[test]
     fn test_progress_bar_custom_gradient() {
-        let bar = ProgressBar::new(50, 100)
-            .custom_gradient(Color::Cyan, Color::Magenta);
+        let bar = ProgressBar::new(50, 100).custom_gradient(Color::Cyan, Color::Magenta);
         assert_eq!(
             bar.color_mode,
             ProgressColorMode::CustomGradient(Color::Cyan, Color::Magenta)
@@ -1442,9 +1458,7 @@ mod tests {
 
     #[test]
     fn test_progress_bar_hide_percent() {
-        let bar = ProgressBar::new(50, 100)
-            .width(10)
-            .show_percent(false);
+        let bar = ProgressBar::new(50, 100).width(10).show_percent(false);
         let rendered = bar.render_string();
         assert!(!rendered.contains('%'));
     }

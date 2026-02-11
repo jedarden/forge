@@ -265,10 +265,10 @@ impl ContextProvider {
         // Check cache
         {
             let cache = self.cache.read().await;
-            if let Some(cached) = cache.as_ref() {
-                if cached.cached_at.elapsed().as_secs() < self.cache_duration_secs {
-                    return Ok(cached.context.clone());
-                }
+            if let Some(cached) = cache.as_ref()
+                && cached.cached_at.elapsed().as_secs() < self.cache_duration_secs
+            {
+                return Ok(cached.context.clone());
             }
         }
 
@@ -347,17 +347,15 @@ impl MockContextSource {
                     beads_completed: 3,
                 },
             ],
-            tasks: vec![
-                TaskInfo {
-                    id: "bd-456".to_string(),
-                    title: "Implement feature X".to_string(),
-                    priority: "P1".to_string(),
-                    workspace: "/home/coder/forge".to_string(),
-                    in_progress: false,
-                    assigned_model: Some("sonnet".to_string()),
-                    estimated_tokens: Some(50000),
-                },
-            ],
+            tasks: vec![TaskInfo {
+                id: "bd-456".to_string(),
+                title: "Implement feature X".to_string(),
+                priority: "P1".to_string(),
+                workspace: "/home/coder/forge".to_string(),
+                in_progress: false,
+                assigned_model: Some("sonnet".to_string()),
+                estimated_tokens: Some(50000),
+            }],
             costs_today: CostAnalytics {
                 timeframe: "today".to_string(),
                 total_cost_usd: 12.43,
@@ -397,15 +395,13 @@ impl MockContextSource {
                 reset_time: "16d 9h".to_string(),
                 status: "on_pace".to_string(),
             }],
-            recent_events: vec![
-                EventInfo {
-                    timestamp: Utc::now(),
-                    event_type: "completions".to_string(),
-                    description: "Completed bd-123".to_string(),
-                    worker: Some("glm-alpha".to_string()),
-                    bead_id: Some("bd-123".to_string()),
-                },
-            ],
+            recent_events: vec![EventInfo {
+                timestamp: Utc::now(),
+                event_type: "completions".to_string(),
+                description: "Completed bd-123".to_string(),
+                worker: Some("glm-alpha".to_string()),
+                bead_id: Some("bd-123".to_string()),
+            }],
             timestamp: Utc::now(),
         };
 

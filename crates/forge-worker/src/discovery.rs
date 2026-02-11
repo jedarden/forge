@@ -296,10 +296,7 @@ pub async fn discover_workers() -> Result<DiscoveryResult> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let workers: Vec<DiscoveredWorker> = stdout
-        .lines()
-        .filter_map(parse_session_line)
-        .collect();
+    let workers: Vec<DiscoveredWorker> = stdout.lines().filter_map(parse_session_line).collect();
 
     // Build statistics
     let mut by_type = std::collections::HashMap::new();

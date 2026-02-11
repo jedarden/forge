@@ -44,7 +44,13 @@ impl ModelPricing {
     }
 
     /// Calculate cost from token counts.
-    pub fn calculate_cost(&self, input: i64, output: i64, cache_creation: i64, cache_read: i64) -> f64 {
+    pub fn calculate_cost(
+        &self,
+        input: i64,
+        output: i64,
+        cache_creation: i64,
+        cache_read: i64,
+    ) -> f64 {
         (input as f64 * self.input_per_million / 1_000_000.0)
             + (output as f64 * self.output_per_million / 1_000_000.0)
             + (cache_creation as f64 * self.cache_creation_per_million / 1_000_000.0)
@@ -82,26 +88,14 @@ pub fn default_pricing() -> HashMap<String, ModelPricing> {
     );
 
     // OpenAI models
-    pricing.insert(
-        "gpt-4-turbo".to_string(),
-        ModelPricing::new(10.0, 30.0),
-    );
+    pricing.insert("gpt-4-turbo".to_string(), ModelPricing::new(10.0, 30.0));
 
-    pricing.insert(
-        "gpt-4o".to_string(),
-        ModelPricing::new(5.0, 15.0),
-    );
+    pricing.insert("gpt-4o".to_string(), ModelPricing::new(5.0, 15.0));
 
     // DeepSeek
-    pricing.insert(
-        "deepseek-chat".to_string(),
-        ModelPricing::new(0.14, 0.28),
-    );
+    pricing.insert("deepseek-chat".to_string(), ModelPricing::new(0.14, 0.28));
 
-    pricing.insert(
-        "deepseek-coder".to_string(),
-        ModelPricing::new(0.14, 0.28),
-    );
+    pricing.insert("deepseek-coder".to_string(), ModelPricing::new(0.14, 0.28));
 
     pricing
 }
@@ -145,7 +139,7 @@ impl LogParser {
             let entry = entry?;
             let path = entry.path();
 
-            if path.extension().map_or(false, |e| e == "log") {
+            if path.extension().is_some_and(|e| e == "log") {
                 match self.parse_file(&path) {
                     Ok(calls) => {
                         debug!(file = %path.display(), count = calls.len(), "Parsed log file");
@@ -235,10 +229,22 @@ impl LogParser {
         let model = self.extract_model_from_result(value);
 
         // Parse token usage
-        let input_tokens = usage.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
-        let output_tokens = usage.get("output_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
-        let cache_creation = usage.get("cache_creation_input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
-        let cache_read = usage.get("cache_read_input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+        let input_tokens = usage
+            .get("input_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let output_tokens = usage
+            .get("output_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let cache_creation = usage
+            .get("cache_creation_input_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let cache_read = usage
+            .get("cache_read_input_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
 
         // Skip if no tokens (empty result)
         if input_tokens == 0 && output_tokens == 0 && cache_creation == 0 && cache_read == 0 {
@@ -247,14 +253,27 @@ impl LogParser {
 
         // Calculate cost if not provided
         let final_cost = cost_usd.unwrap_or_else(|| {
-            self.calculate_cost(&model, input_tokens, output_tokens, cache_creation, cache_read)
+            self.calculate_cost(
+                &model,
+                input_tokens,
+                output_tokens,
+                cache_creation,
+                cache_read,
+            )
         });
 
         // Try to extract timestamp from uuid field or use current time
         let timestamp = Utc::now(); // Result events are session summaries
 
-        let mut call = ApiCall::new(timestamp, worker_id, &model, input_tokens, output_tokens, final_cost)
-            .with_cache(cache_creation, cache_read);
+        let mut call = ApiCall::new(
+            timestamp,
+            worker_id,
+            &model,
+            input_tokens,
+            output_tokens,
+            final_cost,
+        )
+        .with_cache(cache_creation, cache_read);
 
         if let Some(sid) = session_id {
             call = call.with_session(sid);
@@ -278,7 +297,10 @@ impl LogParser {
         };
 
         let session_id = value.get("session_id").and_then(|v| v.as_str());
-        let model = message.get("model").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let model = message
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
 
         // Parse token usage - handle both Anthropic and OpenAI formats
         let (input_tokens, output_tokens, cache_creation, cache_read) =
@@ -290,12 +312,25 @@ impl LogParser {
         }
 
         // Calculate cost
-        let cost = self.calculate_cost(model, input_tokens, output_tokens, cache_creation, cache_read);
+        let cost = self.calculate_cost(
+            model,
+            input_tokens,
+            output_tokens,
+            cache_creation,
+            cache_read,
+        );
 
         let timestamp = Utc::now();
 
-        let mut call = ApiCall::new(timestamp, worker_id, model, input_tokens, output_tokens, cost)
-            .with_cache(cache_creation, cache_read);
+        let mut call = ApiCall::new(
+            timestamp,
+            worker_id,
+            model,
+            input_tokens,
+            output_tokens,
+            cost,
+        )
+        .with_cache(cache_creation, cache_read);
 
         if let Some(sid) = session_id {
             call = call.with_session(sid);
@@ -309,13 +344,11 @@ impl LogParser {
     /// Extract model name from result event.
     fn extract_model_from_result(&self, value: &Value) -> String {
         // Try modelUsage first (GLM/z.ai format)
-        if let Some(model_usage) = value.get("modelUsage") {
-            if let Some(obj) = model_usage.as_object() {
-                // Return first model found
-                if let Some(model) = obj.keys().next() {
-                    return model.clone();
-                }
-            }
+        if let Some(model_usage) = value.get("modelUsage")
+            && let Some(obj) = model_usage.as_object()
+            && let Some(model) = obj.keys().next()
+        {
+            return model.clone();
         }
 
         // Try usage.model
@@ -334,20 +367,38 @@ impl LogParser {
     /// Parse token counts from usage object, handling different formats.
     fn parse_usage_tokens(&self, usage: &Value) -> (i64, i64, i64, i64) {
         // Anthropic format
-        let input = usage.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
-        let output = usage.get("output_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
-        let cache_creation = usage.get("cache_creation_input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
-        let cache_read = usage.get("cache_read_input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+        let input = usage
+            .get("input_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let output = usage
+            .get("output_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let cache_creation = usage
+            .get("cache_creation_input_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let cache_read = usage
+            .get("cache_read_input_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
 
         // OpenAI format (if Anthropic fields are missing)
         let input = if input == 0 {
-            usage.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0)
+            usage
+                .get("prompt_tokens")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
         } else {
             input
         };
 
         let output = if output == 0 {
-            usage.get("completion_tokens").and_then(|v| v.as_i64()).unwrap_or(0)
+            usage
+                .get("completion_tokens")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
         } else {
             output
         };
@@ -356,7 +407,14 @@ impl LogParser {
     }
 
     /// Calculate cost for a model and token usage.
-    fn calculate_cost(&self, model: &str, input: i64, output: i64, cache_creation: i64, cache_read: i64) -> f64 {
+    fn calculate_cost(
+        &self,
+        model: &str,
+        input: i64,
+        output: i64,
+        cache_creation: i64,
+        cache_read: i64,
+    ) -> f64 {
         // Normalize model name to find pricing
         let normalized = self.normalize_model_name(model);
 
@@ -420,7 +478,10 @@ impl Default for LogParser {
 pub fn parse_results_only<P: AsRef<Path>>(path: P) -> Result<Vec<ApiCall>> {
     let parser = LogParser::new();
     let calls = parser.parse_file(path)?;
-    Ok(calls.into_iter().filter(|c| c.event_type == "result").collect())
+    Ok(calls
+        .into_iter()
+        .filter(|c| c.event_type == "result")
+        .collect())
 }
 
 #[cfg(test)]
@@ -440,7 +501,10 @@ mod tests {
         assert_eq!(call.cache_creation_tokens, 92308);
         assert_eq!(call.cache_read_tokens, 3072787);
         assert!((call.cost_usd - 2.5879285).abs() < 0.0001);
-        assert_eq!(call.session_id, Some("d52fbd7d-2d77-4048-9b3a-58740d54b4e6".to_string()));
+        assert_eq!(
+            call.session_id,
+            Some("d52fbd7d-2d77-4048-9b3a-58740d54b4e6".to_string())
+        );
     }
 
     #[test]
@@ -475,12 +539,24 @@ mod tests {
     fn test_normalize_model_name() {
         let parser = LogParser::new();
 
-        assert_eq!(parser.normalize_model_name("claude-opus-4-5-20251101"), "claude-opus");
-        assert_eq!(parser.normalize_model_name("claude-sonnet-4-5-20250929"), "claude-sonnet");
-        assert_eq!(parser.normalize_model_name("claude-haiku-4-5-20251001"), "claude-haiku");
+        assert_eq!(
+            parser.normalize_model_name("claude-opus-4-5-20251101"),
+            "claude-opus"
+        );
+        assert_eq!(
+            parser.normalize_model_name("claude-sonnet-4-5-20250929"),
+            "claude-sonnet"
+        );
+        assert_eq!(
+            parser.normalize_model_name("claude-haiku-4-5-20251001"),
+            "claude-haiku"
+        );
         assert_eq!(parser.normalize_model_name("glm-4.7"), "glm-4.7");
         assert_eq!(parser.normalize_model_name("gpt-4o-2024-08-06"), "gpt-4o");
-        assert_eq!(parser.normalize_model_name("deepseek-coder-v2"), "deepseek-coder");
+        assert_eq!(
+            parser.normalize_model_name("deepseek-coder-v2"),
+            "deepseek-coder"
+        );
     }
 
     #[test]

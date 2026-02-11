@@ -44,19 +44,19 @@
 //! - Chat history limited to 10 exchanges (~1KB memory)
 
 use std::io;
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyEvent};
 use forge_chat::{ChatBackend, ChatConfig, ChatResponse};
 use ratatui::{
+    Frame, Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
-    Frame, Terminal,
 };
 
 use crate::cost_panel::CostPanel;
@@ -232,7 +232,7 @@ impl App {
             last_terminal_width: 0,
             update_available: false,
             last_update_check: now,
-            chat_backend: None,  // Don't initialize in test mode
+            chat_backend: None, // Don't initialize in test mode
             chat_response_tx: None,
             chat_response_rx: None,
             chat_pending: false,
@@ -245,8 +245,10 @@ impl App {
     /// Returns None if config is missing or initialization fails.
     /// Errors are logged but don't prevent app startup.
     fn init_chat_backend() -> Option<ChatBackend> {
-        use forge_chat::config::{ClaudeCliConfig, ProviderConfig, RateLimitConfig, AuditConfig, ConfirmationConfig};
-        use tracing::{debug, warn, info, error};
+        use forge_chat::config::{
+            AuditConfig, ClaudeCliConfig, ConfirmationConfig, ProviderConfig, RateLimitConfig,
+        };
+        use tracing::{error, info, warn};
 
         let start = std::time::Instant::now();
         info!("⏱️ init_chat_backend() started");
@@ -254,10 +256,17 @@ impl App {
         // Load config from ~/.forge/config.yaml
         let config_path = dirs::home_dir()?.join(".forge/config.yaml");
 
-        info!("⏱️ Initializing chat backend from {}", config_path.display());
+        info!(
+            "⏱️ Initializing chat backend from {}",
+            config_path.display()
+        );
 
         if !config_path.exists() {
-            warn!("⏱️ Chat config not found at {} (took {:?})", config_path.display(), start.elapsed());
+            warn!(
+                "⏱️ Chat config not found at {} (took {:?})",
+                config_path.display(),
+                start.elapsed()
+            );
             return None;
         }
 
@@ -265,7 +274,11 @@ impl App {
         let config_str = match std::fs::read_to_string(&config_path) {
             Ok(s) => s,
             Err(e) => {
-                error!("⏱️ Failed to read chat config: {} (took {:?})", e, start.elapsed());
+                error!(
+                    "⏱️ Failed to read chat config: {} (took {:?})",
+                    e,
+                    start.elapsed()
+                );
                 return None;
             }
         };
@@ -276,7 +289,11 @@ impl App {
         let yaml: serde_yaml::Value = match serde_yaml::from_str(&config_str) {
             Ok(v) => v,
             Err(e) => {
-                warn!("⏱️ Failed to parse config YAML: {} (took {:?})", e, start.elapsed());
+                warn!(
+                    "⏱️ Failed to parse config YAML: {} (took {:?})",
+                    e,
+                    start.elapsed()
+                );
                 return None;
             }
         };
@@ -317,21 +334,36 @@ impl App {
         let runtime_start = std::time::Instant::now();
         match tokio::runtime::Runtime::new() {
             Ok(rt) => {
-                info!("⏱️ Created tokio runtime for chat backend in {:?}", runtime_start.elapsed());
+                info!(
+                    "⏱️ Created tokio runtime for chat backend in {:?}",
+                    runtime_start.elapsed()
+                );
                 let backend_start = std::time::Instant::now();
                 match rt.block_on(ChatBackend::new(chat_config)) {
                     Ok(backend) => {
-                        info!("⏱️ ✅ Chat backend initialized successfully in {:?} (total: {:?})", backend_start.elapsed(), start.elapsed());
+                        info!(
+                            "⏱️ ✅ Chat backend initialized successfully in {:?} (total: {:?})",
+                            backend_start.elapsed(),
+                            start.elapsed()
+                        );
                         Some(backend)
                     }
                     Err(e) => {
-                        error!("⏱️ ❌ Failed to initialize chat backend: {} (took {:?})", e, start.elapsed());
+                        error!(
+                            "⏱️ ❌ Failed to initialize chat backend: {} (took {:?})",
+                            e,
+                            start.elapsed()
+                        );
                         None
                     }
                 }
             }
             Err(e) => {
-                error!("⏱️ ❌ Failed to create tokio runtime: {} (took {:?})", e, start.elapsed());
+                error!(
+                    "⏱️ ❌ Failed to create tokio runtime: {} (took {:?})",
+                    e,
+                    start.elapsed()
+                );
                 None
             }
         }
@@ -375,7 +407,8 @@ impl App {
     /// Get cached timestamp or update if expired.
     fn get_cached_timestamp(&mut self) -> String {
         if self.last_timestamp_update.elapsed() >= TIMESTAMP_CACHE_DURATION {
-            self.cached_timestamp = Some(chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
+            self.cached_timestamp =
+                Some(chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
             self.last_timestamp_update = Instant::now();
         }
         self.cached_timestamp.clone().unwrap_or_default()
@@ -454,7 +487,7 @@ impl App {
 
     /// Poll for chat responses from background thread.
     fn poll_chat_responses(&mut self) {
-        use tracing::{debug, info};
+        use tracing::info;
 
         // Non-blocking check for responses (need to avoid borrow checker issues)
         let mut responses = Vec::new();
@@ -475,40 +508,49 @@ impl App {
 
         // Process responses after releasing the borrow
         for (query, result) in responses {
-                info!("Processing response for: {}", query);
+            info!("Processing response for: {}", query);
 
-                let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+            let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
 
-                match result {
-                    Ok(response) => {
-                        info!("✅ Success! Response text length: {} chars", response.text.len());
-                        info!("Response preview: {}", response.text.chars().take(100).collect::<String>());
-                        self.chat_history.push(ChatExchange {
-                            user_query: query,
-                            assistant_response: response.text,
-                            timestamp,
-                            is_error: false,
-                        });
-                        self.status_message = Some("✅ Response received".to_string());
-                    }
-                    Err(e) => {
-                        info!("❌ Error response: {}", e);
-                        self.chat_history.push(ChatExchange {
-                            user_query: query,
-                            assistant_response: format!("Error: {}", e),
-                            timestamp,
-                            is_error: true,
-                        });
-                        self.status_message = Some(format!("❌ Chat error: {}", e));
-                    }
+            match result {
+                Ok(response) => {
+                    info!(
+                        "✅ Success! Response text length: {} chars",
+                        response.text.len()
+                    );
+                    info!(
+                        "Response preview: {}",
+                        response.text.chars().take(100).collect::<String>()
+                    );
+                    self.chat_history.push(ChatExchange {
+                        user_query: query,
+                        assistant_response: response.text,
+                        timestamp,
+                        is_error: false,
+                    });
+                    self.status_message = Some("✅ Response received".to_string());
                 }
-
-                // Keep only last 10 exchanges
-                if self.chat_history.len() > 10 {
-                    self.chat_history.remove(0);
+                Err(e) => {
+                    info!("❌ Error response: {}", e);
+                    self.chat_history.push(ChatExchange {
+                        user_query: query,
+                        assistant_response: format!("Error: {}", e),
+                        timestamp,
+                        is_error: true,
+                    });
+                    self.status_message = Some(format!("❌ Chat error: {}", e));
                 }
+            }
 
-            info!("📊 Chat history now has {} exchanges", self.chat_history.len());
+            // Keep only last 10 exchanges
+            if self.chat_history.len() > 10 {
+                self.chat_history.remove(0);
+            }
+
+            info!(
+                "📊 Chat history now has {} exchanges",
+                self.chat_history.len()
+            );
             info!("🖥️ Current view: {:?}", self.current_view);
             self.chat_pending = false;
             self.mark_dirty();
@@ -616,12 +658,11 @@ impl App {
                             info!("Chat thread started for query: {}", query_clone);
 
                             let result = match tokio::runtime::Runtime::new() {
-                                Ok(rt) => {
-                                    rt.block_on(backend_clone.process_command(&query_clone))
-                                }
-                                Err(e) => {
-                                    Err(forge_chat::ChatError::ApiError(format!("Runtime error: {}", e)))
-                                }
+                                Ok(rt) => rt.block_on(backend_clone.process_command(&query_clone)),
+                                Err(e) => Err(forge_chat::ChatError::ApiError(format!(
+                                    "Runtime error: {}",
+                                    e
+                                ))),
                             };
 
                             info!("Chat request completed, result: {:?}", result.is_ok());
@@ -642,10 +683,7 @@ impl App {
                 // Panel-specific handling - to be implemented
             }
             AppEvent::SpawnWorker(executor) => {
-                self.status_message = Some(format!(
-                    "Spawning {} worker...",
-                    executor.name()
-                ));
+                self.status_message = Some(format!("Spawning {} worker...", executor.name()));
                 self.mark_dirty();
                 // TODO: Implement actual worker spawning
             }
@@ -683,8 +721,8 @@ impl App {
 
     /// Check if an update is available by comparing source binary timestamp.
     fn check_for_update(&mut self) {
-        use std::fs;
         use std::env;
+        use std::fs;
 
         // Check every 10 seconds
         if self.last_update_check.elapsed() < Duration::from_secs(10) {
@@ -692,24 +730,26 @@ impl App {
         }
         self.last_update_check = Instant::now();
 
-        let forge_src = env::var("FORGE_SRC")
-            .unwrap_or_else(|_| "/home/coder/forge".to_string());
+        let forge_src = env::var("FORGE_SRC").unwrap_or_else(|_| "/home/coder/forge".to_string());
 
         let source_binary = format!("{}/target/release/forge", forge_src);
         let installed_binary = env::current_exe()
             .ok()
-            .or_else(|| env::var("HOME").ok().map(|h| format!("{}/.cargo/bin/forge", h).into()))
+            .or_else(|| {
+                env::var("HOME")
+                    .ok()
+                    .map(|h| format!("{}/.cargo/bin/forge", h).into())
+            })
             .unwrap_or_else(|| "forge".into());
 
         // Compare modification times
         if let (Ok(source_meta), Ok(installed_meta)) = (
             fs::metadata(&source_binary),
-            fs::metadata(&installed_binary)
+            fs::metadata(&installed_binary),
         ) {
-            if let (Ok(source_time), Ok(installed_time)) = (
-                source_meta.modified(),
-                installed_meta.modified()
-            ) {
+            if let (Ok(source_time), Ok(installed_time)) =
+                (source_meta.modified(), installed_meta.modified())
+            {
                 self.update_available = source_time > installed_time;
             }
         }
@@ -717,15 +757,14 @@ impl App {
 
     /// Trigger forge update/rebuild and restart.
     fn trigger_update(&mut self) {
-        use std::process::Command;
         use std::env;
+        use std::process::Command;
 
         self.status_message = Some("Rebuilding forge...".to_string());
         self.mark_dirty();
 
         // Get the forge source directory (assuming we're in a workspace)
-        let forge_src = env::var("FORGE_SRC")
-            .unwrap_or_else(|_| "/home/coder/forge".to_string());
+        let forge_src = env::var("FORGE_SRC").unwrap_or_else(|_| "/home/coder/forge".to_string());
 
         // Spawn background rebuild process
         match Command::new("sh")
@@ -825,8 +864,8 @@ impl App {
             self.check_for_update();
 
             // Only draw if dirty or at minimum rate (timestamp updates every second)
-            let needs_redraw = self.take_dirty() ||
-                self.last_timestamp_update.elapsed() >= TIMESTAMP_CACHE_DURATION;
+            let needs_redraw = self.take_dirty()
+                || self.last_timestamp_update.elapsed() >= TIMESTAMP_CACHE_DURATION;
 
             if needs_redraw {
                 terminal.draw(|frame| self.draw(frame))?;
@@ -911,26 +950,43 @@ impl App {
 
         // Determine system status from real data
         let (status_text, status_color) = if let Some(err) = self.data_manager.init_error() {
-            (format!("[Error: {}]", truncate_status_error(err)), theme.colors.status_error)
+            (
+                format!("[Error: {}]", truncate_status_error(err)),
+                theme.colors.status_error,
+            )
         } else if !self.data_manager.is_ready() {
             ("[Loading...]".to_string(), theme.colors.status_warning)
         } else {
             let counts = self.data_manager.worker_counts();
             if counts.unhealthy() > 0 {
-                (format!("[{} unhealthy]", counts.unhealthy()), theme.colors.status_warning)
+                (
+                    format!("[{} unhealthy]", counts.unhealthy()),
+                    theme.colors.status_warning,
+                )
             } else if counts.total == 0 {
                 ("[No workers]".to_string(), theme.colors.text_dim)
             } else {
-                (format!("[{} workers]", counts.total), theme.colors.status_healthy)
+                (
+                    format!("[{} workers]", counts.total),
+                    theme.colors.status_healthy,
+                )
             }
         };
 
         // Calculate spacing to right-align timestamp, dimensions, and status
         let right_content_len = now.len() + 2 + dimensions.len() + 2 + status_text.len();
-        let spacing = area.width.saturating_sub(title_len as u16 + right_content_len as u16 + 2) as usize;
+        let spacing = area
+            .width
+            .saturating_sub(title_len as u16 + right_content_len as u16 + 2)
+            as usize;
 
         let header = Paragraph::new(Line::from(vec![
-            Span::styled(title, Style::default().fg(theme.colors.header).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                title,
+                Style::default()
+                    .fg(theme.colors.header)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" ".repeat(spacing)),
             Span::styled(now, Style::default().fg(theme.colors.text_dim)),
             Span::raw("  "),
@@ -994,7 +1050,10 @@ impl App {
             .block(
                 Block::default()
                     .borders(Borders::TOP)
-                    .title(Span::styled(dims_text, Style::default().fg(theme.colors.border_dim)))
+                    .title(Span::styled(
+                        dims_text,
+                        Style::default().fg(theme.colors.border_dim),
+                    ))
                     .title_alignment(ratatui::layout::Alignment::Right),
             );
 
@@ -1101,8 +1160,8 @@ impl App {
         );
 
         // Render Quick Actions panel with widget
-        let quick_actions_panel = QuickActionsPanel::new()
-            .focused(self.focus_panel == FocusPanel::MetricsCharts);
+        let quick_actions_panel =
+            QuickActionsPanel::new().focused(self.focus_panel == FocusPanel::MetricsCharts);
         frame.render_widget(quick_actions_panel, right_panels[1]);
     }
 
@@ -1218,7 +1277,7 @@ impl App {
 
     /// Format the costs panel for the right column in ultra-wide mode.
     fn format_costs_panel(&self) -> String {
-        use crate::cost_panel::{format_usd, format_tokens};
+        use crate::cost_panel::{format_tokens, format_usd};
 
         if !self.data_manager.is_ready() {
             return "Loading...".to_string();
@@ -1279,26 +1338,14 @@ impl App {
     fn draw_workers(&self, frame: &mut Frame, area: Rect) {
         let worker_table = self.data_manager.worker_data.format_worker_table();
 
-        self.draw_panel(
-            frame,
-            area,
-            "Worker Pool Management",
-            &worker_table,
-            true,
-        );
+        self.draw_panel(frame, area, "Worker Pool Management", &worker_table, true);
     }
 
     /// Draw the Tasks view.
     fn draw_tasks(&self, frame: &mut Frame, area: Rect) {
         let content = self.data_manager.bead_manager.format_task_queue_full();
 
-        self.draw_panel(
-            frame,
-            area,
-            "Task Queue & Bead Management",
-            &content,
-            true,
-        );
+        self.draw_panel(frame, area, "Task Queue & Bead Management", &content, true);
     }
 
     /// Draw the Costs view.
@@ -1322,13 +1369,7 @@ impl App {
         // Use real activity log from worker data
         let activity_log = self.data_manager.worker_data.format_activity_log();
 
-        self.draw_panel(
-            frame,
-            area,
-            "Activity Log",
-            &activity_log,
-            true,
-        );
+        self.draw_panel(frame, area, "Activity Log", &activity_log, true);
     }
 
     /// Draw the Chat view.
@@ -1347,12 +1388,16 @@ impl App {
              > show P0 tasks\n\
              > costs today\n\
              > help\n\n\
-             Press Esc to exit chat mode.".to_string()
+             Press Esc to exit chat mode."
+                .to_string()
         } else {
             // Format chat exchanges
             let mut lines = Vec::new();
             for exchange in &self.chat_history {
-                lines.push(format!("[{}] You: {}", exchange.timestamp, exchange.user_query));
+                lines.push(format!(
+                    "[{}] You: {}",
+                    exchange.timestamp, exchange.user_query
+                ));
 
                 let response_prefix = if exchange.is_error {
                     "❌ Error:"
@@ -1374,13 +1419,7 @@ impl App {
             lines.join("\n")
         };
 
-        self.draw_panel(
-            frame,
-            chunks[0],
-            "Chat History",
-            &history_text,
-            false,
-        );
+        self.draw_panel(frame, chunks[0], "Chat History", &history_text, false);
 
         // Input field
         let input_style = if self.focus_panel == FocusPanel::ChatInput {
@@ -1417,7 +1456,9 @@ impl App {
         };
 
         let title_style = if focused {
-            Style::default().fg(theme.colors.header).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(theme.colors.header)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme.colors.text)
         };
@@ -1495,7 +1536,9 @@ Press any key to close this help.";
                     .border_style(Style::default().fg(theme.colors.header))
                     .title(Span::styled(
                         " Help ",
-                        Style::default().fg(theme.colors.header).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(theme.colors.header)
+                            .add_modifier(Modifier::BOLD),
                     ))
                     .style(Style::default().bg(Color::Black)),
             )
@@ -1521,14 +1564,16 @@ Press any key to close this help.";
 
         let banner_text = " ⚠️  Update Available! Press Ctrl+U to update forge ";
         let banner = Paragraph::new(banner_text)
-            .style(Style::default()
-                .fg(Color::Black)
-                .bg(Color::Yellow)
-                .add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Yellow))
+                    .border_style(Style::default().fg(Color::Yellow)),
             )
             .alignment(ratatui::layout::Alignment::Center);
 
@@ -1772,7 +1817,10 @@ mod tests {
 
         // Should still show some content
         let content = buffer_to_string(&buffer);
-        assert!(!content.trim().is_empty(), "Should render content even in small terminal");
+        assert!(
+            !content.trim().is_empty(),
+            "Should render content even in small terminal"
+        );
     }
 
     #[test]
@@ -1841,9 +1889,11 @@ mod tests {
 
         // Worker pool should show worker statistics or "No workers" message or "Loading"
         assert!(
-            buffer_contains(&buffer, "active") || buffer_contains(&buffer, "idle") ||
-            buffer_contains(&buffer, "Total") || buffer_contains(&buffer, "No workers") ||
-            buffer_contains(&buffer, "Loading"),
+            buffer_contains(&buffer, "active")
+                || buffer_contains(&buffer, "idle")
+                || buffer_contains(&buffer, "Total")
+                || buffer_contains(&buffer, "No workers")
+                || buffer_contains(&buffer, "Loading"),
             "Worker Pool should display worker counts or status"
         );
     }
@@ -1856,7 +1906,9 @@ mod tests {
 
         // Task queue should show priority markers
         assert!(
-            buffer_contains(&buffer, "P0") || buffer_contains(&buffer, "P1") || buffer_contains(&buffer, "Ready"),
+            buffer_contains(&buffer, "P0")
+                || buffer_contains(&buffer, "P1")
+                || buffer_contains(&buffer, "Ready"),
             "Task Queue should display priority indicators"
         );
     }
@@ -1869,7 +1921,9 @@ mod tests {
 
         // Costs view shows placeholder since cost tracking isn't implemented
         assert!(
-            buffer_contains(&buffer, "Cost") || buffer_contains(&buffer, "tracking") || buffer_contains(&buffer, "Loading"),
+            buffer_contains(&buffer, "Cost")
+                || buffer_contains(&buffer, "tracking")
+                || buffer_contains(&buffer, "Loading"),
             "Costs view should display cost-related content"
         );
     }
@@ -1882,7 +1936,9 @@ mod tests {
 
         // Logs view should show activity log panel title and content
         assert!(
-            buffer_contains(&buffer, "Activity Log") || buffer_contains(&buffer, "No recent activity") || buffer_contains(&buffer, "Loading"),
+            buffer_contains(&buffer, "Activity Log")
+                || buffer_contains(&buffer, "No recent activity")
+                || buffer_contains(&buffer, "Loading"),
             "Logs view should display activity log"
         );
     }
@@ -1904,10 +1960,13 @@ mod tests {
         // Workers view may show: table headers (with workers), spawn instructions,
         // "Loading" message, or "No workers" message depending on data state
         assert!(
-            buffer_contains(&buffer, "Worker ID") || buffer_contains(&buffer, "Model") ||
-            buffer_contains(&buffer, "Status") || buffer_contains(&buffer, "[G] Spawn") ||
-            buffer_contains(&buffer, "No workers") || buffer_contains(&buffer, "Loading") ||
-            buffer_contains(&buffer, "Spawn GLM"),
+            buffer_contains(&buffer, "Worker ID")
+                || buffer_contains(&buffer, "Model")
+                || buffer_contains(&buffer, "Status")
+                || buffer_contains(&buffer, "[G] Spawn")
+                || buffer_contains(&buffer, "No workers")
+                || buffer_contains(&buffer, "Loading")
+                || buffer_contains(&buffer, "Spawn GLM"),
             "Workers view should show table headers, spawn instructions, or loading message"
         );
     }

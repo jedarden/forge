@@ -5,8 +5,8 @@
 
 use crate::tmux;
 use crate::types::{LaunchConfig, LauncherOutput, SpawnRequest, WorkerHandle};
-use forge_core::{ForgeError, Result};
 use forge_core::types::WorkerStatus;
+use forge_core::{ForgeError, Result};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -126,7 +126,10 @@ impl WorkerLauncher {
 
         // Add bead assignment if present in launcher output or config
         if let Some(ref bead_id) = launcher_output.bead_id {
-            let bead_title = launcher_output.bead_title.clone().unwrap_or_else(|| bead_id.clone());
+            let bead_title = launcher_output
+                .bead_title
+                .clone()
+                .unwrap_or_else(|| bead_id.clone());
             handle = handle.with_bead(bead_id.clone(), bead_title);
         } else if let Some(ref bead_id) = config.bead_id {
             handle = handle.with_bead(bead_id.clone(), bead_id.clone());
@@ -156,9 +159,9 @@ impl WorkerLauncher {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let metadata = tokio::fs::metadata(path).await.map_err(|e| {
-                ForgeError::io("checking launcher permissions", path, e)
-            })?;
+            let metadata = tokio::fs::metadata(path)
+                .await
+                .map_err(|e| ForgeError::io("checking launcher permissions", path, e))?;
             let permissions = metadata.permissions();
             if permissions.mode() & 0o111 == 0 {
                 return Err(ForgeError::LauncherNotExecutable { path: path.into() });
@@ -202,10 +205,7 @@ impl WorkerLauncher {
             cmd.env(key, value);
         }
 
-        debug!(
-            "Executing launcher: {}",
-            config.launcher_path.display()
-        );
+        debug!("Executing launcher: {}", config.launcher_path.display());
 
         // Execute with timeout
         let timeout_duration = Duration::from_secs(config.timeout_secs);
@@ -245,11 +245,7 @@ impl WorkerLauncher {
     }
 
     /// Parse JSON output from a launcher script.
-    async fn parse_launcher_output(
-        &self,
-        worker_id: &str,
-        output: &str,
-    ) -> Result<LauncherOutput> {
+    async fn parse_launcher_output(&self, worker_id: &str, output: &str) -> Result<LauncherOutput> {
         // Find JSON in the output (launcher might emit other text before JSON)
         let json_start = output.find('{');
         let json_end = output.rfind('}');
@@ -257,10 +253,11 @@ impl WorkerLauncher {
         match (json_start, json_end) {
             (Some(start), Some(end)) if end >= start => {
                 let json_str = &output[start..=end];
-                serde_json::from_str(json_str).map_err(|e| {
-                    ForgeError::LauncherOutput {
-                        message: format!("Invalid JSON in launcher output: {} (input: {})", e, json_str),
-                    }
+                serde_json::from_str(json_str).map_err(|e| ForgeError::LauncherOutput {
+                    message: format!(
+                        "Invalid JSON in launcher output: {} (input: {})",
+                        e, json_str
+                    ),
                 })
             }
             _ => {
@@ -279,9 +276,7 @@ impl WorkerLauncher {
                     });
                 }
 
-                let pid = tmux::get_session_pid(session_name)
-                    .await?
-                    .unwrap_or(0);
+                let pid = tmux::get_session_pid(session_name).await?.unwrap_or(0);
 
                 Ok(LauncherOutput {
                     pid,
@@ -318,7 +313,10 @@ impl WorkerLauncher {
 
         match handle {
             Some(handle) => {
-                info!("Stopping worker {} (session: {})", worker_id, handle.session_name);
+                info!(
+                    "Stopping worker {} (session: {})",
+                    worker_id, handle.session_name
+                );
                 tmux::kill_session(&handle.session_name).await?;
 
                 // Remove from active workers

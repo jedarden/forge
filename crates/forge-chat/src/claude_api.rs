@@ -24,7 +24,9 @@ use ::async_trait::async_trait;
 use tokio::time::Duration;
 use tracing::debug;
 
-use crate::claude_api_types::{ApiMessage, ApiRequest, ApiResponse, ApiTool, ApiUsage, ContentBlock};
+use crate::claude_api_types::{
+    ApiMessage, ApiRequest, ApiResponse, ApiTool, ApiUsage, ContentBlock,
+};
 use crate::config::ClaudeApiConfig;
 use crate::context::DashboardContext;
 use crate::error::{ChatError, Result};
@@ -173,13 +175,14 @@ impl ClaudeApiProvider {
 
     /// Estimate cost based on model and usage.
     fn estimate_cost(&self, usage: &ApiUsage) -> f64 {
-        let (input_cost_per_million, output_cost_per_million) = if self.config.model.contains("opus") {
-            (15.0, 75.0)
-        } else if self.config.model.contains("sonnet") {
-            (3.0, 15.0)
-        } else {
-            (0.25, 1.25) // Haiku
-        };
+        let (input_cost_per_million, output_cost_per_million) =
+            if self.config.model.contains("opus") {
+                (15.0, 75.0)
+            } else if self.config.model.contains("sonnet") {
+                (3.0, 15.0)
+            } else {
+                (0.25, 1.25) // Haiku
+            };
 
         let input_cost = (usage.input_tokens as f64 / 1_000_000.0) * input_cost_per_million;
         let output_cost = (usage.output_tokens as f64 / 1_000_000.0) * output_cost_per_million;
@@ -365,7 +368,7 @@ mod tests {
     mod http_tests {
         use super::*;
         use crate::context::DashboardContext;
-        use wiremock::{matchers, Mock, MockServer, ResponseTemplate};
+        use wiremock::{Mock, MockServer, ResponseTemplate, matchers};
 
         #[tokio::test]
         async fn test_claude_api_with_mock_server() {
@@ -457,7 +460,10 @@ mod tests {
             let provider = ClaudeApiProvider::with_api_key(config, "test-key").unwrap();
 
             let context = DashboardContext::default();
-            let response = provider.process("Check worker status", &context, &[]).await.unwrap();
+            let response = provider
+                .process("Check worker status", &context, &[])
+                .await
+                .unwrap();
 
             assert!(!response.text.is_empty());
             assert_eq!(response.tool_calls.len(), 1);

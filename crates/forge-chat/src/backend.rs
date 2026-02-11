@@ -348,7 +348,7 @@ impl ChatBackend {
         // Add context
         prompt.push_str("Current dashboard state:\n");
         prompt.push_str(&context_summary);
-        prompt.push_str("\n");
+        prompt.push('\n');
 
         // Add recent history (last 5 exchanges)
         let history_start = history.len().saturating_sub(10);

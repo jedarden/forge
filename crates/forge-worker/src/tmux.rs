@@ -61,7 +61,7 @@ pub async fn create_session(
 ) -> Result<()> {
     let mut args = vec![
         "new-session",
-        "-d",  // Detached
+        "-d", // Detached
         "-s",
         session_name,
         "-c",
@@ -122,13 +122,7 @@ pub async fn send_command(session_name: &str, command: &str) -> Result<()> {
 pub async fn get_session_pid(session_name: &str) -> Result<Option<u32>> {
     // Get the pane PID (the shell or process running in the pane)
     let output = Command::new("tmux")
-        .args([
-            "display-message",
-            "-t",
-            session_name,
-            "-p",
-            "#{pane_pid}",
-        ])
+        .args(["display-message", "-t", session_name, "-p", "#{pane_pid}"])
         .output()
         .await
         .map_err(|e| ForgeError::WorkerSpawn {
@@ -190,17 +184,12 @@ pub async fn list_sessions(prefix: &str) -> Result<Vec<String>> {
 /// Capture the current output from a tmux pane.
 #[instrument(level = "debug", skip_all, fields(session = %session_name))]
 pub async fn capture_pane(session_name: &str, lines: Option<u32>) -> Result<String> {
-    let lines_arg = lines.map(|n| format!("-{}", n)).unwrap_or_else(|| "-".to_string());
+    let lines_arg = lines
+        .map(|n| format!("-{}", n))
+        .unwrap_or_else(|| "-".to_string());
 
     let output = Command::new("tmux")
-        .args([
-            "capture-pane",
-            "-t",
-            session_name,
-            "-p",
-            "-S",
-            &lines_arg,
-        ])
+        .args(["capture-pane", "-t", session_name, "-p", "-S", &lines_arg])
         .output()
         .await
         .map_err(|e| ForgeError::WorkerSpawn {

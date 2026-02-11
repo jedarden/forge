@@ -4,19 +4,22 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Chat backend configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChatConfig {
     /// Provider configuration
     #[serde(default)]
     pub provider: ProviderConfig,
 
     /// Rate limit configuration
+    #[serde(default)]
     pub rate_limit: RateLimitConfig,
 
     /// Audit logging configuration
+    #[serde(default)]
     pub audit: AuditConfig,
 
     /// Tool confirmations configuration
+    #[serde(default)]
     pub confirmations: ConfirmationConfig,
 }
 
@@ -119,9 +122,8 @@ impl ProviderConfig {
 impl Default for ProviderConfig {
     fn default() -> Self {
         // Try to detect a default, fall back to claude-api
-        Self::detect_default().unwrap_or_else(|_| {
-            ProviderConfig::ClaudeApi(ClaudeApiConfig::default())
-        })
+        Self::detect_default()
+            .unwrap_or_else(|_| ProviderConfig::ClaudeApi(ClaudeApiConfig::default()))
     }
 }
 
@@ -300,10 +302,11 @@ impl Default for MockConfig {
 ///
 /// This enum is deprecated in favor of `ProviderConfig` but is kept
 /// for serialization compatibility.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProviderType {
     /// Claude API via direct HTTP requests
+    #[default]
     ClaudeApi,
 
     /// Claude CLI via stdin/stdout
@@ -311,12 +314,6 @@ pub enum ProviderType {
 
     /// Mock provider for testing
     Mock,
-}
-
-impl Default for ProviderType {
-    fn default() -> Self {
-        Self::ClaudeApi
-    }
 }
 
 impl std::fmt::Display for ProviderType {
@@ -338,17 +335,6 @@ impl std::str::FromStr for ProviderType {
             "claude-cli" | "claude_cli" | "cli" => Ok(Self::ClaudeCli),
             "mock" => Ok(Self::Mock),
             _ => Err(format!("Unknown provider type: {}", s)),
-        }
-    }
-}
-
-impl Default for ChatConfig {
-    fn default() -> Self {
-        Self {
-            provider: ProviderConfig::default(),
-            rate_limit: RateLimitConfig::default(),
-            audit: AuditConfig::default(),
-            confirmations: ConfirmationConfig::default(),
         }
     }
 }
@@ -716,10 +702,7 @@ mod tests {
             ProviderType::from_str("claude-cli").unwrap(),
             ProviderType::ClaudeCli
         );
-        assert_eq!(
-            ProviderType::from_str("mock").unwrap(),
-            ProviderType::Mock
-        );
+        assert_eq!(ProviderType::from_str("mock").unwrap(), ProviderType::Mock);
         assert!(ProviderType::from_str("invalid").is_err());
     }
 
@@ -759,7 +742,10 @@ mod tests {
             ProviderConfig::ClaudeCli(cli_config) => {
                 assert_eq!(cli_config.binary_path, "/usr/local/bin/claude-code");
                 assert_eq!(cli_config.model, "sonnet");
-                assert_eq!(cli_config.config_dir.as_ref().unwrap(), "/home/user/.claude");
+                assert_eq!(
+                    cli_config.config_dir.as_ref().unwrap(),
+                    "/home/user/.claude"
+                );
                 assert_eq!(cli_config.timeout_secs, 60);
                 assert!(cli_config.headless);
                 assert_eq!(cli_config.extra_args.len(), 1);

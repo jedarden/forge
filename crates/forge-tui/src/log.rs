@@ -210,20 +210,21 @@ impl LogEntry {
         }
 
         // Try to parse timestamp at the beginning
-        let (timestamp, rest) = if line.len() > 20 && line.chars().take(4).all(|c| c.is_ascii_digit()) {
-            // Looks like ISO timestamp
-            if let Some(space_idx) = line.find(' ') {
-                if let Ok(ts) = DateTime::parse_from_rfc3339(&line[..space_idx]) {
-                    (ts.with_timezone(&Utc), &line[space_idx + 1..])
+        let (timestamp, rest) =
+            if line.len() > 20 && line.chars().take(4).all(|c| c.is_ascii_digit()) {
+                // Looks like ISO timestamp
+                if let Some(space_idx) = line.find(' ') {
+                    if let Ok(ts) = DateTime::parse_from_rfc3339(&line[..space_idx]) {
+                        (ts.with_timezone(&Utc), &line[space_idx + 1..])
+                    } else {
+                        (Utc::now(), line)
+                    }
                 } else {
                     (Utc::now(), line)
                 }
             } else {
                 (Utc::now(), line)
-            }
-        } else {
-            (Utc::now(), line)
-        };
+            };
 
         // Try to parse level in brackets
         let (level, message) = if rest.starts_with('[') {
@@ -616,10 +617,12 @@ impl LogTailer {
 
         // Seek to last position (or end if starting fresh)
         if self.position == 0 && self.config.start_from_end {
-            reader.seek(SeekFrom::End(0)).map_err(|e| LogError::ReadFile {
-                path: path.clone(),
-                source: e,
-            })?;
+            reader
+                .seek(SeekFrom::End(0))
+                .map_err(|e| LogError::ReadFile {
+                    path: path.clone(),
+                    source: e,
+                })?;
             self.position = reader.stream_position().map_err(|e| LogError::ReadFile {
                 path: path.clone(),
                 source: e,
@@ -627,10 +630,12 @@ impl LogTailer {
             return Ok(Vec::new());
         }
 
-        reader.seek(SeekFrom::Start(self.position)).map_err(|e| LogError::ReadFile {
-            path: path.clone(),
-            source: e,
-        })?;
+        reader
+            .seek(SeekFrom::Start(self.position))
+            .map_err(|e| LogError::ReadFile {
+                path: path.clone(),
+                source: e,
+            })?;
 
         // Read new lines
         let mut entries = Vec::new();
@@ -808,8 +813,7 @@ mod tests {
 
     #[test]
     fn test_log_entry_with_source() {
-        let entry = LogEntry::new(LogLevel::Info, "Test".to_string())
-            .with_source("worker-1");
+        let entry = LogEntry::new(LogLevel::Info, "Test".to_string()).with_source("worker-1");
         assert_eq!(entry.source, Some("worker-1".to_string()));
     }
 
@@ -863,8 +867,8 @@ mod tests {
 
     #[test]
     fn test_log_entry_format_display() {
-        let entry = LogEntry::new(LogLevel::Info, "Test message".to_string())
-            .with_source("worker-1");
+        let entry =
+            LogEntry::new(LogLevel::Info, "Test message".to_string()).with_source("worker-1");
         let display = entry.format_display();
         assert!(display.contains("●"));
         assert!(display.contains("[worker-1]"));
@@ -934,7 +938,10 @@ mod tests {
 
         // Should have entries 6-10
         let messages: Vec<_> = buffer.iter().map(|e| e.message.as_str()).collect();
-        assert_eq!(messages, vec!["Entry 6", "Entry 7", "Entry 8", "Entry 9", "Entry 10"]);
+        assert_eq!(
+            messages,
+            vec!["Entry 6", "Entry 7", "Entry 8", "Entry 9", "Entry 10"]
+        );
     }
 
     #[test]
@@ -1038,8 +1045,7 @@ mod tests {
             writeln!(file, "[WARN] Line 2").unwrap();
         }
 
-        let config = LogTailerConfig::new(&log_path)
-            .with_start_from_end(false); // Read from beginning
+        let config = LogTailerConfig::new(&log_path).with_start_from_end(false); // Read from beginning
 
         let mut tailer = LogTailer::new(config);
 
@@ -1066,8 +1072,7 @@ mod tests {
             writeln!(file, "[INFO] Old line 2").unwrap();
         }
 
-        let config = LogTailerConfig::new(&log_path)
-            .with_start_from_end(true); // Skip existing content
+        let config = LogTailerConfig::new(&log_path).with_start_from_end(true); // Skip existing content
 
         let mut tailer = LogTailer::new(config);
 
@@ -1077,10 +1082,7 @@ mod tests {
 
         // Append new content
         {
-            let mut file = fs::OpenOptions::new()
-                .append(true)
-                .open(&log_path)
-                .unwrap();
+            let mut file = fs::OpenOptions::new().append(true).open(&log_path).unwrap();
             writeln!(file, "[INFO] New line").unwrap();
         }
 
@@ -1136,8 +1138,7 @@ mod tests {
         }
 
         // Start tailer from beginning to capture all
-        let config = LogTailerConfig::new(&log_path)
-            .with_start_from_end(false); // Read from beginning
+        let config = LogTailerConfig::new(&log_path).with_start_from_end(false); // Read from beginning
 
         let mut tailer = LogTailer::new(config);
         let mut buffer = LogBuffer::new(100);
@@ -1181,8 +1182,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
 
         // Read from beginning to capture the test entry
-        let config = LogTailerConfig::new(&log_path)
-            .with_start_from_end(false);
+        let config = LogTailerConfig::new(&log_path).with_start_from_end(false);
 
         let mut tailer = LogTailer::new(config).with_event_sender(tx);
 
@@ -1212,8 +1212,7 @@ mod tests {
             writeln!(file, "[INFO] Line 2").unwrap();
         }
 
-        let config = LogTailerConfig::new(&log_path)
-            .with_start_from_end(false);
+        let config = LogTailerConfig::new(&log_path).with_start_from_end(false);
 
         let mut tailer = LogTailer::new(config);
 
@@ -1292,7 +1291,10 @@ mod tests {
         assert_eq!(buffer.total_added(), 10);
 
         let messages: Vec<_> = buffer.iter().map(|e| e.message.as_str()).collect();
-        assert_eq!(messages, vec!["Entry 6", "Entry 7", "Entry 8", "Entry 9", "Entry 10"]);
+        assert_eq!(
+            messages,
+            vec!["Entry 6", "Entry 7", "Entry 8", "Entry 9", "Entry 10"]
+        );
 
         // All entries should have source set
         for entry in buffer.iter() {
@@ -1322,8 +1324,7 @@ mod tests {
             .unwrap();
         }
 
-        let config = LogTailerConfig::new(&log_path)
-            .with_start_from_end(false);
+        let config = LogTailerConfig::new(&log_path).with_start_from_end(false);
 
         let mut tailer = LogTailer::new(config);
         let entries = tailer.read_new_lines().unwrap();

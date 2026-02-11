@@ -36,6 +36,6 @@ pub mod watcher;
 
 // Re-export main types for convenience
 pub use error::{ForgeError, Result};
-pub use logging::{init_logging, LogGuard};
+pub use logging::{LogGuard, init_logging};
 pub use status::{StatusReader, WorkerStatusInfo};
 pub use watcher::{StatusEvent, StatusWatcher, WatcherConfig};

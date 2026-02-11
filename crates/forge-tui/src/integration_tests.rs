@@ -17,9 +17,9 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
-    use ratatui::Terminal;
     use tempfile::TempDir;
 
     use crate::app::App;
@@ -88,7 +88,11 @@ mod tests {
     }
 
     /// Create a test log file with entries.
-    fn create_test_log_file(dir: &std::path::Path, worker_id: &str, entries: &[(&str, &str)]) -> PathBuf {
+    fn create_test_log_file(
+        dir: &std::path::Path,
+        worker_id: &str,
+        entries: &[(&str, &str)],
+    ) -> PathBuf {
         let path = dir.join(format!("{}.log", worker_id));
         let mut content = String::new();
         for (level, message) in entries {
@@ -307,10 +311,7 @@ mod tests {
 
         // Add entries exceeding capacity
         for i in 1..=10 {
-            buffer.push(LogEntry::new(
-                LogLevel::Info,
-                format!("Log entry {}", i),
-            ));
+            buffer.push(LogEntry::new(LogLevel::Info, format!("Log entry {}", i)));
         }
 
         // Verify ring buffer behavior
@@ -322,7 +323,13 @@ mod tests {
         let messages: Vec<_> = buffer.iter().map(|e| e.message.as_str()).collect();
         assert_eq!(
             messages,
-            vec!["Log entry 6", "Log entry 7", "Log entry 8", "Log entry 9", "Log entry 10"]
+            vec![
+                "Log entry 6",
+                "Log entry 7",
+                "Log entry 8",
+                "Log entry 9",
+                "Log entry 10"
+            ]
         );
     }
 
@@ -555,7 +562,13 @@ mod tests {
                     "tasks_completed": {}
                 }}"#,
                 i,
-                if i % 3 == 0 { "active" } else if i % 3 == 1 { "idle" } else { "starting" },
+                if i % 3 == 0 {
+                    "active"
+                } else if i % 3 == 1 {
+                    "idle"
+                } else {
+                    "starting"
+                },
                 std::process::id(),
                 i * 10
             );
@@ -639,11 +652,11 @@ mod tests {
 
         // Test various terminal sizes including extreme cases
         let sizes = [
-            (20, 10),    // Minimum
-            (80, 24),    // Standard
-            (120, 40),   // Large
-            (200, 60),   // Very large
-            (300, 100),  // Extreme
+            (20, 10),   // Minimum
+            (80, 24),   // Standard
+            (120, 40),  // Large
+            (200, 60),  // Very large
+            (300, 100), // Extreme
         ];
 
         for (width, height) in sizes {
@@ -866,7 +879,10 @@ mod tests {
 
         // Should receive initial scan complete event
         let event = watcher.recv_timeout(Duration::from_millis(100));
-        assert!(matches!(event, Some(StatusEvent::InitialScanComplete { .. })));
+        assert!(matches!(
+            event,
+            Some(StatusEvent::InitialScanComplete { .. })
+        ));
 
         // Create a new worker
         let path = create_test_status_file(&status_dir, "lifecycle-worker", "starting");
@@ -957,8 +973,7 @@ mod tests {
         // Create empty log file
         fs::write(&log_path, "").unwrap();
 
-        let config = LogTailerConfig::new(&log_path)
-            .with_start_from_end(false);
+        let config = LogTailerConfig::new(&log_path).with_start_from_end(false);
         let mut tailer = LogTailer::new(config);
 
         // Should handle gracefully
@@ -1032,8 +1047,15 @@ mod tests {
 
         // Verify worker is now tracked with "starting" status
         let worker = watcher.get_worker("worker-alpha");
-        assert!(worker.is_some(), "Worker should be tracked after status file creation");
-        assert_eq!(worker.unwrap().status, WorkerStatus::Starting, "Worker should be in 'starting' status");
+        assert!(
+            worker.is_some(),
+            "Worker should be tracked after status file creation"
+        );
+        assert_eq!(
+            worker.unwrap().status,
+            WorkerStatus::Starting,
+            "Worker should be in 'starting' status"
+        );
 
         // Verify counts updated
         let counts = watcher.worker_counts();
@@ -1394,7 +1416,11 @@ mod tests {
 
         // Verify crash detection
         let worker = watcher.get_worker("unstable-worker").unwrap();
-        assert_eq!(worker.status, WorkerStatus::Failed, "Worker should be in failed state");
+        assert_eq!(
+            worker.status,
+            WorkerStatus::Failed,
+            "Worker should be in failed state"
+        );
         assert!(!worker.is_healthy(), "Failed worker should not be healthy");
 
         let counts = watcher.worker_counts();
@@ -1576,7 +1602,11 @@ mod tests {
         while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
 
         let worker = watcher.get_worker("lifecycle-worker").unwrap();
-        assert_eq!(worker.status, WorkerStatus::Starting, "Phase 1: Should be starting");
+        assert_eq!(
+            worker.status,
+            WorkerStatus::Starting,
+            "Phase 1: Should be starting"
+        );
 
         // Phase 2: Worker becomes active with first task
         let active_json = r#"{
@@ -1596,7 +1626,11 @@ mod tests {
         while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
 
         let worker = watcher.get_worker("lifecycle-worker").unwrap();
-        assert_eq!(worker.status, WorkerStatus::Active, "Phase 2: Should be active");
+        assert_eq!(
+            worker.status,
+            WorkerStatus::Active,
+            "Phase 2: Should be active"
+        );
         assert_eq!(worker.current_task, Some("task-001".to_string()));
 
         // Phase 3: Worker completes task, picks up another
@@ -1617,7 +1651,10 @@ mod tests {
         while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
 
         let worker = watcher.get_worker("lifecycle-worker").unwrap();
-        assert_eq!(worker.tasks_completed, 1, "Phase 3: Should have completed 1 task");
+        assert_eq!(
+            worker.tasks_completed, 1,
+            "Phase 3: Should have completed 1 task"
+        );
         assert_eq!(worker.current_task, Some("task-002".to_string()));
 
         // Phase 4: Worker finishes all tasks, goes idle
@@ -1639,8 +1676,14 @@ mod tests {
 
         let worker = watcher.get_worker("lifecycle-worker").unwrap();
         assert_eq!(worker.status, WorkerStatus::Idle, "Phase 4: Should be idle");
-        assert_eq!(worker.tasks_completed, 2, "Phase 4: Should have completed 2 tasks");
-        assert!(worker.current_task.is_none(), "Phase 4: Should have no current task");
+        assert_eq!(
+            worker.tasks_completed, 2,
+            "Phase 4: Should have completed 2 tasks"
+        );
+        assert!(
+            worker.current_task.is_none(),
+            "Phase 4: Should have no current task"
+        );
 
         // Phase 5: Worker is stopped
         let stopped_json = r#"{
@@ -1659,8 +1702,15 @@ mod tests {
         while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
 
         let worker = watcher.get_worker("lifecycle-worker").unwrap();
-        assert_eq!(worker.status, WorkerStatus::Stopped, "Phase 5: Should be stopped");
-        assert!(!worker.is_healthy(), "Phase 5: Stopped worker should not be healthy");
+        assert_eq!(
+            worker.status,
+            WorkerStatus::Stopped,
+            "Phase 5: Should be stopped"
+        );
+        assert!(
+            !worker.is_healthy(),
+            "Phase 5: Stopped worker should not be healthy"
+        );
     }
 
     // ============================================================
@@ -1706,7 +1756,11 @@ mod tests {
         assert_eq!(counts.failed, 1);
 
         // Verify health calculations
-        assert_eq!(counts.healthy(), 3, "Starting, active, and idle should be healthy");
+        assert_eq!(
+            counts.healthy(),
+            3,
+            "Starting, active, and idle should be healthy"
+        );
         assert_eq!(counts.unhealthy(), 1, "Only failed should be unhealthy");
 
         // Verify healthy/unhealthy lists
@@ -1734,7 +1788,9 @@ mod tests {
                     "model": "sonnet",
                     "tasks_completed": {}
                 }}"#,
-                i, status, i * 5
+                i,
+                status,
+                i * 5
             );
             fs::write(status_dir.join(format!("multi-worker-{}.json", i)), json).unwrap();
         }
@@ -1801,7 +1857,11 @@ mod tests {
         let worker = watcher.get_worker("good-worker");
         if let Some(w) = worker {
             // If tracked, should be idle now
-            assert_eq!(w.status, WorkerStatus::Idle, "Worker should recover to idle state");
+            assert_eq!(
+                w.status,
+                WorkerStatus::Idle,
+                "Worker should recover to idle state"
+            );
         }
     }
 
@@ -1822,13 +1882,12 @@ mod tests {
         let worker_path = status_dir.join("rapid-worker.json");
 
         // Rapid status changes (simulating a busy worker)
-        let statuses = ["starting", "active", "active", "active", "idle", "active", "idle"];
+        let statuses = [
+            "starting", "active", "active", "active", "idle", "active", "idle",
+        ];
 
         for status in &statuses {
-            let json = format!(
-                r#"{{"worker_id": "rapid-worker", "status": "{}"}}"#,
-                status
-            );
+            let json = format!(r#"{{"worker_id": "rapid-worker", "status": "{}"}}"#, status);
             fs::write(&worker_path, json).unwrap();
             thread::sleep(Duration::from_millis(20));
         }
@@ -1839,7 +1898,10 @@ mod tests {
 
         // Worker should end up in final state (idle)
         let worker = watcher.get_worker("rapid-worker");
-        assert!(worker.is_some(), "Worker should be tracked after rapid changes");
+        assert!(
+            worker.is_some(),
+            "Worker should be tracked after rapid changes"
+        );
         // Final state should be the last written status
         assert_eq!(worker.unwrap().status, WorkerStatus::Idle);
     }
@@ -1879,9 +1941,9 @@ mod tests {
 
     #[test]
     fn test_cost_panel_with_data() {
-        use crate::cost_panel::{CostPanelData, BudgetConfig, BudgetAlertLevel};
-        use forge_cost::DailyCost;
+        use crate::cost_panel::{BudgetAlertLevel, BudgetConfig, CostPanelData};
         use chrono::Utc;
+        use forge_cost::DailyCost;
 
         let mut data = CostPanelData::new();
 
@@ -1907,7 +1969,7 @@ mod tests {
 
     #[test]
     fn test_cost_panel_budget_alerts() {
-        use crate::cost_panel::{CostPanelData, BudgetConfig, BudgetAlertLevel};
+        use crate::cost_panel::{BudgetAlertLevel, BudgetConfig, CostPanelData};
 
         let mut data = CostPanelData::new();
         data.set_budget(BudgetConfig::new(100.0));
@@ -1968,7 +2030,7 @@ mod tests {
 
     #[test]
     fn test_cost_formatting_functions() {
-        use crate::cost_panel::{format_usd, format_tokens, truncate_model_name};
+        use crate::cost_panel::{format_tokens, format_usd, truncate_model_name};
 
         // Test USD formatting
         assert_eq!(format_usd(0.0012), "$0.0012");
@@ -2012,7 +2074,7 @@ mod tests {
 
     #[test]
     fn test_subscription_status_calculations() {
-        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, ResetPeriod};
+        use crate::subscription_panel::{ResetPeriod, SubscriptionService, SubscriptionStatus};
         use chrono::{Duration, Utc};
 
         let status = SubscriptionStatus::new(SubscriptionService::ClaudePro)
@@ -2027,12 +2089,13 @@ mod tests {
 
     #[test]
     fn test_subscription_recommended_actions() {
-        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, SubscriptionAction, ResetPeriod};
+        use crate::subscription_panel::{
+            ResetPeriod, SubscriptionAction, SubscriptionService, SubscriptionStatus,
+        };
         use chrono::{Duration, Utc};
 
         // Paused subscription
-        let paused = SubscriptionStatus::new(SubscriptionService::ChatGPTPlus)
-            .with_active(false);
+        let paused = SubscriptionStatus::new(SubscriptionService::ChatGPTPlus).with_active(false);
         assert_eq!(paused.recommended_action(), SubscriptionAction::Paused);
 
         // Pay-per-use
@@ -2051,24 +2114,25 @@ mod tests {
 
     #[test]
     fn test_subscription_format_reset_timer() {
-        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, ResetPeriod};
+        use crate::subscription_panel::{ResetPeriod, SubscriptionService, SubscriptionStatus};
         use chrono::{Duration, Utc};
 
         // Days and hours
-        let days_status = SubscriptionStatus::new(SubscriptionService::ClaudePro)
-            .with_reset(Utc::now() + Duration::days(5) + Duration::hours(12), ResetPeriod::Monthly);
+        let days_status = SubscriptionStatus::new(SubscriptionService::ClaudePro).with_reset(
+            Utc::now() + Duration::days(5) + Duration::hours(12),
+            ResetPeriod::Monthly,
+        );
         let timer = days_status.format_reset_timer();
         assert!(timer.contains("d") || timer.contains("h"));
 
         // Pay-per-use shows Monthly
-        let pay = SubscriptionStatus::new(SubscriptionService::DeepSeekAPI)
-            .with_pay_per_use(0.05);
+        let pay = SubscriptionStatus::new(SubscriptionService::DeepSeekAPI).with_pay_per_use(0.05);
         assert_eq!(pay.format_reset_timer(), "Monthly");
     }
 
     #[test]
     fn test_subscription_summary_formatting() {
-        use crate::subscription_panel::{format_subscription_summary, SubscriptionData};
+        use crate::subscription_panel::{SubscriptionData, format_subscription_summary};
 
         // Test with demo data
         let data = SubscriptionData::with_demo_data();
@@ -2091,22 +2155,22 @@ mod tests {
 
     #[test]
     fn test_subscription_usage_colors() {
-        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService};
+        use crate::subscription_panel::{SubscriptionService, SubscriptionStatus};
         use ratatui::style::Color;
 
         // Low usage - green
-        let low = SubscriptionStatus::new(SubscriptionService::ClaudePro)
-            .with_usage(100, 500, "msgs");
+        let low =
+            SubscriptionStatus::new(SubscriptionService::ClaudePro).with_usage(100, 500, "msgs");
         assert_eq!(low.usage_color(), Color::Green);
 
         // Medium usage - cyan/yellow
-        let med = SubscriptionStatus::new(SubscriptionService::ClaudePro)
-            .with_usage(350, 500, "msgs");
+        let med =
+            SubscriptionStatus::new(SubscriptionService::ClaudePro).with_usage(350, 500, "msgs");
         assert!(matches!(med.usage_color(), Color::Cyan | Color::Yellow));
 
         // High usage - red
-        let high = SubscriptionStatus::new(SubscriptionService::ClaudePro)
-            .with_usage(480, 500, "msgs");
+        let high =
+            SubscriptionStatus::new(SubscriptionService::ClaudePro).with_usage(480, 500, "msgs");
         assert!(matches!(high.usage_color(), Color::Red | Color::LightRed));
     }
 
@@ -2306,11 +2370,26 @@ mod tests {
     fn test_bead_priority_indicators() {
         use crate::bead::Bead;
 
-        let p0 = Bead { priority: 0, ..Default::default() };
-        let p1 = Bead { priority: 1, ..Default::default() };
-        let p2 = Bead { priority: 2, ..Default::default() };
-        let p3 = Bead { priority: 3, ..Default::default() };
-        let p4 = Bead { priority: 4, ..Default::default() };
+        let p0 = Bead {
+            priority: 0,
+            ..Default::default()
+        };
+        let p1 = Bead {
+            priority: 1,
+            ..Default::default()
+        };
+        let p2 = Bead {
+            priority: 2,
+            ..Default::default()
+        };
+        let p3 = Bead {
+            priority: 3,
+            ..Default::default()
+        };
+        let p4 = Bead {
+            priority: 4,
+            ..Default::default()
+        };
 
         assert_eq!(p0.priority_indicator(), "🔴");
         assert_eq!(p1.priority_indicator(), "🟠");
@@ -2333,8 +2412,17 @@ mod tests {
         ];
 
         for (status, expected) in test_cases {
-            let bead = Bead { status: status.to_string(), ..Default::default() };
-            assert_eq!(bead.status_indicator(), expected, "Status '{}' should have indicator '{}'", status, expected);
+            let bead = Bead {
+                status: status.to_string(),
+                ..Default::default()
+            };
+            assert_eq!(
+                bead.status_indicator(),
+                expected,
+                "Status '{}' should have indicator '{}'",
+                status,
+                expected
+            );
         }
     }
 
@@ -2376,7 +2464,10 @@ mod tests {
     fn test_progress_bar_widget() {
         use crate::widget::ProgressBar;
 
-        let bar = ProgressBar::new(75, 100).width(20).label("Memory").show_value(true);
+        let bar = ProgressBar::new(75, 100)
+            .width(20)
+            .label("Memory")
+            .show_value(true);
         let rendered = bar.render_string();
         assert!(rendered.contains("Memory"));
         assert!(rendered.contains("75/100"));
@@ -2443,10 +2534,10 @@ mod tests {
         let mut app = App::new();
 
         let sizes = [
-            (80, 24),    // Minimum viable
-            (120, 40),   // Standard
-            (199, 55),   // Ultra-wide threshold
-            (250, 70),   // Large
+            (80, 24),  // Minimum viable
+            (120, 40), // Standard
+            (199, 55), // Ultra-wide threshold
+            (250, 70), // Large
         ];
 
         for (width, height) in sizes {
@@ -2657,8 +2748,8 @@ mod tests {
     fn test_log_entry_creation() {
         use crate::log::{LogEntry, LogLevel};
 
-        let entry = LogEntry::new(LogLevel::Info, "Test message".to_string())
-            .with_source("test-worker");
+        let entry =
+            LogEntry::new(LogLevel::Info, "Test message".to_string()).with_source("test-worker");
 
         assert_eq!(entry.level, LogLevel::Info);
         assert_eq!(entry.message, "Test message");
@@ -2692,8 +2783,8 @@ mod tests {
 
     #[test]
     fn test_input_handler_view_hotkeys() {
-        use crossterm::event::{KeyCode, KeyModifiers};
         use crate::event::WorkerExecutor;
+        use crossterm::event::{KeyCode, KeyModifiers};
 
         let mut handler = InputHandler::new();
 
@@ -2708,10 +2799,8 @@ mod tests {
         ];
 
         for (keycode, expected_view) in view_keys {
-            let event = handler.handle_key(crossterm::event::KeyEvent::new(
-                keycode,
-                KeyModifiers::NONE,
-            ));
+            let event =
+                handler.handle_key(crossterm::event::KeyEvent::new(keycode, KeyModifiers::NONE));
             assert_eq!(
                 event,
                 AppEvent::SwitchView(expected_view),
@@ -2793,9 +2882,9 @@ mod tests {
 
     #[test]
     fn test_cost_panel_widget_rendering() {
-        use crate::cost_panel::{CostPanel, CostPanelData, BudgetConfig};
-        use ratatui::backend::TestBackend;
+        use crate::cost_panel::{BudgetConfig, CostPanel, CostPanelData};
         use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
 
         // Create cost data
         let mut data = CostPanelData::new();
@@ -2809,10 +2898,12 @@ mod tests {
         let backend = TestBackend::new(60, 20);
         let mut terminal = Terminal::new(backend).unwrap();
 
-        terminal.draw(|f| {
-            let area = f.area();
-            f.render_widget(panel, area);
-        }).unwrap();
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                f.render_widget(panel, area);
+            })
+            .unwrap();
 
         let buffer = terminal.backend().buffer().clone();
         let content = buffer_to_string(&buffer);
@@ -2823,9 +2914,9 @@ mod tests {
 
     #[test]
     fn test_subscription_panel_widget_rendering() {
-        use crate::subscription_panel::{SubscriptionPanel, SubscriptionData};
-        use ratatui::backend::TestBackend;
+        use crate::subscription_panel::{SubscriptionData, SubscriptionPanel};
         use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
 
         let data = SubscriptionData::with_demo_data();
         let panel = SubscriptionPanel::new(&data).focused(true);
@@ -2833,10 +2924,12 @@ mod tests {
         let backend = TestBackend::new(60, 20);
         let mut terminal = Terminal::new(backend).unwrap();
 
-        terminal.draw(|f| {
-            let area = f.area();
-            f.render_widget(panel, area);
-        }).unwrap();
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                f.render_widget(panel, area);
+            })
+            .unwrap();
 
         let buffer = terminal.backend().buffer().clone();
         let content = buffer_to_string(&buffer);
@@ -2851,8 +2944,8 @@ mod tests {
 
     #[test]
     fn test_subscription_status_usage_calculations() {
-        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, ResetPeriod};
-        use chrono::{Utc, Duration};
+        use crate::subscription_panel::{ResetPeriod, SubscriptionService, SubscriptionStatus};
+        use chrono::{Duration, Utc};
 
         // Test usage percentage calculation
         let status = SubscriptionStatus::new(SubscriptionService::ClaudePro)
@@ -2867,8 +2960,10 @@ mod tests {
 
     #[test]
     fn test_subscription_status_over_quota() {
-        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, SubscriptionAction, ResetPeriod};
-        use chrono::{Utc, Duration};
+        use crate::subscription_panel::{
+            ResetPeriod, SubscriptionAction, SubscriptionService, SubscriptionStatus,
+        };
+        use chrono::{Duration, Utc};
 
         let status = SubscriptionStatus::new(SubscriptionService::CursorPro)
             .with_usage(520, 500, "reqs")
@@ -2881,7 +2976,9 @@ mod tests {
 
     #[test]
     fn test_subscription_status_pay_per_use() {
-        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, SubscriptionAction, ResetPeriod};
+        use crate::subscription_panel::{
+            ResetPeriod, SubscriptionAction, SubscriptionService, SubscriptionStatus,
+        };
 
         let status = SubscriptionStatus::new(SubscriptionService::DeepSeekAPI)
             .with_pay_per_use(0.05)
@@ -2894,7 +2991,9 @@ mod tests {
 
     #[test]
     fn test_subscription_status_inactive() {
-        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, SubscriptionAction};
+        use crate::subscription_panel::{
+            SubscriptionAction, SubscriptionService, SubscriptionStatus,
+        };
 
         let status = SubscriptionStatus::new(SubscriptionService::ChatGPTPlus)
             .with_usage(10, 40, "msgs")
@@ -2906,8 +3005,10 @@ mod tests {
 
     #[test]
     fn test_subscription_status_accelerate_recommendation() {
-        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, SubscriptionAction, ResetPeriod};
-        use chrono::{Utc, Duration};
+        use crate::subscription_panel::{
+            ResetPeriod, SubscriptionAction, SubscriptionService, SubscriptionStatus,
+        };
+        use chrono::{Duration, Utc};
 
         // Under-utilized: 20% used with 80% of time passed
         let now = Utc::now();
@@ -2921,15 +3022,20 @@ mod tests {
         // Should recommend acceleration
         let action = status.recommended_action();
         assert!(
-            matches!(action, SubscriptionAction::Accelerate | SubscriptionAction::MaxOut),
+            matches!(
+                action,
+                SubscriptionAction::Accelerate | SubscriptionAction::MaxOut
+            ),
             "Should recommend accelerating usage when behind schedule"
         );
     }
 
     #[test]
     fn test_subscription_status_on_pace() {
-        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, SubscriptionAction, ResetPeriod};
-        use chrono::{Utc, Duration};
+        use crate::subscription_panel::{
+            ResetPeriod, SubscriptionAction, SubscriptionService, SubscriptionStatus,
+        };
+        use chrono::{Duration, Utc};
 
         // On pace: 50% used with 50% of time passed
         let status = SubscriptionStatus::new(SubscriptionService::ClaudePro)
@@ -2983,20 +3089,28 @@ mod tests {
 
     #[test]
     fn test_subscription_reset_timer_formatting() {
-        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService, ResetPeriod};
-        use chrono::{Utc, Duration};
+        use crate::subscription_panel::{ResetPeriod, SubscriptionService, SubscriptionStatus};
+        use chrono::{Duration, Utc};
 
         // Days and hours
-        let status = SubscriptionStatus::new(SubscriptionService::ClaudePro)
-            .with_reset(Utc::now() + Duration::days(5) + Duration::hours(12), ResetPeriod::Monthly);
+        let status = SubscriptionStatus::new(SubscriptionService::ClaudePro).with_reset(
+            Utc::now() + Duration::days(5) + Duration::hours(12),
+            ResetPeriod::Monthly,
+        );
         let timer = status.format_reset_timer();
         assert!(timer.contains("d"), "Timer should show days: {}", timer);
 
         // Hours and minutes
-        let status = SubscriptionStatus::new(SubscriptionService::ChatGPTPlus)
-            .with_reset(Utc::now() + Duration::hours(2) + Duration::minutes(30), ResetPeriod::Hourly(3));
+        let status = SubscriptionStatus::new(SubscriptionService::ChatGPTPlus).with_reset(
+            Utc::now() + Duration::hours(2) + Duration::minutes(30),
+            ResetPeriod::Hourly(3),
+        );
         let timer = status.format_reset_timer();
-        assert!(timer.contains("h") || timer.contains("m"), "Timer should show hours/minutes: {}", timer);
+        assert!(
+            timer.contains("h") || timer.contains("m"),
+            "Timer should show hours/minutes: {}",
+            timer
+        );
 
         // Just minutes
         let status = SubscriptionStatus::new(SubscriptionService::ChatGPTPlus)
@@ -3020,32 +3134,32 @@ mod tests {
 
     #[test]
     fn test_subscription_usage_color_gradient() {
-        use crate::subscription_panel::{SubscriptionStatus, SubscriptionService};
+        use crate::subscription_panel::{SubscriptionService, SubscriptionStatus};
         use ratatui::style::Color;
 
         // Low usage - green (< 40%)
-        let low = SubscriptionStatus::new(SubscriptionService::ClaudePro)
-            .with_usage(100, 500, "msgs");
+        let low =
+            SubscriptionStatus::new(SubscriptionService::ClaudePro).with_usage(100, 500, "msgs");
         assert_eq!(low.usage_color(), Color::Green);
 
         // Medium-low usage - cyan (40-60%)
-        let medium_low = SubscriptionStatus::new(SubscriptionService::ClaudePro)
-            .with_usage(250, 500, "msgs");
+        let medium_low =
+            SubscriptionStatus::new(SubscriptionService::ClaudePro).with_usage(250, 500, "msgs");
         assert_eq!(medium_low.usage_color(), Color::Cyan);
 
         // Medium-high usage - yellow (60-80%)
-        let medium_high = SubscriptionStatus::new(SubscriptionService::ClaudePro)
-            .with_usage(350, 500, "msgs");
+        let medium_high =
+            SubscriptionStatus::new(SubscriptionService::ClaudePro).with_usage(350, 500, "msgs");
         assert_eq!(medium_high.usage_color(), Color::Yellow);
 
         // High usage - light red (80-95%)
-        let high = SubscriptionStatus::new(SubscriptionService::ClaudePro)
-            .with_usage(450, 500, "msgs");
+        let high =
+            SubscriptionStatus::new(SubscriptionService::ClaudePro).with_usage(450, 500, "msgs");
         assert_eq!(high.usage_color(), Color::LightRed);
 
         // Critical usage - red (>= 95%)
-        let critical = SubscriptionStatus::new(SubscriptionService::ClaudePro)
-            .with_usage(480, 500, "msgs");
+        let critical =
+            SubscriptionStatus::new(SubscriptionService::ClaudePro).with_usage(480, 500, "msgs");
         assert_eq!(critical.usage_color(), Color::Red);
     }
 
@@ -3076,9 +3190,9 @@ mod tests {
 
     #[test]
     fn test_subscription_panel_compact_widget() {
-        use crate::subscription_panel::{SubscriptionSummaryCompact, SubscriptionData};
-        use ratatui::backend::TestBackend;
+        use crate::subscription_panel::{SubscriptionData, SubscriptionSummaryCompact};
         use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
 
         let data = SubscriptionData::with_demo_data();
         let widget = SubscriptionSummaryCompact::new(&data);
@@ -3086,10 +3200,12 @@ mod tests {
         let backend = TestBackend::new(50, 20);
         let mut terminal = Terminal::new(backend).unwrap();
 
-        terminal.draw(|f| {
-            let area = f.area();
-            f.render_widget(widget, area);
-        }).unwrap();
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                f.render_widget(widget, area);
+            })
+            .unwrap();
 
         // Should render without panic
         let buffer = terminal.backend().buffer();
@@ -3310,8 +3426,10 @@ mod tests {
 
     #[test]
     fn test_e2e_data_flow_subscription_updates_ui() {
-        use crate::subscription_panel::{SubscriptionData, SubscriptionStatus, SubscriptionService, ResetPeriod};
-        use chrono::{Utc, Duration};
+        use crate::subscription_panel::{
+            ResetPeriod, SubscriptionData, SubscriptionService, SubscriptionStatus,
+        };
+        use chrono::{Duration, Utc};
 
         // Create subscription data that would trigger different UI states
         let now = Utc::now();
@@ -3338,13 +3456,19 @@ mod tests {
         let claude = data.get(SubscriptionService::ClaudePro).unwrap();
         let cursor = data.get(SubscriptionService::CursorPro).unwrap();
 
-        assert_eq!(claude.recommended_action(), crate::subscription_panel::SubscriptionAction::OnPace);
-        assert_eq!(cursor.recommended_action(), crate::subscription_panel::SubscriptionAction::OverQuota);
+        assert_eq!(
+            claude.recommended_action(),
+            crate::subscription_panel::SubscriptionAction::OnPace
+        );
+        assert_eq!(
+            cursor.recommended_action(),
+            crate::subscription_panel::SubscriptionAction::OverQuota
+        );
     }
 
     #[test]
     fn test_e2e_data_flow_cost_updates_ui() {
-        use crate::cost_panel::{CostPanelData, BudgetConfig, BudgetAlertLevel};
+        use crate::cost_panel::{BudgetAlertLevel, BudgetConfig, CostPanelData};
 
         // Simulate cost data being updated
         let mut data = CostPanelData::new();
@@ -3433,8 +3557,10 @@ mod tests {
 
     #[test]
     fn test_e2e_stress_test_subscription_updates() {
-        use crate::subscription_panel::{SubscriptionData, SubscriptionStatus, SubscriptionService, ResetPeriod};
-        use chrono::{Utc, Duration};
+        use crate::subscription_panel::{
+            ResetPeriod, SubscriptionData, SubscriptionService, SubscriptionStatus,
+        };
+        use chrono::{Duration, Utc};
 
         let now = Utc::now();
 
@@ -3459,9 +3585,9 @@ mod tests {
 
     #[test]
     fn test_e2e_stress_test_cost_updates() {
-        use crate::cost_panel::{CostPanelData, BudgetConfig};
-        use forge_cost::DailyCost;
+        use crate::cost_panel::{BudgetConfig, CostPanelData};
         use chrono::Utc;
+        use forge_cost::DailyCost;
 
         let mut data = CostPanelData::new();
         data.set_budget(BudgetConfig::new(1000.0));
