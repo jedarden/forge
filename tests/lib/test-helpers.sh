@@ -86,12 +86,15 @@ start_forge() {
     # Kill any existing session with same name
     tmux kill-session -t "$session" 2>/dev/null || true
 
-    # Kill any existing forge processes (safety cleanup)
-    pkill -f "^forge$" 2>/dev/null || true
-    sleep 0.5
+    # Note: Do NOT pkill forge processes - this would kill other test sessions
+    # Each test gets its own uniquely-named session
+    sleep 0.2
 
     # Create new detached session running forge
     tmux new-session -d -s "$session" -x "$width" -y "$height" "forge"
+
+    # Wait for session to stabilize
+    sleep 0.5
 
     return 0
 }
@@ -101,24 +104,25 @@ start_forge() {
 wait_for_init() {
     local session="$1"
     local timeout="${2:-$INIT_TIMEOUT}"
-    local log_file
-    log_file=$(get_log_file)
 
     log_info "Waiting for forge to initialize (timeout: ${timeout}s)..."
 
     local start_time=$SECONDS
     while (( SECONDS - start_time < timeout )); do
-        # Check for initialization success in logs
-        if grep -q "Chat backend initialized successfully" <(tail -100 "$log_file" 2>/dev/null || echo ""); then
-            local elapsed=$((SECONDS - start_time))
-            log_success "Forge initialized after ${elapsed}s"
-            # Wait a bit more for UI to fully render
-            sleep 2
-            return 0
-        fi
-
-        # Also check if session died
-        if ! session_exists "$session"; then
+        # Check if session is running and has content
+        if session_exists "$session"; then
+            # Wait for UI to render - look for both FORGE header and panel borders
+            local content
+            content=$(tmux capture-pane -t "$session" -p 2>/dev/null || echo "")
+            # Check for FORGE header and Worker Pool panel (indicates full render)
+            if echo "$content" | grep -q "FORGE" && echo "$content" | grep -q "Worker Pool"; then
+                local elapsed=$((SECONDS - start_time))
+                log_success "Forge initialized after ${elapsed}s"
+                # Wait a bit more for UI to fully render
+                sleep 1
+                return 0
+            fi
+        else
             log_fail "Session died during initialization"
             return 1
         fi
