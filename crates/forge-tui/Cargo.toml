@@ -27,5 +27,9 @@ thiserror.workspace = true
 dirs = "5.0"
 rand = "0.8"
 
+[features]
+default = ["self-update"]
+self-update = ["forge-core/self-update"]
+
 [dev-dependencies]
 tempfile.workspace = true

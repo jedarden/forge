@@ -252,6 +252,29 @@ pub enum ForgeError {
     TerminalRestore { message: String },
 
     // =========================================================================
+    // Self-Update Errors
+    // =========================================================================
+    /// Failed to check for updates
+    #[error("Failed to check for updates: {message}")]
+    UpdateCheck { message: String },
+
+    /// Failed to download update
+    #[error("Failed to download update: {message}")]
+    UpdateDownload { message: String },
+
+    /// Failed to install update
+    #[error("Failed to install update: {message}")]
+    UpdateInstall { message: String },
+
+    /// No compatible update asset found
+    #[error("No compatible update asset found for platform: {platform}")]
+    UpdateAssetNotFound { platform: String },
+
+    /// Update verification failed (checksum mismatch)
+    #[error("Update verification failed: {message}")]
+    UpdateVerification { message: String },
+
+    // =========================================================================
     // Internal Errors
     // =========================================================================
     /// Internal error (bug in FORGE)

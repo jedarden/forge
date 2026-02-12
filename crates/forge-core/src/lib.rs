@@ -30,6 +30,8 @@
 
 pub mod error;
 pub mod logging;
+#[cfg(feature = "self-update")]
+pub mod self_update;
 pub mod status;
 pub mod types;
 pub mod watcher;
@@ -39,3 +41,9 @@ pub use error::{ForgeError, Result};
 pub use logging::{LogGuard, init_logging};
 pub use status::{StatusReader, WorkerStatusInfo};
 pub use watcher::{StatusEvent, StatusWatcher, WatcherConfig};
+
+// Re-export self_update types when feature is enabled
+#[cfg(feature = "self-update")]
+pub use self_update::{
+    check_for_update, perform_update, DownloadProgress, UpdateResult, UpdateStatus,
+};
