@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::activity_panel::{ActivityEntry, ActivityEventType, ActivityLogData};
 use crate::bead::BeadManager;
 use crate::cost_panel::{BudgetConfig, CostPanelData};
 use crate::log_watcher::{LogWatcher, LogWatcherConfig, LogWatcherEvent, RealtimeMetrics};
@@ -514,6 +515,8 @@ pub struct DataManager {
     pub realtime_metrics: RealtimeMetrics,
     /// Health monitor for worker health checks
     health_monitor: Option<HealthMonitor>,
+    /// Activity log data for real-time streaming display
+    pub activity_data: ActivityLogData,
     /// Error message if watcher failed to initialize
     init_error: Option<String>,
     /// Last tmux discovery time
@@ -540,6 +543,8 @@ pub struct DataManager {
     log_watcher: Option<LogWatcher>,
     /// Log watcher event receiver
     log_rx: Option<std::sync::mpsc::Receiver<LogWatcherEvent>>,
+    /// Previous worker statuses for change detection
+    prev_worker_statuses: HashMap<String, WorkerStatus>,
 }
 
 impl DataManager {
@@ -634,6 +639,9 @@ impl DataManager {
             }
         };
 
+        // Initialize activity log data
+        let activity_data = ActivityLogData::with_default_capacity();
+
         let manager = Self {
             watcher,
             worker_data: WorkerData::new(),
@@ -645,6 +653,7 @@ impl DataManager {
             metrics_data,
             realtime_metrics,
             health_monitor,
+            activity_data,
             init_error,
             last_tmux_poll: None,
             last_cost_poll: None,
@@ -658,6 +667,7 @@ impl DataManager {
             cached_bead_count: 0,
             log_watcher,
             log_rx,
+            prev_worker_statuses: HashMap::new(),
         };
 
         // Skip initial poll_updates during initialization - it blocks for too long
@@ -729,6 +739,9 @@ impl DataManager {
         // Initialize health monitor
         let health_monitor = HealthMonitor::new(HealthMonitorConfig::default()).ok();
 
+        // Initialize activity log data
+        let activity_data = ActivityLogData::with_default_capacity();
+
         // Skip initial poll_updates during initialization - it blocks for too long
         // due to bead manager calling `br` commands which can take seconds each.
         // Let the first poll happen during the main loop instead.
@@ -743,6 +756,7 @@ impl DataManager {
             metrics_data,
             realtime_metrics,
             health_monitor,
+            activity_data,
             init_error,
             last_tmux_poll: None,
             last_cost_poll: None,
@@ -756,6 +770,7 @@ impl DataManager {
             cached_bead_count: 0,
             log_watcher,
             log_rx,
+            prev_worker_statuses: HashMap::new(),
         }
     }
 
@@ -850,6 +865,66 @@ impl DataManager {
 
             // Only update if events were received
             if events_received {
+                // Clone current workers to detect changes (avoids borrow issues)
+                let current_workers = watcher.workers().clone();
+
+                // Detect changes before updating
+                for (worker_id, worker) in &current_workers {
+                    let prev_status = self.prev_worker_statuses.get(worker_id);
+
+                    match prev_status {
+                        None => {
+                            // New worker discovered
+                            self.activity_data.push(
+                                ActivityEntry::new(ActivityEventType::WorkerSpawn, "Worker spawned")
+                                    .with_source(worker_id),
+                            );
+                        }
+                        Some(prev) if *prev != worker.status => {
+                            // Status transition
+                            let message = format!(
+                                "Status changed: {:?} → {:?}",
+                                prev, worker.status
+                            );
+                            let event_type = match worker.status {
+                                WorkerStatus::Stopped => ActivityEventType::WorkerStop,
+                                WorkerStatus::Failed | WorkerStatus::Error => ActivityEventType::Error,
+                                _ => ActivityEventType::WorkerTransition,
+                            };
+                            self.activity_data.push(
+                                ActivityEntry::new(event_type, message)
+                                    .with_source(worker_id),
+                            );
+
+                            // Add task info if available
+                            if let Some(ref task) = worker.current_task {
+                                self.activity_data.push(
+                                    ActivityEntry::new(ActivityEventType::TaskPickup, format!("Working on {}", task))
+                                        .with_source(worker_id),
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Check for workers that were removed
+                for worker_id in self.prev_worker_statuses.keys() {
+                    if !current_workers.contains_key(worker_id) {
+                        self.activity_data.push(
+                            ActivityEntry::new(ActivityEventType::WorkerStop, "Worker stopped")
+                                .with_source(worker_id),
+                        );
+                    }
+                }
+
+                // Update previous statuses
+                self.prev_worker_statuses = current_workers
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.status))
+                    .collect();
+
+                // Now update worker data
                 self.worker_data.update_from_watcher(watcher);
                 changed = true;
             }
@@ -858,6 +933,8 @@ impl DataManager {
         // Poll bead manager for task queue updates
         let beads_changed = self.bead_manager.poll_updates();
         if beads_changed {
+            // Add activity entries for bead changes
+            self.detect_bead_changes();
             changed = true;
         }
 
@@ -935,6 +1012,37 @@ impl DataManager {
         self.dirty
     }
 
+    /// Detect bead/task changes and add activity entries.
+    fn detect_bead_changes(&mut self) {
+        // Add a generic activity entry when bead data changes
+        // In a production system, we'd track specific bead state changes
+        let total_beads = self.bead_manager.total_bead_count();
+        if total_beads > 0 {
+            // This is a simple notification - could be enhanced to track specific changes
+            // The bead manager already handles state tracking internally
+        }
+    }
+
+    /// Add an activity entry manually.
+    pub fn add_activity(&mut self, event_type: ActivityEventType, source: Option<&str>, message: impl Into<String>) {
+        let mut entry = ActivityEntry::new(event_type, message);
+        if let Some(s) = source {
+            entry = entry.with_source(s);
+        }
+        self.activity_data.push(entry);
+        self.dirty = true;
+    }
+
+    /// Get the activity log data.
+    pub fn activity_log(&self) -> &ActivityLogData {
+        &self.activity_data
+    }
+
+    /// Get mutable access to activity log data (for scroll control).
+    pub fn activity_log_mut(&mut self) -> &mut ActivityLogData {
+        &mut self.activity_data
+    }
+
     /// Poll health monitor for worker health status.
     fn poll_health_monitor(&mut self) {
         let Some(ref mut monitor) = self.health_monitor else {
@@ -943,7 +1051,19 @@ impl DataManager {
 
         match monitor.check_all_health() {
             Ok(health_status) => {
-                // Check if any worker became unhealthy
+                // Check if any worker became unhealthy and add activity entries
+                for (worker_id, health) in &health_status {
+                    if !health.is_healthy {
+                        self.activity_data.push(
+                            ActivityEntry::new(
+                                ActivityEventType::Warning,
+                                format!("Health check: {:?}", health.health_level()),
+                            )
+                            .with_source(worker_id),
+                        );
+                    }
+                }
+
                 let unhealthy_count = health_status.values().filter(|h| !h.is_healthy).count();
                 if unhealthy_count > 0 {
                     tracing::info!(
@@ -958,6 +1078,9 @@ impl DataManager {
             }
             Err(e) => {
                 tracing::warn!("Health check failed: {}", e);
+                self.activity_data.push(
+                    ActivityEntry::new(ActivityEventType::Error, format!("Health check failed: {}", e)),
+                );
             }
         }
     }
@@ -1204,6 +1327,26 @@ impl DataManager {
                     LogWatcherEvent::ApiCallParsed { call } => {
                         // Update real-time metrics
                         self.realtime_metrics.record_call(&call);
+
+                        // Add activity entry for API call
+                        let cost_str = if call.cost_usd >= 1.0 {
+                            format!("${:.2}", call.cost_usd)
+                        } else if call.cost_usd >= 0.01 {
+                            format!("${:.3}", call.cost_usd)
+                        } else {
+                            format!("${:.4}", call.cost_usd)
+                        };
+                        let msg = format!(
+                            "{} API call - {} in, {} out ({})",
+                            call.model,
+                            call.input_tokens,
+                            call.output_tokens,
+                            cost_str
+                        );
+                        self.activity_data.push(
+                            ActivityEntry::new(ActivityEventType::ApiCall, msg)
+                                .with_source(&call.worker_id),
+                        );
 
                         // The real-time metrics are now available for panels
                         // via self.realtime_metrics

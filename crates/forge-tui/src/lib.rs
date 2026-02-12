@@ -35,6 +35,7 @@
 //! - `Tab` - Cycle views
 //! - `Esc` - Cancel/back
 
+pub mod activity_panel;
 pub mod app;
 pub mod bead;
 pub mod cost_panel;
@@ -68,6 +69,10 @@ pub use log::{LogBuffer, LogEntry, LogEvent, LogLevel, LogTailer, LogTailerConfi
 pub use log_watcher::{
     LogWatcher, LogWatcherConfig, LogWatcherError, LogWatcherEvent, RealtimeMetrics,
     DEFAULT_DEBOUNCE_MS, DEFAULT_LOG_DIR, DEFAULT_POLL_INTERVAL_MS,
+};
+pub use activity_panel::{
+    ActivityEntry, ActivityEventType, ActivityLogData, ActivityPanel, ActivitySummaryCompact,
+    DEFAULT_ACTIVITY_CAPACITY,
 };
 pub use metrics_panel::{MetricsPanel, MetricsPanelData, MetricsSummaryCompact};
 pub use status::{StatusEvent, StatusWatcher, StatusWatcherConfig, WorkerStatusFile};
