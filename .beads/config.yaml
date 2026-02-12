@@ -2,3 +2,29 @@
 # issue_prefix: bd
 # default_priority: 2
 # default_type: task
+
+# Task Value Scoring Configuration
+# These weights control how tasks are prioritized for assignment.
+# All weights should sum to approximately 1.0
+scoring:
+  # Weight for priority component (P0-P4)
+  # P0=40, P1=32, P2=24, P3=16, P4=8 points
+  priority_weight: 0.4
+
+  # Weight for blockers component
+  # 10 points per blocked task, max 30 points
+  blockers_weight: 0.3
+
+  # Weight for age component
+  # 1 point per hour since creation, max 20 points
+  age_weight: 0.2
+
+  # Weight for labels component
+  # critical=10, urgent=7, important=4 points
+  labels_weight: 0.1
+
+  # Maximum age in hours to consider (caps age points)
+  max_age_hours: 20
+
+  # Maximum blockers to count (caps blocker points at 3 * 10 = 30)
+  max_blockers: 3

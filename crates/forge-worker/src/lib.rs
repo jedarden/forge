@@ -137,6 +137,7 @@
 pub mod bead_queue;
 pub mod discovery;
 pub mod launcher;
+pub mod scorer;
 pub mod tmux;
 pub mod types;
 
@@ -144,4 +145,5 @@ pub mod types;
 pub use bead_queue::{BeadAllocation, BeadQueueManager, BeadQueueReader, QueuedBead};
 pub use discovery::{DiscoveredWorker, DiscoveryResult, WorkerType, discover_workers};
 pub use launcher::WorkerLauncher;
+pub use scorer::{ScoredBead, ScoreComponents, ScoringConfig, TaskScorer};
 pub use types::{LaunchConfig, LauncherOutput, SpawnRequest, WorkerHandle};
