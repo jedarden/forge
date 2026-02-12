@@ -5069,4 +5069,286 @@ mod tests {
             "UI should still render after status change"
         );
     }
+
+    // ============================================================
+    // Integration Test: Exact Boundary Size Tests (fg-2n0k)
+    // ============================================================
+    //
+    // These tests verify rendering at exact boundary sizes:
+    // - Narrow: <120 cols OR <min_height rows
+    // - Wide: 120-198 cols AND 30+ rows
+    // - UltraWide: 199+ cols AND 38+ rows
+    //
+    // Test Matrix from fg-2n0k:
+    // | Terminal Size | Expected Mode | Panels Visible |
+    // |--------------|---------------|----------------|
+    // | 80x24        | Narrow        | 1 (switching)  |
+    // | 100x25       | Narrow        | 1 (switching)  |
+    // | 119x40       | Narrow        | 1 (width limit)|
+    // | 120x29       | Narrow        | 1 (height limit)|
+    // | 120x30       | Wide          | 4              |
+    // | 150x40       | Wide          | 4              |
+    // | 198x38       | Wide          | 4              |
+    // | 199x37       | Wide          | 4 (height limit)|
+    // | 199x38       | UltraWide     | 6              |
+    // | 250x60       | UltraWide     | 6              |
+
+    /// Test narrow mode at 80x24 (typical small terminal)
+    #[test]
+    fn test_boundary_80x24_narrow() {
+        let mut app = App::new();
+        let buffer = render_app(&mut app, 80, 24);
+
+        // Should render without crash
+        assert!(buffer.area.width == 80);
+        assert!(buffer.area.height == 24);
+
+        // Header should be visible
+        assert!(buffer_contains(&buffer, "FORGE"));
+
+        // Hotkey hints should be visible (narrow mode indicator)
+        assert!(buffer_contains(&buffer, "[o]") || buffer_contains(&buffer, "Overview"));
+    }
+
+    /// Test narrow mode at 100x25
+    #[test]
+    fn test_boundary_100x25_narrow() {
+        let mut app = App::new();
+        let buffer = render_app(&mut app, 100, 25);
+
+        assert!(buffer.area.width == 100);
+        assert!(buffer.area.height == 25);
+        assert!(buffer_contains(&buffer, "FORGE"));
+    }
+
+    /// Test narrow mode at 119x40 (width limit boundary)
+    /// 119 cols is just under the 120 wide threshold
+    #[test]
+    fn test_boundary_119x40_narrow_width_limit() {
+        use crate::view::LayoutMode;
+
+        // Verify layout mode detection
+        assert_eq!(LayoutMode::from_width(119), LayoutMode::Narrow);
+
+        let mut app = App::new();
+        let buffer = render_app(&mut app, 119, 40);
+
+        assert!(buffer.area.width == 119);
+        assert!(buffer.area.height == 40);
+        assert!(buffer_contains(&buffer, "FORGE"));
+
+        // Worker Pool should be visible in narrow mode
+        assert!(buffer_contains(&buffer, "Worker Pool"));
+    }
+
+    /// Test narrow mode at 120x29 (height limit boundary)
+    /// 120 cols qualifies for wide, but 29 rows is below 30 minimum
+    #[test]
+    fn test_boundary_120x29_narrow_height_limit() {
+        use crate::view::LayoutMode;
+
+        // Width says Wide, but height requirement not met
+        assert_eq!(LayoutMode::from_width(120), LayoutMode::Wide);
+        assert!(!LayoutMode::Wide.meets_requirements(120, 29)); // Height too short
+
+        let mut app = App::new();
+        let buffer = render_app(&mut app, 120, 29);
+
+        assert!(buffer.area.width == 120);
+        assert!(buffer.area.height == 29);
+        assert!(buffer_contains(&buffer, "FORGE"));
+    }
+
+    /// Test wide mode at 120x30 (exact wide threshold)
+    /// Minimum size that qualifies for wide mode
+    #[test]
+    fn test_boundary_120x30_wide_threshold() {
+        use crate::view::LayoutMode;
+
+        assert_eq!(LayoutMode::from_width(120), LayoutMode::Wide);
+        assert!(LayoutMode::Wide.meets_requirements(120, 30));
+
+        let mut app = App::new();
+        let buffer = render_app(&mut app, 120, 30);
+
+        assert!(buffer.area.width == 120);
+        assert!(buffer.area.height == 30);
+        assert!(buffer_contains(&buffer, "FORGE"));
+
+        // Wide mode should show 4 panels
+        assert!(buffer_contains(&buffer, "Worker Pool"));
+        assert!(buffer_contains(&buffer, "Task Queue"));
+    }
+
+    /// Test wide mode at 150x40 (typical wide terminal)
+    #[test]
+    fn test_boundary_150x40_wide() {
+        use crate::view::LayoutMode;
+
+        assert_eq!(LayoutMode::from_width(150), LayoutMode::Wide);
+        assert!(LayoutMode::Wide.meets_requirements(150, 40));
+
+        let mut app = App::new();
+        let buffer = render_app(&mut app, 150, 40);
+
+        assert!(buffer.area.width == 150);
+        assert!(buffer.area.height == 40);
+        assert!(buffer_contains(&buffer, "FORGE"));
+
+        // Wide mode should show 4 core panels
+        assert!(buffer_contains(&buffer, "Worker Pool"));
+        assert!(buffer_contains(&buffer, "Subscriptions"));
+        assert!(buffer_contains(&buffer, "Task Queue"));
+        assert!(buffer_contains(&buffer, "Activity Log"));
+    }
+
+    /// Test wide mode at 198x38 (upper wide boundary)
+    /// 198 cols is the maximum wide width, but 38 height qualifies for wide
+    #[test]
+    fn test_boundary_198x38_wide_upper_limit() {
+        use crate::view::LayoutMode;
+
+        assert_eq!(LayoutMode::from_width(198), LayoutMode::Wide);
+        assert!(LayoutMode::Wide.meets_requirements(198, 38));
+
+        let mut app = App::new();
+        let buffer = render_app(&mut app, 198, 38);
+
+        assert!(buffer.area.width == 198);
+        assert!(buffer.area.height == 38);
+        assert!(buffer_contains(&buffer, "FORGE"));
+    }
+
+    /// Test wide mode at 199x37 (height limit for ultrawide)
+    /// 199 cols qualifies for ultrawide, but 37 rows is below 38 minimum
+    #[test]
+    fn test_boundary_199x37_wide_height_limit() {
+        use crate::view::LayoutMode;
+
+        // Width says UltraWide, but height requirement not met
+        assert_eq!(LayoutMode::from_width(199), LayoutMode::UltraWide);
+        assert!(!LayoutMode::UltraWide.meets_requirements(199, 37)); // Height too short
+
+        let mut app = App::new();
+        let buffer = render_app(&mut app, 199, 37);
+
+        assert!(buffer.area.width == 199);
+        assert!(buffer.area.height == 37);
+        assert!(buffer_contains(&buffer, "FORGE"));
+    }
+
+    /// Test ultrawide mode at 199x38 (exact ultrawide threshold)
+    /// Minimum size that qualifies for ultrawide mode
+    #[test]
+    fn test_boundary_199x38_ultrawide_threshold() {
+        use crate::view::LayoutMode;
+
+        assert_eq!(LayoutMode::from_width(199), LayoutMode::UltraWide);
+        assert!(LayoutMode::UltraWide.meets_requirements(199, 38));
+
+        let mut app = App::new();
+        let buffer = render_app(&mut app, 199, 38);
+
+        assert!(buffer.area.width == 199);
+        assert!(buffer.area.height == 38);
+        assert!(buffer_contains(&buffer, "FORGE"));
+
+        // UltraWide mode should show all 6 panels
+        assert!(buffer_contains(&buffer, "Worker Pool"));
+        assert!(buffer_contains(&buffer, "Task Queue"));
+        assert!(buffer_contains(&buffer, "Activity Log"));
+        assert!(buffer_contains(&buffer, "Cost Breakdown"));
+        assert!(buffer_contains(&buffer, "Quick Actions"));
+    }
+
+    /// Test ultrawide mode at 250x60 (large ultrawide terminal)
+    #[test]
+    fn test_boundary_250x60_ultrawide() {
+        use crate::view::LayoutMode;
+
+        assert_eq!(LayoutMode::from_width(250), LayoutMode::UltraWide);
+        assert!(LayoutMode::UltraWide.meets_requirements(250, 60));
+
+        let mut app = App::new();
+        let buffer = render_app(&mut app, 250, 60);
+
+        assert!(buffer.area.width == 250);
+        assert!(buffer.area.height == 60);
+        assert!(buffer_contains(&buffer, "FORGE"));
+
+        // All 6 panels should be visible
+        assert!(buffer_contains(&buffer, "Worker Pool"));
+        assert!(buffer_contains(&buffer, "Subscriptions"));
+        assert!(buffer_contains(&buffer, "Task Queue"));
+        assert!(buffer_contains(&buffer, "Activity Log"));
+        assert!(buffer_contains(&buffer, "Cost Breakdown"));
+        assert!(buffer_contains(&buffer, "Quick Actions"));
+    }
+
+    /// Test dynamic resize transitions: narrow -> wide -> ultrawide
+    #[test]
+    fn test_boundary_dynamic_resize_transitions() {
+        let mut app = App::new();
+
+        // Start narrow
+        let narrow = render_app(&mut app, 80, 24);
+        assert!(buffer_contains(&narrow, "FORGE"));
+
+        // Resize to wide
+        let wide = render_app(&mut app, 150, 40);
+        assert!(buffer_contains(&wide, "FORGE"));
+        assert!(buffer_contains(&wide, "Subscriptions"));
+
+        // Resize to ultrawide
+        let ultrawide = render_app(&mut app, 250, 60);
+        assert!(buffer_contains(&ultrawide, "FORGE"));
+        assert!(buffer_contains(&ultrawide, "Cost Breakdown"));
+        assert!(buffer_contains(&ultrawide, "Quick Actions"));
+
+        // Resize back down to narrow
+        let narrow_again = render_app(&mut app, 80, 24);
+        assert!(buffer_contains(&narrow_again, "FORGE"));
+    }
+
+    /// Test that all 10 sizes render without crash
+    #[test]
+    fn test_boundary_all_sizes_no_crash() {
+        let sizes = [
+            (80, 24),   // Narrow - small
+            (100, 25),  // Narrow - medium
+            (119, 40),  // Narrow - width limit
+            (120, 29),  // Narrow - height limit
+            (120, 30),  // Wide - threshold
+            (150, 40),  // Wide - typical
+            (198, 38),  // Wide - upper limit
+            (199, 37),  // Wide - ultrawide height limit
+            (199, 38),  // UltraWide - threshold
+            (250, 60),  // UltraWide - large
+        ];
+
+        for (width, height) in sizes {
+            let mut app = App::new();
+            // This should not panic for any size
+            let buffer = render_app(&mut app, width, height);
+            assert!(
+                buffer.area.width == width,
+                "Buffer width {} should be {}",
+                buffer.area.width,
+                width
+            );
+            assert!(
+                buffer.area.height == height,
+                "Buffer height {} should be {}",
+                buffer.area.height,
+                height
+            );
+            // Header should always be visible
+            assert!(
+                buffer_contains(&buffer, "FORGE"),
+                "FORGE header should be visible at {}x{}",
+                width,
+                height
+            );
+        }
+    }
 }
