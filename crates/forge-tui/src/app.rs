@@ -738,30 +738,58 @@ impl App {
                 self.mark_dirty();
             }
             AppEvent::NavigateUp => {
-                if self.scroll_offset > 0 {
+                // In Logs view, scroll the activity log
+                if self.current_view == View::Logs {
+                    self.data_manager.activity_log_mut().scroll_up(1);
+                } else if self.scroll_offset > 0 {
                     self.scroll_offset -= 1;
-                    self.mark_dirty();
                 }
+                self.mark_dirty();
             }
             AppEvent::NavigateDown => {
-                self.scroll_offset += 1;
+                // In Logs view, scroll the activity log
+                if self.current_view == View::Logs {
+                    self.data_manager.activity_log_mut().scroll_down(1);
+                } else {
+                    self.scroll_offset += 1;
+                }
                 self.mark_dirty();
             }
             AppEvent::PageUp => {
-                self.scroll_offset = self.scroll_offset.saturating_sub(10);
+                // In Logs view, scroll the activity log
+                if self.current_view == View::Logs {
+                    self.data_manager.activity_log_mut().scroll_up(10);
+                } else {
+                    self.scroll_offset = self.scroll_offset.saturating_sub(10);
+                }
                 self.mark_dirty();
             }
             AppEvent::PageDown => {
-                self.scroll_offset += 10;
+                // In Logs view, scroll the activity log
+                if self.current_view == View::Logs {
+                    self.data_manager.activity_log_mut().scroll_down(10);
+                } else {
+                    self.scroll_offset += 10;
+                }
                 self.mark_dirty();
             }
             AppEvent::GoToTop => {
-                self.scroll_offset = 0;
+                // In Logs view, scroll to top of activity log
+                if self.current_view == View::Logs {
+                    self.data_manager.activity_log_mut().scroll_to_top();
+                } else {
+                    self.scroll_offset = 0;
+                }
                 self.mark_dirty();
             }
             AppEvent::GoToBottom => {
-                // In a real impl, this would go to the end of the list
-                self.scroll_offset = 100;
+                // In Logs view, scroll to bottom of activity log (resume auto-scroll)
+                if self.current_view == View::Logs {
+                    self.data_manager.activity_log_mut().scroll_to_bottom();
+                } else {
+                    // In a real impl, this would go to the end of the list
+                    self.scroll_offset = 100;
+                }
                 self.mark_dirty();
             }
             AppEvent::TextInput(c) => {
@@ -1935,10 +1963,13 @@ impl App {
 
     /// Draw the Logs view.
     fn draw_logs(&self, frame: &mut Frame, area: Rect) {
-        // Use real activity log from worker data
-        let activity_log = self.data_manager.worker_data.format_activity_log();
+        use crate::activity_panel::ActivityPanel;
 
-        self.draw_panel(frame, area, "Activity Log", &activity_log, true);
+        // Use the new ActivityPanel with real-time streaming
+        let activity_panel = ActivityPanel::new(&self.data_manager.activity_data)
+            .focused(self.focus_panel == FocusPanel::ActivityLog);
+
+        frame.render_widget(activity_panel, area);
     }
 
     /// Draw the Chat view.
