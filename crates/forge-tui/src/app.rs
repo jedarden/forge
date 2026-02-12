@@ -154,6 +154,10 @@ pub struct App {
     kill_dialog_error: Option<String>,
     /// Priority filter for Tasks view (None = no filter, Some(0-4) = filter to that priority)
     priority_filter: Option<u8>,
+    /// Whether to show the task detail overlay
+    show_task_detail: bool,
+    /// Currently selected task index in the flattened task list
+    selected_task_index: usize,
 }
 
 /// A single chat exchange (user query + assistant response).
@@ -271,6 +275,8 @@ impl App {
             kill_dialog_selected: 0,
             kill_dialog_error: None,
             priority_filter: None,
+            show_task_detail: false,
+            selected_task_index: 0,
         }
     }
 
@@ -317,6 +323,8 @@ impl App {
             kill_dialog_selected: 0,
             kill_dialog_error: None,
             priority_filter: None,
+            show_task_detail: false,
+            selected_task_index: 0,
         }
     }
 
@@ -660,6 +668,12 @@ impl App {
             return;
         }
 
+        // Handle task detail overlay if active
+        if self.show_task_detail {
+            self.handle_task_detail_key(key);
+            return;
+        }
+
         // Handle priority filter keys (0-4) when in Tasks view
         if self.current_view == View::Tasks {
             if let KeyCode::Char(c) = key.code {
@@ -809,7 +823,15 @@ impl App {
                 }
                 self.mark_dirty();
             }
-            AppEvent::Select | AppEvent::Toggle | AppEvent::FocusNext | AppEvent::FocusPrev => {
+            AppEvent::Select => {
+                // Handle select based on current view
+                if self.current_view == View::Tasks {
+                    // Show task detail overlay
+                    self.show_task_detail = true;
+                    self.mark_dirty();
+                }
+            }
+            AppEvent::Toggle | AppEvent::FocusNext | AppEvent::FocusPrev => {
                 // Panel-specific handling - to be implemented
             }
             AppEvent::SpawnWorker(executor) => {
@@ -1113,6 +1135,32 @@ impl App {
                 // Close dialog
                 self.show_kill_dialog = false;
                 self.kill_dialog_error = None;
+                self.mark_dirty();
+            }
+            _ => {}
+        }
+    }
+
+    /// Handle task detail overlay key navigation.
+    fn handle_task_detail_key(&mut self, key: KeyEvent) {
+        use crossterm::event::KeyCode;
+
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                // Close detail overlay
+                self.show_task_detail = false;
+                self.mark_dirty();
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                // Move selection up in task list
+                if self.selected_task_index > 0 {
+                    self.selected_task_index -= 1;
+                    self.mark_dirty();
+                }
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                // Move selection down in task list
+                self.selected_task_index += 1;
                 self.mark_dirty();
             }
             _ => {}
@@ -1432,6 +1480,11 @@ impl App {
         // Draw kill worker dialog if active
         if self.show_kill_dialog {
             self.draw_kill_dialog(frame, area);
+        }
+
+        // Draw task detail overlay if active
+        if self.show_task_detail {
+            self.draw_task_detail_overlay(frame, area);
         }
 
         // Draw update notification banner if update available
@@ -2001,9 +2054,9 @@ impl App {
     /// Draw the help overlay.
     fn draw_help_overlay(&self, frame: &mut Frame, area: Rect) {
         let theme = self.theme_manager.current();
-        // Calculate centered overlay area
-        let overlay_width = 60.min(area.width.saturating_sub(4));
-        let overlay_height = 20.min(area.height.saturating_sub(4));
+        // Calculate centered overlay area - increased size for more content
+        let overlay_width = 70.min(area.width.saturating_sub(4));
+        let overlay_height = 32.min(area.height.saturating_sub(4));
         let overlay_x = (area.width - overlay_width) / 2;
         let overlay_y = (area.height - overlay_height) / 2;
 
@@ -2016,31 +2069,47 @@ impl App {
 FORGE Hotkey Reference
 
 View Navigation:
-  o        Overview (dashboard)
-  w        Workers view
-  t        Tasks view
+  O        Overview (dashboard)
+  w/W      Workers view
+  t/T      Tasks view
   c        Costs view
   m        Metrics view
-  l        Logs view
+  l/a      Activity/Logs view
   :        Chat input mode
   Tab      Cycle views forward
   Shift+Tab Cycle views backward
 
+Worker Management:
+  g/G      Spawn GLM worker
+  s/S      Spawn Sonnet worker
+  o        Spawn Opus worker
+  h        Spawn Haiku worker
+  k        Kill worker dialog
+
+Tasks View:
+  0-4      Filter by priority (P0-P4)
+  x        Clear priority filter
+  Enter    Show task details
+
 General:
   ?        Show this help
-  q        Quit
-  Esc      Cancel / Close
+  q/Q      Quit
+  Esc      Cancel / Close overlay
   Ctrl+C   Force quit
-  Ctrl+L   Refresh
+  Ctrl+L   Refresh screen
   Ctrl+U   Update forge (rebuild & restart)
-  r        Refresh
+  r        Refresh data
   C        Cycle theme
 
 Navigation:
-  ↑ k      Move up
-  ↓ j      Move down
+  ↑        Move up
+  ↓/j      Move down
   PgUp     Page up
   PgDn     Page down
+  Home     Go to top
+  End      Go to bottom
+  Enter    Select/expand item
+  Space    Toggle selection
 
 Press any key to close this help.";
 
@@ -2162,6 +2231,213 @@ Press any key to close this help.";
                     .title(Span::styled(
                         " Kill Worker ",
                         Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    ))
+                    .style(Style::default().bg(Color::Black)),
+            )
+            .wrap(Wrap { trim: false });
+
+        frame.render_widget(dialog, overlay_area);
+    }
+
+    /// Draw the task detail overlay.
+    fn draw_task_detail_overlay(&self, frame: &mut Frame, area: Rect) {
+        let theme = self.theme_manager.current();
+
+        // Get the aggregated bead data and find the selected bead
+        let data = self
+            .data_manager
+            .bead_manager
+            .get_filtered_aggregated_data(self.priority_filter);
+
+        // Build a flattened list of all beads with their section info
+        let mut all_beads: Vec<(String, &crate::bead::Bead, &str)> = Vec::new();
+
+        // Add in-progress beads
+        for (ws, bead) in &data.in_progress {
+            all_beads.push((ws.clone(), bead, "In Progress"));
+        }
+
+        // Add ready beads
+        for (ws, bead) in &data.ready {
+            all_beads.push((ws.clone(), bead, "Ready"));
+        }
+
+        // Add blocked beads
+        for (ws, bead) in &data.blocked {
+            all_beads.push((ws.clone(), bead, "Blocked"));
+        }
+
+        // Calculate dialog dimensions
+        let overlay_width = 70.min(area.width.saturating_sub(4));
+        let overlay_height = 20.min(area.height.saturating_sub(4));
+        let overlay_x = (area.width.saturating_sub(overlay_width)) / 2;
+        let overlay_y = (area.height.saturating_sub(overlay_height)) / 2;
+
+        let overlay_area = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
+
+        // Clear background
+        frame.render_widget(Clear, overlay_area);
+
+        let mut lines = Vec::new();
+
+        // Check if we have beads to show
+        if all_beads.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "No tasks available",
+                Style::default().fg(theme.colors.text_dim),
+            )));
+            lines.push(Line::raw(""));
+            lines.push(Line::from(Span::styled(
+                "Tasks will appear here when beads are loaded from .beads/*.jsonl",
+                Style::default().fg(theme.colors.text_dim),
+            )));
+        } else {
+            // Clamp selected index to valid range
+            let idx = self.selected_task_index.min(all_beads.len() - 1);
+            let (ws, bead, section) = &all_beads[idx];
+
+            // Header with task ID and priority
+            let header = format!(
+                "{} {} [{}] - {}",
+                bead.priority_indicator(),
+                bead.id,
+                bead.priority_str(),
+                section
+            );
+            lines.push(Line::from(Span::styled(
+                header,
+                Style::default()
+                    .fg(theme.colors.hotkey)
+                    .add_modifier(Modifier::BOLD),
+            )));
+
+            lines.push(Line::from(Span::styled(
+                "─".repeat(overlay_width as usize - 2),
+                Style::default().fg(theme.colors.border_dim),
+            )));
+
+            // Title
+            lines.push(Line::from(Span::styled(
+                "Title:",
+                Style::default().fg(theme.colors.text_dim),
+            )));
+            lines.push(Line::from(Span::styled(
+                &bead.title,
+                Style::default().fg(theme.colors.text),
+            )));
+
+            lines.push(Line::raw("")); // Empty line
+
+            // Status
+            lines.push(Line::from(vec![
+                Span::styled("Status: ", Style::default().fg(theme.colors.text_dim)),
+                Span::styled(
+                    &bead.status,
+                    Style::default().fg(match bead.status.as_str() {
+                        "in_progress" => Color::Yellow,
+                        "open" => Color::Green,
+                        "closed" => Color::DarkGray,
+                        "blocked" => Color::Red,
+                        _ => theme.colors.text,
+                    }),
+                ),
+            ]));
+
+            // Priority and score
+            let score = bead.score();
+            lines.push(Line::from(vec![
+                Span::styled("Priority: ", Style::default().fg(theme.colors.text_dim)),
+                Span::styled(
+                    format!("P{}", bead.priority),
+                    Style::default().fg(theme.colors.text),
+                ),
+                Span::raw("    "),
+                Span::styled("Score: ", Style::default().fg(theme.colors.text_dim)),
+                Span::styled(format!("{}", score), Style::default().fg(theme.colors.text)),
+            ]));
+
+            // Dependencies
+            lines.push(Line::from(vec![
+                Span::styled("Dependencies: ", Style::default().fg(theme.colors.text_dim)),
+                Span::styled(
+                    format!(
+                        "{} blocked by, {} depends on this",
+                        bead.dependency_count, bead.dependent_count
+                    ),
+                    Style::default().fg(theme.colors.text),
+                ),
+            ]));
+
+            // Workspace
+            lines.push(Line::from(vec![
+                Span::styled("Workspace: ", Style::default().fg(theme.colors.text_dim)),
+                Span::styled(ws, Style::default().fg(theme.colors.text)),
+            ]));
+
+            // Assignee
+            if let Some(ref assignee) = bead.assignee {
+                lines.push(Line::from(vec![
+                    Span::styled("Assignee: ", Style::default().fg(theme.colors.text_dim)),
+                    Span::styled(assignee, Style::default().fg(theme.colors.text)),
+                ]));
+            }
+
+            // Labels
+            if !bead.labels.is_empty() {
+                lines.push(Line::from(vec![
+                    Span::styled("Labels: ", Style::default().fg(theme.colors.text_dim)),
+                    Span::styled(
+                        bead.labels.join(", "),
+                        Style::default().fg(theme.colors.text),
+                    ),
+                ]));
+            }
+
+            lines.push(Line::raw("")); // Empty line
+
+            // Description (truncated)
+            if !bead.description.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "Description:",
+                    Style::default().fg(theme.colors.text_dim),
+                )));
+                let desc_lines: Vec<&str> = bead.description.lines().take(5).collect();
+                for line in desc_lines {
+                    let truncated = if line.len() > (overlay_width as usize - 4) {
+                        format!("{}...", &line[..(overlay_width as usize - 7)])
+                    } else {
+                        line.to_string()
+                    };
+                    lines.push(Line::from(Span::styled(
+                        truncated,
+                        Style::default().fg(theme.colors.text),
+                    )));
+                }
+            }
+
+            lines.push(Line::raw("")); // Empty line
+
+            // Navigation info
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "Task {} of {}  |  ↑/k: prev  ↓/j: next  Esc: close",
+                    idx + 1,
+                    all_beads.len()
+                ),
+                Style::default().fg(theme.colors.text_dim),
+            )));
+        }
+
+        let dialog = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme.colors.header))
+                    .title(Span::styled(
+                        " Task Details ",
+                        Style::default()
+                            .fg(theme.colors.header)
+                            .add_modifier(Modifier::BOLD),
                     ))
                     .style(Style::default().bg(Color::Black)),
             )
@@ -3383,5 +3659,101 @@ mod tests {
                 p
             );
         }
+    }
+
+    // ============================================================
+    // Task Detail Overlay Tests
+    // ============================================================
+
+    #[test]
+    fn test_task_detail_opens_on_select_in_tasks_view() {
+        let mut app = App::new();
+
+        // Start in Overview, no task detail overlay
+        assert!(!app.show_task_detail);
+
+        // Switch to Tasks view
+        app.switch_view(View::Tasks);
+
+        // Trigger Select event (Enter key)
+        app.handle_app_event(AppEvent::Select);
+
+        // Task detail overlay should be shown
+        assert!(app.show_task_detail);
+    }
+
+    #[test]
+    fn test_task_detail_does_not_open_in_other_views() {
+        let mut app = App::new();
+
+        // Start in Overview
+        app.switch_view(View::Overview);
+
+        // Trigger Select event
+        app.handle_app_event(AppEvent::Select);
+
+        // Task detail overlay should NOT be shown
+        assert!(!app.show_task_detail);
+
+        // Try in Workers view
+        app.switch_view(View::Workers);
+        app.handle_app_event(AppEvent::Select);
+        assert!(!app.show_task_detail);
+    }
+
+    #[test]
+    fn test_task_detail_closes_on_escape() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let mut app = App::new();
+        app.switch_view(View::Tasks);
+        app.show_task_detail = true;
+
+        // Press Escape to close
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        app.handle_key_event(key);
+
+        // Task detail overlay should be closed
+        assert!(!app.show_task_detail);
+    }
+
+    #[test]
+    fn test_task_detail_navigation_keys() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let mut app = App::new();
+        app.switch_view(View::Tasks);
+        app.show_task_detail = true;
+        app.selected_task_index = 5;
+
+        // Press 'k' or Up to move up
+        let key = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE);
+        app.handle_key_event(key);
+        assert_eq!(app.selected_task_index, 4);
+
+        // Press Down to move down
+        let key = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
+        app.handle_key_event(key);
+        assert_eq!(app.selected_task_index, 5);
+
+        // Press 'j' to move down again
+        let key = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        app.handle_key_event(key);
+        assert_eq!(app.selected_task_index, 6);
+    }
+
+    #[test]
+    fn test_task_detail_navigation_bounds() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let mut app = App::new();
+        app.switch_view(View::Tasks);
+        app.show_task_detail = true;
+        app.selected_task_index = 0;
+
+        // Try to move up when already at 0 - should stay at 0
+        let key = KeyEvent::new(KeyCode::Up, KeyModifiers::NONE);
+        app.handle_key_event(key);
+        assert_eq!(app.selected_task_index, 0);
     }
 }
