@@ -4,18 +4,20 @@
 //! task information, cost analytics, and formatting data for display. It integrates with
 //! forge-core's StatusWatcher to provide real-time updates, forge-worker's
 //! tmux discovery for additional session information, the BeadManager
-//! for task queue data from monitored workspaces, and forge-cost for cost analytics.
+//! for task queue data from monitored workspaces, forge-cost for cost analytics,
+//! and LogWatcher for real-time log parsing.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::bead::BeadManager;
 use crate::cost_panel::{BudgetConfig, CostPanelData};
+use crate::log_watcher::{LogWatcher, LogWatcherConfig, LogWatcherEvent, RealtimeMetrics};
 use crate::metrics_panel::MetricsPanelData;
 use crate::status::{StatusWatcher, StatusWatcherConfig, WorkerCounts, WorkerStatusFile};
 use crate::subscription_panel::SubscriptionData;
 use forge_core::types::WorkerStatus;
-use forge_cost::{CostDatabase, CostQuery};
+use forge_cost::{CostDatabase, CostQuery, SubscriptionTracker};
 use forge_worker::discovery::DiscoveryResult;
 
 /// Aggregated worker data for TUI display.
@@ -414,7 +416,13 @@ const COST_POLL_INTERVAL_SECS: u64 = 30;
 /// Interval for metrics data polling (10 seconds).
 const METRICS_POLL_INTERVAL_SECS: u64 = 10;
 
-/// Data manager that handles the StatusWatcher, BeadManager, CostDatabase, and provides formatted data.
+/// Interval for log watcher polling (500ms).
+const LOG_WATCHER_POLL_INTERVAL_MS: u64 = 500;
+
+/// Interval for subscription data polling (60 seconds).
+const SUBSCRIPTION_POLL_INTERVAL_SECS: u64 = 60;
+
+/// Data manager that handles the StatusWatcher, BeadManager, CostDatabase, LogWatcher, and provides formatted data.
 pub struct DataManager {
     /// StatusWatcher for real-time updates
     watcher: Option<StatusWatcher>,
@@ -426,10 +434,14 @@ pub struct DataManager {
     cost_db: Option<CostDatabase>,
     /// Cached cost panel data
     pub cost_data: CostPanelData,
+    /// Subscription tracker for subscription management
+    subscription_tracker: SubscriptionTracker,
     /// Subscription tracking data
     pub subscription_data: SubscriptionData,
     /// Performance metrics data
     pub metrics_data: MetricsPanelData,
+    /// Real-time metrics from log parsing
+    pub realtime_metrics: RealtimeMetrics,
     /// Error message if watcher failed to initialize
     init_error: Option<String>,
     /// Last tmux discovery time
@@ -438,6 +450,10 @@ pub struct DataManager {
     last_cost_poll: Option<std::time::Instant>,
     /// Last metrics poll time
     last_metrics_poll: Option<std::time::Instant>,
+    /// Last log watcher poll time
+    last_log_poll: Option<std::time::Instant>,
+    /// Last subscription poll time
+    last_subscription_poll: Option<std::time::Instant>,
     /// Tokio runtime for async tmux discovery
     runtime: Option<tokio::runtime::Runtime>,
     /// Dirty flag - whether data changed since last check
@@ -446,6 +462,10 @@ pub struct DataManager {
     cached_worker_count: usize,
     /// Cached bead count for quick comparison
     cached_bead_count: usize,
+    /// Log watcher for real-time API usage parsing
+    log_watcher: Option<LogWatcher>,
+    /// Log watcher event receiver
+    log_rx: Option<std::sync::mpsc::Receiver<LogWatcherEvent>>,
 }
 
 impl DataManager {
@@ -509,9 +529,23 @@ impl DataManager {
         // Initialize metrics data
         let metrics_data = MetricsPanelData::loading();
 
-        // Initialize subscription data (empty until real subscription tracking is implemented)
-        // TODO: Load from ~/.forge/subscriptions.yaml when subscription tracking is added
-        let subscription_data = SubscriptionData::new();
+        // Initialize subscription tracker and data
+        let sub_start = Instant::now();
+        let subscription_tracker = SubscriptionTracker::with_default_config();
+        let subscription_data = Self::build_subscription_data(&subscription_tracker);
+        info!("⏱️ Subscription tracker initialized in {:?}", sub_start.elapsed());
+
+        // Initialize real-time metrics from log parsing
+        let realtime_metrics = RealtimeMetrics::new();
+
+        // Initialize log watcher for real-time API usage parsing
+        let (log_watcher, log_rx) = match LogWatcher::new(LogWatcherConfig::default()) {
+            Ok((watcher, rx)) => (Some(watcher), Some(rx)),
+            Err(e) => {
+                info!("Failed to initialize log watcher: {}", e);
+                (None, None)
+            }
+        };
 
         let manager = Self {
             watcher,
@@ -519,16 +553,22 @@ impl DataManager {
             bead_manager,
             cost_db,
             cost_data,
+            subscription_tracker,
             subscription_data,
             metrics_data,
+            realtime_metrics,
             init_error,
             last_tmux_poll: None,
             last_cost_poll: None,
             last_metrics_poll: None,
+            last_log_poll: None,
+            last_subscription_poll: None,
             runtime,
             dirty: false,
             cached_worker_count: 0,
             cached_bead_count: 0,
+            log_watcher,
+            log_rx,
         };
 
         // Skip initial poll_updates during initialization - it blocks for too long
@@ -584,9 +624,18 @@ impl DataManager {
         // Initialize metrics data
         let metrics_data = MetricsPanelData::loading();
 
-        // Initialize subscription data (empty until real subscription tracking is implemented)
-        // TODO: Load from ~/.forge/subscriptions.yaml when subscription tracking is added
-        let subscription_data = SubscriptionData::new();
+        // Initialize subscription tracker and data
+        let subscription_tracker = SubscriptionTracker::with_default_config();
+        let subscription_data = Self::build_subscription_data(&subscription_tracker);
+
+        // Initialize real-time metrics from log parsing
+        let realtime_metrics = RealtimeMetrics::new();
+
+        // Initialize log watcher for real-time API usage parsing
+        let (log_watcher, log_rx) = match LogWatcher::new(LogWatcherConfig::default()) {
+            Ok((watcher, rx)) => (Some(watcher), Some(rx)),
+            Err(_) => (None, None),
+        };
 
         // Skip initial poll_updates during initialization - it blocks for too long
         // due to bead manager calling `br` commands which can take seconds each.
@@ -597,17 +646,95 @@ impl DataManager {
             bead_manager,
             cost_db,
             cost_data,
+            subscription_tracker,
             subscription_data,
             metrics_data,
+            realtime_metrics,
             init_error,
             last_tmux_poll: None,
             last_cost_poll: None,
             last_metrics_poll: None,
+            last_log_poll: None,
+            last_subscription_poll: None,
             runtime,
             dirty: false,
             cached_worker_count: 0,
             cached_bead_count: 0,
+            log_watcher,
+            log_rx,
         }
+    }
+
+    /// Build SubscriptionData from the tracker.
+    fn build_subscription_data(tracker: &SubscriptionTracker) -> SubscriptionData {
+        use crate::subscription_panel::{ResetPeriod, SubscriptionAction, SubscriptionService, SubscriptionStatus};
+        use chrono::{Duration, Utc};
+        use tracing::info;
+
+        info!("Building subscription data, tracker has {} subscriptions", tracker.len());
+
+        let mut data = SubscriptionData::new();
+
+        for summary in tracker.get_summaries() {
+            info!("Processing subscription: {} (usage: {}/{:?})", summary.name, summary.quota_used, summary.quota_limit);
+            // Map subscription name to service type
+            let service = if summary.name.to_lowercase().contains("anthropic") || summary.name.to_lowercase().contains("claude") {
+                SubscriptionService::ClaudePro
+            } else if summary.name.to_lowercase().contains("openai") || summary.name.to_lowercase().contains("chatgpt") {
+                SubscriptionService::ChatGPTPlus
+            } else if summary.name.to_lowercase().contains("cursor") {
+                SubscriptionService::CursorPro
+            } else {
+                SubscriptionService::DeepSeekAPI // Default fallback
+            };
+
+            let mut status = SubscriptionStatus::new(service);
+
+            // Set usage if we have a limit
+            if let Some(limit) = summary.quota_limit {
+                status = status.with_usage(summary.quota_used as u64, limit as u64, "tokens");
+            }
+
+            // Set billing period
+            let days_remaining = tracker.days_until_renewal(&summary.name).unwrap_or(30) as i64;
+            let reset_period = if days_remaining <= 1 {
+                ResetPeriod::Daily
+            } else if days_remaining <= 7 {
+                ResetPeriod::Weekly
+            } else {
+                ResetPeriod::Monthly
+            };
+            status = status.with_reset(
+                Utc::now() + Duration::days(days_remaining),
+                reset_period,
+            );
+
+            // Set active status
+            status = status.with_active(true);
+
+            // Map quota status to action
+            let action = match summary.status {
+                forge_cost::QuotaStatus::OnPace => SubscriptionAction::OnPace,
+                forge_cost::QuotaStatus::Accelerate => SubscriptionAction::Accelerate,
+                forge_cost::QuotaStatus::MaxOut => SubscriptionAction::MaxOut,
+                forge_cost::QuotaStatus::Depleted => SubscriptionAction::OverQuota,
+            };
+
+            // Check for alerts
+            let alert = tracker.get_alert(&summary.name);
+            if alert.is_alert() {
+                // Mark as critical/high usage in the status
+                if matches!(alert, forge_cost::SubscriptionAlert::Critical | forge_cost::SubscriptionAlert::Depleted) {
+                    // Override action to show urgency
+                    status.current_usage = status.limit.unwrap_or(100) - 1; // Show 99% used
+                }
+            }
+
+            data.subscriptions.push(status);
+        }
+
+        data.last_updated = Some(Utc::now());
+        data
     }
 
     /// Poll for updates from the StatusWatcher, BeadManager, CostDatabase, and tmux discovery.
@@ -670,6 +797,26 @@ impl DataManager {
             self.last_metrics_poll = Some(std::time::Instant::now());
         }
 
+        // Poll log watcher for real-time API usage (more frequently - every 500ms)
+        let should_poll_logs = self.last_log_poll.map_or(true, |t| {
+            t.elapsed().as_millis() >= LOG_WATCHER_POLL_INTERVAL_MS as u128
+        });
+
+        if should_poll_logs {
+            self.poll_log_watcher();
+            self.last_log_poll = Some(std::time::Instant::now());
+        }
+
+        // Periodically poll subscription data (every 60 seconds)
+        let should_poll_subscriptions = self.last_subscription_poll.map_or(true, |t| {
+            t.elapsed().as_secs() >= SUBSCRIPTION_POLL_INTERVAL_SECS
+        });
+
+        if should_poll_subscriptions {
+            self.poll_subscription_data();
+            self.last_subscription_poll = Some(std::time::Instant::now());
+        }
+
         // Update cached counts and mark dirty if changed
         self.cached_worker_count = self.worker_data.total_worker_count();
         self.cached_bead_count = self.bead_manager.total_bead_count();
@@ -682,6 +829,17 @@ impl DataManager {
         }
 
         self.dirty
+    }
+
+    /// Poll subscription tracker for updates.
+    fn poll_subscription_data(&mut self) {
+        // Rebuild subscription data from tracker
+        self.subscription_data = Self::build_subscription_data(&self.subscription_tracker);
+
+        // Check for critical alerts
+        if self.subscription_tracker.has_critical_alert() {
+            self.dirty = true;
+        }
     }
 
     /// Poll cost database for updates.
@@ -750,6 +908,19 @@ impl DataManager {
             }
             Err(_) => {
                 // Projection failure is non-critical
+            }
+        }
+
+        // Get optimization data using CostOptimizer
+        let optimizer = forge_cost::CostOptimizer::new(db, forge_cost::OptimizerConfig::default());
+        match optimizer.generate_report() {
+            Ok(report) => {
+                self.cost_data.set_recommendations(report.recommendations);
+                self.cost_data.set_savings_achieved(report.savings_achieved);
+                self.cost_data.set_subscription_utilization(report.subscription_utilization);
+            }
+            Err(_) => {
+                // Optimization failure is non-critical
             }
         }
 
@@ -829,6 +1000,45 @@ impl DataManager {
             }
             Err(_) => {
                 // Worker efficiency failure is non-critical
+            }
+        }
+    }
+
+    /// Poll log watcher for real-time API usage updates.
+    fn poll_log_watcher(&mut self) {
+        // Process events from log watcher channel
+        if let Some(ref rx) = self.log_rx {
+            while let Ok(event) = rx.try_recv() {
+                match event {
+                    LogWatcherEvent::ApiCallParsed { call } => {
+                        // Update real-time metrics
+                        self.realtime_metrics.record_call(&call);
+
+                        // The real-time metrics are now available for panels
+                        // via self.realtime_metrics
+                        self.dirty = true;
+                    }
+                    LogWatcherEvent::FileDiscovered { path, worker_id } => {
+                        tracing::debug!("Log file discovered: {:?} for worker {}", path, worker_id);
+                    }
+                    LogWatcherEvent::FileRotated { path, worker_id } => {
+                        tracing::debug!("Log file rotated: {:?} for worker {}", path, worker_id);
+                    }
+                    LogWatcherEvent::Error { message } => {
+                        tracing::warn!("Log watcher error: {}", message);
+                    }
+                }
+            }
+        }
+
+        // Also poll the log watcher directly for any new content
+        if let Some(ref mut watcher) = self.log_watcher {
+            let events = watcher.poll();
+            for event in events {
+                if let LogWatcherEvent::ApiCallParsed { call } = event {
+                    self.realtime_metrics.record_call(&call);
+                    self.dirty = true;
+                }
             }
         }
     }

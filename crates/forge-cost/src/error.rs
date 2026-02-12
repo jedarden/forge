@@ -28,6 +28,14 @@ pub enum CostError {
     /// Query error
     #[error("query error: {0}")]
     Query(String),
+
+    /// Configuration error
+    #[error("configuration error: {0}")]
+    Config(String),
+
+    /// YAML parsing error
+    #[error("YAML parsing error: {0}")]
+    Yaml(#[from] serde_yaml::Error),
 }
 
 /// Result type for cost tracking operations.

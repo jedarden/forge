@@ -45,8 +45,10 @@ pub mod aggregator;
 pub mod db;
 pub mod error;
 pub mod models;
+pub mod optimizer;
 pub mod parser;
 pub mod query;
+pub mod subscription_tracker;
 
 // Re-export main types
 pub use aggregator::{
@@ -59,5 +61,12 @@ pub use models::{
     PerformanceSummary, ProjectedCost, QuotaStatus, Subscription, SubscriptionSummary,
     SubscriptionType, SubscriptionUsageRecord, WorkerEfficiency,
 };
+pub use optimizer::{
+    CostOptimizer, ModelEfficiency, ModelRecommendation, OptimizationRecommendation,
+    OptimizationReport, OptimizerConfig, RecommendationReason, RecommendationType, TaskPriority,
+};
 pub use parser::LogParser;
 pub use query::{CostQuery, SubscriptionOptimizationReport};
+pub use subscription_tracker::{
+    SubscriptionAlert, SubscriptionConfig, SubscriptionConfigFile, SubscriptionTracker,
+};
