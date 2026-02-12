@@ -993,6 +993,16 @@ impl DataManager {
             }
         }
 
+        // Get this week's costs (last 7 days)
+        match query.get_weekly_costs() {
+            Ok(week) => {
+                self.cost_data.set_week(week);
+            }
+            Err(_) => {
+                // Weekly cost failure is non-critical
+            }
+        }
+
         // Get current month's costs
         match query.get_current_month_costs() {
             Ok(monthly) => {
