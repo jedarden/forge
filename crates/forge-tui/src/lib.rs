@@ -43,6 +43,7 @@ pub mod event;
 #[cfg(test)]
 mod integration_tests;
 pub mod log;
+pub mod log_watcher;
 pub mod metrics_panel;
 pub mod status;
 pub mod subscription_panel;
@@ -64,6 +65,10 @@ pub use cost_panel::{
 pub use data::{DataManager, WorkerData};
 pub use event::{AppEvent, InputHandler, WorkerExecutor};
 pub use log::{LogBuffer, LogEntry, LogEvent, LogLevel, LogTailer, LogTailerConfig};
+pub use log_watcher::{
+    LogWatcher, LogWatcherConfig, LogWatcherError, LogWatcherEvent, RealtimeMetrics,
+    DEFAULT_DEBOUNCE_MS, DEFAULT_LOG_DIR, DEFAULT_POLL_INTERVAL_MS,
+};
 pub use metrics_panel::{MetricsPanel, MetricsPanelData, MetricsSummaryCompact};
 pub use status::{StatusEvent, StatusWatcher, StatusWatcherConfig, WorkerStatusFile};
 pub use subscription_panel::{

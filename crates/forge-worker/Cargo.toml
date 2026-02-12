@@ -10,6 +10,7 @@ rust-version.workspace = true
 
 [dependencies]
 forge-core = { path = "../forge-core" }
+forge-cost = { path = "../forge-cost" }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

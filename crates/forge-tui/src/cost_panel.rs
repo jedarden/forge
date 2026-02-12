@@ -6,6 +6,8 @@
 //! - Cost breakdown chart by priority
 //! - Summary stats
 //! - Color-coded budget alerts
+//! - Optimization recommendations
+//! - Savings achieved display
 
 use chrono::{NaiveDate, Utc};
 use ratatui::{
@@ -16,7 +18,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Row, Table, Widget},
 };
 
-use forge_cost::{CostBreakdown, DailyCost, ModelCost, ProjectedCost};
+use forge_cost::{CostBreakdown, DailyCost, ModelCost, OptimizationRecommendation, ProjectedCost};
 
 /// Budget alert severity levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,6 +151,14 @@ pub struct CostPanelData {
     pub projected: Option<ProjectedCost>,
     /// Budget configuration
     pub budget: BudgetConfig,
+    /// Optimization recommendations
+    pub recommendations: Vec<OptimizationRecommendation>,
+    /// Total potential savings from optimizations
+    pub potential_savings: f64,
+    /// Savings achieved from previous optimizations
+    pub savings_achieved: f64,
+    /// Subscription utilization percentage
+    pub subscription_utilization: f64,
     /// Last update timestamp
     pub last_update: Option<chrono::DateTime<Utc>>,
     /// Whether data is loading
@@ -205,6 +215,32 @@ impl CostPanelData {
     /// Set budget configuration.
     pub fn set_budget(&mut self, budget: BudgetConfig) {
         self.budget = budget;
+    }
+
+    /// Set optimization recommendations.
+    pub fn set_recommendations(&mut self, recommendations: Vec<OptimizationRecommendation>) {
+        self.potential_savings = recommendations.iter().map(|r| r.estimated_savings).sum();
+        self.recommendations = recommendations;
+    }
+
+    /// Set savings achieved.
+    pub fn set_savings_achieved(&mut self, savings: f64) {
+        self.savings_achieved = savings;
+    }
+
+    /// Set subscription utilization.
+    pub fn set_subscription_utilization(&mut self, utilization: f64) {
+        self.subscription_utilization = utilization;
+    }
+
+    /// Check if we have optimization recommendations.
+    pub fn has_recommendations(&self) -> bool {
+        !self.recommendations.is_empty()
+    }
+
+    /// Get the top recommendation by priority.
+    pub fn top_recommendation(&self) -> Option<&OptimizationRecommendation> {
+        self.recommendations.first()
     }
 
     /// Get today's total cost.
@@ -478,6 +514,47 @@ impl<'a> CostPanel<'a> {
             ),
         ]));
 
+        // Savings section
+        if self.data.savings_achieved > 0.0 || self.data.potential_savings > 0.0 {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("Savings: ", Style::default().fg(Color::Green)),
+                Span::styled(
+                    format_usd(self.data.savings_achieved),
+                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" achieved"),
+            ]));
+
+            if self.data.potential_savings > 0.01 {
+                lines.push(Line::from(vec![
+                    Span::raw("         "),
+                    Span::styled(
+                        format_usd(self.data.potential_savings),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Span::raw(" potential"),
+                ]));
+            }
+        }
+
+        // Subscription utilization
+        if self.data.subscription_utilization > 0.0 {
+            lines.push(Line::from(vec![
+                Span::raw("Sub Util: "),
+                Span::styled(
+                    format!("{:.0}%", self.data.subscription_utilization),
+                    Style::default().fg(if self.data.subscription_utilization >= 90.0 {
+                        Color::Green
+                    } else if self.data.subscription_utilization >= 70.0 {
+                        Color::Yellow
+                    } else {
+                        Color::LightRed
+                    }),
+                ),
+            ]));
+        }
+
         let paragraph = Paragraph::new(lines);
         paragraph.render(area, buf);
     }
@@ -587,6 +664,58 @@ impl<'a> CostPanel<'a> {
         let paragraph = Paragraph::new(lines);
         paragraph.render(area, buf);
     }
+
+    /// Render optimization recommendations.
+    fn render_recommendations(&self, area: Rect, buf: &mut Buffer) {
+        if self.data.recommendations.is_empty() {
+            let msg =
+                Paragraph::new("No recommendations").style(Style::default().fg(Color::Gray));
+            msg.render(area, buf);
+            return;
+        }
+
+        let mut lines = Vec::new();
+
+        // Show top 3 recommendations
+        for rec in self.data.recommendations.iter().take(3) {
+            let (icon, color) = match rec.recommendation_type {
+                forge_cost::RecommendationType::AccelerateSubscription => ("🚀", Color::Cyan),
+                forge_cost::RecommendationType::MaxOutSubscription => ("⚡", Color::Yellow),
+                forge_cost::RecommendationType::ModelDowngrade => ("📉", Color::Blue),
+                forge_cost::RecommendationType::EnableCaching => ("💾", Color::Green),
+                forge_cost::RecommendationType::BatchTasks => ("📦", Color::Magenta),
+                forge_cost::RecommendationType::OffPeakScheduling => ("🌙", Color::Blue),
+                forge_cost::RecommendationType::SubscriptionDepleted => ("❌", Color::Red),
+            };
+
+            // Truncate title if too long
+            let title = if rec.title.len() > 35 {
+                format!("{}…", &rec.title[..32])
+            } else {
+                rec.title.clone()
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(icon, Style::default().fg(color)),
+                Span::raw(" "),
+                Span::styled(title, Style::default().fg(Color::White)),
+            ]));
+
+            // Show savings if significant
+            if rec.estimated_savings > 0.01 {
+                lines.push(Line::from(vec![
+                    Span::raw("   "),
+                    Span::styled(
+                        format!("Save {}", format_usd(rec.estimated_savings)),
+                        Style::default().fg(Color::Green),
+                    ),
+                ]));
+            }
+        }
+
+        let paragraph = Paragraph::new(lines);
+        paragraph.render(area, buf);
+    }
 }
 
 impl Widget for CostPanel<'_> {
@@ -642,19 +771,24 @@ impl Widget for CostPanel<'_> {
             return;
         }
 
-        // Layout: Summary | Table | Trend
+        // Layout: Summary | Table | Trend | Recommendations
+        let rec_height = if self.data.has_recommendations() { 5 } else { 0 };
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(8), // Summary
-                Constraint::Min(5),    // Model table
-                Constraint::Length(4), // Trend sparkline
+                Constraint::Length(10),     // Summary (increased for savings)
+                Constraint::Min(5),         // Model table
+                Constraint::Length(4),      // Trend sparkline
+                Constraint::Length(rec_height), // Recommendations
             ])
             .split(inner);
 
         self.render_summary(layout[0], buf);
         self.render_model_table(layout[1], buf);
         self.render_trend(layout[2], buf);
+        if rec_height > 0 {
+            self.render_recommendations(layout[3], buf);
+        }
     }
 }
 

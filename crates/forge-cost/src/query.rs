@@ -8,6 +8,7 @@ use crate::models::{
 };
 use chrono::{Datelike, NaiveDate, Utc};
 use rusqlite::params;
+use serde::{Deserialize, Serialize};
 /// Query interface for cost analysis.
 pub struct CostQuery<'a> {
     db: &'a CostDatabase,
@@ -628,7 +629,7 @@ impl<'a> CostQuery<'a> {
 }
 
 /// Subscription optimization report.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubscriptionOptimizationReport {
     /// Total monthly cost of all subscriptions
     pub total_monthly_cost: f64,
