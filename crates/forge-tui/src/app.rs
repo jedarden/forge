@@ -52,7 +52,7 @@ use std::time::{Duration, Instant};
 use crossterm::event::{self, Event, KeyEvent};
 use forge_chat::{ChatBackend, ChatConfig, ChatResponse};
 use forge_core::types::WorkerTier;
-use forge_worker::{discovery::DiscoveredWorker, LaunchConfig, SpawnRequest, WorkerLauncher};
+use forge_worker::{LaunchConfig, SpawnRequest, WorkerLauncher, discovery::DiscoveredWorker};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
@@ -892,9 +892,9 @@ impl App {
         // Spawn the worker asynchronously using the runtime
         let worker_id_clone = worker_id.clone();
         let model_name = executor.name().to_string();
-        let result = self.worker_runtime.block_on(async {
-            self.worker_launcher.spawn(request).await
-        });
+        let result = self
+            .worker_runtime
+            .block_on(async { self.worker_launcher.spawn(request).await });
 
         match result {
             Ok(handle) => {
@@ -924,7 +924,9 @@ impl App {
         info!("Discovering workers for kill dialog");
 
         // Discover workers using the runtime
-        let result = self.worker_runtime.block_on(async { discover_workers().await });
+        let result = self
+            .worker_runtime
+            .block_on(async { discover_workers().await });
 
         match result {
             Ok(discovery) => {
@@ -966,15 +968,22 @@ impl App {
         let worker = &self.kill_dialog_workers[self.kill_dialog_selected].clone();
         let session_name = worker.session_name.clone();
 
-        info!("Killing worker: {} (session: {})", worker.suffix, session_name);
+        info!(
+            "Killing worker: {} (session: {})",
+            worker.suffix, session_name
+        );
 
         // First check if session exists (to handle already-dead workers gracefully)
-        let exists = self.worker_runtime.block_on(async { session_exists(&session_name).await });
+        let exists = self
+            .worker_runtime
+            .block_on(async { session_exists(&session_name).await });
 
         match exists {
             Ok(true) => {
                 // Session exists, proceed to kill
-                let result = self.worker_runtime.block_on(async { kill_session(&session_name).await });
+                let result = self
+                    .worker_runtime
+                    .block_on(async { kill_session(&session_name).await });
 
                 match result {
                     Ok(()) => {
@@ -985,7 +994,9 @@ impl App {
                         self.kill_dialog_workers.remove(self.kill_dialog_selected);
 
                         // Adjust selection if needed
-                        if self.kill_dialog_selected >= self.kill_dialog_workers.len() && self.kill_dialog_selected > 0 {
+                        if self.kill_dialog_selected >= self.kill_dialog_workers.len()
+                            && self.kill_dialog_selected > 0
+                        {
                             self.kill_dialog_selected -= 1;
                         }
 
@@ -1011,7 +1022,9 @@ impl App {
 
                 // Remove from list since it's already dead
                 self.kill_dialog_workers.remove(self.kill_dialog_selected);
-                if self.kill_dialog_selected >= self.kill_dialog_workers.len() && self.kill_dialog_selected > 0 {
+                if self.kill_dialog_selected >= self.kill_dialog_workers.len()
+                    && self.kill_dialog_selected > 0
+                {
                     self.kill_dialog_selected -= 1;
                 }
                 if self.kill_dialog_workers.is_empty() {
@@ -1021,13 +1034,17 @@ impl App {
             Err(e) => {
                 error!("Failed to check session existence: {}", e);
                 // Try to kill anyway - the kill might still work
-                let result = self.worker_runtime.block_on(async { kill_session(&session_name).await });
+                let result = self
+                    .worker_runtime
+                    .block_on(async { kill_session(&session_name).await });
                 match result {
                     Ok(()) => {
                         info!("Successfully killed worker session: {}", session_name);
                         self.status_message = Some(format!("Killed worker: {}", worker.suffix));
                         self.kill_dialog_workers.remove(self.kill_dialog_selected);
-                        if self.kill_dialog_selected >= self.kill_dialog_workers.len() && self.kill_dialog_selected > 0 {
+                        if self.kill_dialog_selected >= self.kill_dialog_workers.len()
+                            && self.kill_dialog_selected > 0
+                        {
                             self.kill_dialog_selected -= 1;
                         }
                         if self.kill_dialog_workers.is_empty() {
@@ -1983,13 +2000,18 @@ Press any key to close this help.";
         // Header
         lines.push(Line::from(Span::styled(
             "Select a worker to kill:",
-            Style::default().fg(theme.colors.text).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.colors.text)
+                .add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::raw("")); // Empty line
 
         if self.kill_dialog_workers.is_empty() {
             // No workers message
-            let msg = self.kill_dialog_error.as_deref().unwrap_or("No active workers found");
+            let msg = self
+                .kill_dialog_error
+                .as_deref()
+                .unwrap_or("No active workers found");
             lines.push(Line::from(Span::styled(
                 msg,
                 Style::default().fg(theme.colors.status_warning),
@@ -2001,7 +2023,11 @@ Press any key to close this help.";
 
                 // Format: [ ] worker-suffix (type, attached/detached, age)
                 let checkbox = if is_selected { "[x] " } else { "[ ] " };
-                let attached_str = if worker.is_attached { "attached" } else { "detached" };
+                let attached_str = if worker.is_attached {
+                    "attached"
+                } else {
+                    "detached"
+                };
                 let worker_line = format!(
                     "{}{} ({}, {}, age: {})",
                     checkbox,
@@ -2051,9 +2077,7 @@ Press any key to close this help.";
                     .border_style(Style::default().fg(Color::Red))
                     .title(Span::styled(
                         " Kill Worker ",
-                        Style::default()
-                            .fg(Color::Red)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                     ))
                     .style(Style::default().bg(Color::Black)),
             )
@@ -2615,7 +2639,10 @@ mod tests {
 
         // Show help via ShowHelp event (triggered by '?' key)
         app.handle_app_event(AppEvent::ShowHelp);
-        assert!(app.show_help(), "Help should be visible after ShowHelp event");
+        assert!(
+            app.show_help(),
+            "Help should be visible after ShowHelp event"
+        );
     }
 
     #[test]
@@ -2667,7 +2694,9 @@ mod tests {
 
         // Help should show view navigation section
         assert!(
-            content.contains("View") || content.contains("Navigation") || content.contains("Workers"),
+            content.contains("View")
+                || content.contains("Navigation")
+                || content.contains("Workers"),
             "Help overlay should show view navigation section"
         );
     }
@@ -3237,9 +3266,17 @@ mod tests {
 
         // Test all priority levels 0-4
         for p in 0u8..=4 {
-            let key = KeyEvent::new(KeyCode::Char(char::from_digit(p as u32, 10).unwrap()), KeyModifiers::NONE);
+            let key = KeyEvent::new(
+                KeyCode::Char(char::from_digit(p as u32, 10).unwrap()),
+                KeyModifiers::NONE,
+            );
             app.handle_key_event(key);
-            assert_eq!(app.priority_filter, Some(p), "Priority filter should be P{}", p);
+            assert_eq!(
+                app.priority_filter,
+                Some(p),
+                "Priority filter should be P{}",
+                p
+            );
         }
     }
 }
