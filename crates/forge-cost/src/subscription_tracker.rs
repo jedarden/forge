@@ -127,23 +127,16 @@ impl SubscriptionTracker {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/home/coder".to_string());
         let config_path = Path::new(&home).join(".forge").join("subscriptions.yaml");
 
-        eprintln!("[SubscriptionTracker] Looking for config at: {}", config_path.display());
-
         if config_path.exists() {
-            eprintln!("[SubscriptionTracker] Config file exists, attempting to load...");
             match Self::from_config_file(&config_path) {
                 Ok(tracker) => {
-                    eprintln!("[SubscriptionTracker] Loaded {} subscriptions from {}", tracker.len(), config_path.display());
-                    info!("Loaded subscriptions from {}", config_path.display());
+                    info!("Loaded {} subscriptions from {}", tracker.len(), config_path.display());
                     return tracker;
                 }
                 Err(e) => {
-                    eprintln!("[SubscriptionTracker] ERROR loading subscriptions: {}", e);
                     warn!("Failed to load subscriptions from {}: {}", config_path.display(), e);
                 }
             }
-        } else {
-            eprintln!("[SubscriptionTracker] Config file does not exist");
         }
 
         // Return empty tracker if no config found
@@ -165,8 +158,6 @@ impl SubscriptionTracker {
 
         let config_str = std::fs::read_to_string(config_path)?;
         let config: SubscriptionConfigFile = serde_yaml::from_str(&config_str)?;
-
-        eprintln!("[SubscriptionTracker::reload] Found {} subscriptions in config", config.subscriptions.len());
 
         self.subscriptions.clear();
 

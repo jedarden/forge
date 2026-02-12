@@ -498,7 +498,7 @@ fn process_file_event(
 }
 
 /// Real-time metrics aggregator for parsed API calls.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct RealtimeMetrics {
     /// Total API calls today
     pub total_calls: i64,

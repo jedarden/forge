@@ -18,6 +18,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Row, Table, Widget},
 };
 
+use crate::log_watcher::RealtimeMetrics;
 use forge_cost::{CostBreakdown, DailyCost, ModelCost, OptimizationRecommendation, ProjectedCost};
 
 /// Budget alert severity levels.
@@ -159,6 +160,8 @@ pub struct CostPanelData {
     pub savings_achieved: f64,
     /// Subscription utilization percentage
     pub subscription_utilization: f64,
+    /// Real-time metrics from log parsing
+    pub realtime: RealtimeMetrics,
     /// Last update timestamp
     pub last_update: Option<chrono::DateTime<Utc>>,
     /// Whether data is loading
@@ -233,6 +236,11 @@ impl CostPanelData {
         self.subscription_utilization = utilization;
     }
 
+    /// Set real-time metrics from log parsing.
+    pub fn set_realtime(&mut self, realtime: RealtimeMetrics) {
+        self.realtime = realtime;
+    }
+
     /// Check if we have optimization recommendations.
     pub fn has_recommendations(&self) -> bool {
         !self.recommendations.is_empty()
@@ -289,7 +297,7 @@ impl CostPanelData {
 
     /// Check if we have any data.
     pub fn has_data(&self) -> bool {
-        self.today.is_some() || self.monthly_total > 0.0 || !self.monthly_by_model.is_empty()
+        self.today.is_some() || self.monthly_total > 0.0 || !self.monthly_by_model.is_empty() || self.realtime.has_data()
     }
 }
 
@@ -552,6 +560,37 @@ impl<'a> CostPanel<'a> {
                         Color::LightRed
                     }),
                 ),
+            ]));
+        }
+
+        // Real-time metrics from log parsing
+        if self.data.realtime.has_data() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("⚡ Live", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                Span::raw(" "),
+                Span::styled(
+                    format!("{} calls", self.data.realtime.total_calls),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::raw(" | "),
+                Span::styled(
+                    format_usd(self.data.realtime.total_cost),
+                    Style::default().fg(Color::Green),
+                ),
+            ]));
+            lines.push(Line::from(vec![
+                Span::raw("   Tokens: "),
+                Span::styled(
+                    format_tokens(self.data.realtime.total_tokens()),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::raw("  Avg: "),
+                Span::styled(
+                    format_usd(self.data.realtime.avg_cost_per_call()),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::raw("/call"),
             ]));
         }
 

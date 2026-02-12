@@ -16,6 +16,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Row, Table, Widget},
 };
 
+use crate::log_watcher::RealtimeMetrics;
 use forge_cost::{DailyStat, HourlyStat, ModelPerformance, WorkerEfficiency};
 
 /// Performance data prepared for TUI display.
@@ -29,6 +30,8 @@ pub struct MetricsPanelData {
     pub model_performance: Vec<ModelPerformance>,
     /// Worker efficiency ranking
     pub worker_efficiency: Vec<WorkerEfficiency>,
+    /// Real-time metrics from log parsing
+    pub realtime: RealtimeMetrics,
     /// Last update timestamp
     pub last_update: Option<DateTime<Utc>>,
     /// Whether data is loading
@@ -79,6 +82,11 @@ impl MetricsPanelData {
     /// Update with worker efficiency data.
     pub fn set_worker_efficiency(&mut self, workers: Vec<WorkerEfficiency>) {
         self.worker_efficiency = workers;
+    }
+
+    /// Set real-time metrics from log parsing.
+    pub fn set_realtime(&mut self, realtime: RealtimeMetrics) {
+        self.realtime = realtime;
     }
 
     /// Get today's completed tasks.
@@ -134,6 +142,7 @@ impl MetricsPanelData {
             || !self.hourly_stats.is_empty()
             || !self.model_performance.is_empty()
             || !self.worker_efficiency.is_empty()
+            || self.realtime.has_data()
     }
 }
 
@@ -326,6 +335,31 @@ impl<'a> MetricsPanel<'a> {
                     .add_modifier(Modifier::BOLD),
             ),
         ]));
+
+        // Real-time API call metrics from log parsing
+        if self.data.realtime.has_data() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("⚡ Live", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                Span::raw(" "),
+                Span::styled(
+                    format!("{} API calls", self.data.realtime.total_calls),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]));
+            lines.push(Line::from(vec![
+                Span::raw("   Tokens: "),
+                Span::styled(
+                    format!("{}", self.data.realtime.total_tokens()),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::raw("  Cost: "),
+                Span::styled(
+                    format_usd(self.data.realtime.total_cost),
+                    Style::default().fg(Color::Green),
+                ),
+            ]));
+        }
 
         let paragraph = Paragraph::new(lines);
         paragraph.render(area, buf);
