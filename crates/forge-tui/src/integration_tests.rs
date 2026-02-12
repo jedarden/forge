@@ -4094,10 +4094,7 @@ mod tests {
 
         // Test Wide mode footer
         let buffer_wide = render_app(&mut app, 150, 40);
-        assert!(
-            buffer_contains(&buffer_wide, "FORGE"),
-            "Wide should render"
-        );
+        assert!(buffer_contains(&buffer_wide, "FORGE"), "Wide should render");
 
         // Test Narrow mode footer (hotkeys may be abbreviated)
         let buffer_narrow = render_app(&mut app, 80, 25);
@@ -4575,9 +4572,13 @@ mod tests {
         }
 
         // Verify initial state
-        let worker = watcher.get_worker("task-worker")
+        let worker = watcher
+            .get_worker("task-worker")
             .expect("Worker should be tracked after creation");
-        assert_eq!(worker.current_task, None, "Worker should have no task initially");
+        assert_eq!(
+            worker.current_task, None,
+            "Worker should have no task initially"
+        );
 
         // Worker picks up a task
         let start = std::time::Instant::now();
@@ -4603,10 +4604,7 @@ mod tests {
             }
         }
 
-        assert!(
-            task_updated,
-            "current_task should update within 1 second"
-        );
+        assert!(task_updated, "current_task should update within 1 second");
 
         // Verify internal state
         let worker = watcher.get_worker("task-worker").unwrap();
@@ -4651,7 +4649,10 @@ mod tests {
 
         // Verify initial state
         let worker = watcher.get_worker("productive-worker").unwrap();
-        assert_eq!(worker.tasks_completed, 0, "Should start with 0 tasks completed");
+        assert_eq!(
+            worker.tasks_completed, 0,
+            "Should start with 0 tasks completed"
+        );
 
         // Simulate task completion
         let start = std::time::Instant::now();
@@ -4872,10 +4873,7 @@ mod tests {
             WorkerStatus::Stopped,
             "Final status should be 'stopped', not stale data"
         );
-        assert!(
-            !worker.is_healthy(),
-            "Stopped worker should not be healthy"
-        );
+        assert!(!worker.is_healthy(), "Stopped worker should not be healthy");
     }
 
     /// Test that status watcher handles concurrent worker spawns gracefully.

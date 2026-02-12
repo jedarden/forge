@@ -1494,10 +1494,7 @@ mod tests {
         while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
 
         let worker = watcher.get_worker(worker_id);
-        assert!(
-            worker.is_some(),
-            "Worker should be tracked after spawn"
-        );
+        assert!(worker.is_some(), "Worker should be tracked after spawn");
         assert_eq!(
             worker.unwrap().status,
             WorkerStatus::Starting,
@@ -1591,8 +1588,7 @@ mod tests {
             "Status should transition to 'idle'"
         );
         assert_eq!(
-            worker.current_task,
-            None,
+            worker.current_task, None,
             "current_task should be None when idle"
         );
     }
@@ -1775,8 +1771,7 @@ mod tests {
             "Status should return to 'idle' after task completion"
         );
         assert_eq!(
-            worker.current_task,
-            None,
+            worker.current_task, None,
             "current_task should be cleared after completion"
         );
         assert_eq!(
@@ -2244,21 +2239,34 @@ mod tests {
         let path = status_dir.join(format!("{}.json", worker_id));
 
         // Stage 1: Starting
-        fs::write(&path, json!({
-            "worker_id": worker_id,
-            "status": "starting"
-        }).to_string()).unwrap();
+        fs::write(
+            &path,
+            json!({
+                "worker_id": worker_id,
+                "status": "starting"
+            })
+            .to_string(),
+        )
+        .unwrap();
         std::thread::sleep(Duration::from_millis(50));
         while watcher.recv_timeout(Duration::from_millis(20)).is_some() {}
-        assert_eq!(watcher.get_worker(worker_id).unwrap().status, WorkerStatus::Starting);
+        assert_eq!(
+            watcher.get_worker(worker_id).unwrap().status,
+            WorkerStatus::Starting
+        );
 
         // Stage 2: Active (picked up task)
-        fs::write(&path, json!({
-            "worker_id": worker_id,
-            "status": "active",
-            "current_task": "fg-lifecycle-test",
-            "tasks_completed": 0
-        }).to_string()).unwrap();
+        fs::write(
+            &path,
+            json!({
+                "worker_id": worker_id,
+                "status": "active",
+                "current_task": "fg-lifecycle-test",
+                "tasks_completed": 0
+            })
+            .to_string(),
+        )
+        .unwrap();
         std::thread::sleep(Duration::from_millis(50));
         while watcher.recv_timeout(Duration::from_millis(20)).is_some() {}
         let w = watcher.get_worker(worker_id).unwrap();
@@ -2266,12 +2274,17 @@ mod tests {
         assert_eq!(w.current_task, Some("fg-lifecycle-test".to_string()));
 
         // Stage 3: Idle (task completed)
-        fs::write(&path, json!({
-            "worker_id": worker_id,
-            "status": "idle",
-            "current_task": null,
-            "tasks_completed": 1
-        }).to_string()).unwrap();
+        fs::write(
+            &path,
+            json!({
+                "worker_id": worker_id,
+                "status": "idle",
+                "current_task": null,
+                "tasks_completed": 1
+            })
+            .to_string(),
+        )
+        .unwrap();
         std::thread::sleep(Duration::from_millis(50));
         while watcher.recv_timeout(Duration::from_millis(20)).is_some() {}
         let w = watcher.get_worker(worker_id).unwrap();
@@ -2279,11 +2292,16 @@ mod tests {
         assert_eq!(w.tasks_completed, 1);
 
         // Stage 4: Stopped (external termination)
-        fs::write(&path, json!({
-            "worker_id": worker_id,
-            "status": "stopped",
-            "tasks_completed": 1
-        }).to_string()).unwrap();
+        fs::write(
+            &path,
+            json!({
+                "worker_id": worker_id,
+                "status": "stopped",
+                "tasks_completed": 1
+            })
+            .to_string(),
+        )
+        .unwrap();
         std::thread::sleep(Duration::from_millis(50));
         while watcher.recv_timeout(Duration::from_millis(20)).is_some() {}
         let w = watcher.get_worker(worker_id).unwrap();
@@ -2324,10 +2342,15 @@ mod tests {
             ("worker-5", "failed"),
         ] {
             let path = status_dir.join(format!("{}.json", id));
-            fs::write(&path, json!({
-                "worker_id": id,
-                "status": status
-            }).to_string()).unwrap();
+            fs::write(
+                &path,
+                json!({
+                    "worker_id": id,
+                    "status": status
+                })
+                .to_string(),
+            )
+            .unwrap();
         }
 
         std::thread::sleep(Duration::from_millis(100));
@@ -2339,15 +2362,20 @@ mod tests {
         assert_eq!(counts.active, 2);
         assert_eq!(counts.idle, 1);
         assert_eq!(counts.failed, 1);
-        assert_eq!(counts.healthy(), 4);  // starting + active + idle
+        assert_eq!(counts.healthy(), 4); // starting + active + idle
         assert_eq!(counts.unhealthy(), 1); // failed
 
         // Transition worker-1 from starting to active
         let path = status_dir.join("worker-1.json");
-        fs::write(&path, json!({
-            "worker_id": "worker-1",
-            "status": "active"
-        }).to_string()).unwrap();
+        fs::write(
+            &path,
+            json!({
+                "worker_id": "worker-1",
+                "status": "active"
+            })
+            .to_string(),
+        )
+        .unwrap();
 
         std::thread::sleep(Duration::from_millis(100));
         while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
