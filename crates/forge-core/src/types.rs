@@ -123,7 +123,7 @@ impl std::fmt::Display for Priority {
 /// Worker tier for model routing.
 ///
 /// Per ADR 0003, workers are grouped into tiers for cost optimization.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkerTier {
     /// Premium tier (Opus, GPT-4) - for critical/complex tasks
