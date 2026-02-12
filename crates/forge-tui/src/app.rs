@@ -150,6 +150,8 @@ pub struct App {
     kill_dialog_selected: usize,
     /// Error message to show in kill dialog (if any)
     kill_dialog_error: Option<String>,
+    /// Priority filter for Tasks view (None = no filter, Some(0-4) = filter to that priority)
+    priority_filter: Option<u8>,
 }
 
 /// A single chat exchange (user query + assistant response).
@@ -247,6 +249,7 @@ impl App {
             kill_dialog_workers: Vec::new(),
             kill_dialog_selected: 0,
             kill_dialog_error: None,
+            priority_filter: None,
         }
     }
 
@@ -291,6 +294,7 @@ impl App {
             kill_dialog_workers: Vec::new(),
             kill_dialog_selected: 0,
             kill_dialog_error: None,
+            priority_filter: None,
         }
     }
 
@@ -619,6 +623,8 @@ impl App {
 
     /// Handle a key event.
     pub fn handle_key_event(&mut self, key: KeyEvent) {
+        use crossterm::event::KeyCode;
+
         // Handle help overlay first
         if self.show_help {
             self.show_help = false;
@@ -630,6 +636,36 @@ impl App {
         if self.show_kill_dialog {
             self.handle_kill_dialog_key(key);
             return;
+        }
+
+        // Handle priority filter keys (0-4) when in Tasks view
+        if self.current_view == View::Tasks {
+            if let KeyCode::Char(c) = key.code {
+                match c {
+                    '0' | '1' | '2' | '3' | '4' => {
+                        let priority = c.to_digit(10).unwrap() as u8;
+                        // Toggle filter: if same priority, clear it; otherwise set new filter
+                        if self.priority_filter == Some(priority) {
+                            self.priority_filter = None;
+                            self.status_message = Some("Priority filter cleared".to_string());
+                        } else {
+                            self.priority_filter = Some(priority);
+                            self.status_message = Some(format!("Filtering P{} tasks", priority));
+                        }
+                        self.scroll_offset = 0; // Reset scroll when filter changes
+                        self.mark_dirty();
+                        return;
+                    }
+                    // Clear filter with 'x' key
+                    'x' | 'X' if self.priority_filter.is_some() => {
+                        self.priority_filter = None;
+                        self.status_message = Some("Priority filter cleared".to_string());
+                        self.mark_dirty();
+                        return;
+                    }
+                    _ => {}
+                }
+            }
         }
 
         let event = self.input_handler.handle_key(key);
@@ -1719,7 +1755,10 @@ impl App {
 
     /// Draw the Tasks view.
     fn draw_tasks(&self, frame: &mut Frame, area: Rect) {
-        let content = self.data_manager.bead_manager.format_task_queue_full();
+        let content = self
+            .data_manager
+            .bead_manager
+            .format_task_queue_full_filtered(self.priority_filter);
 
         self.draw_panel(frame, area, "Task Queue & Bead Management", &content, true);
     }
@@ -3109,5 +3148,98 @@ mod tests {
         assert!(buffer_contains(&buffer_narrow, "Worker Pool"));
         assert!(buffer_contains(&buffer_narrow, "Task Queue"));
         assert!(buffer_contains(&buffer_narrow, "Activity Log"));
+    }
+
+    // ============================================================
+    // Priority Filter Tests
+    // ============================================================
+
+    #[test]
+    fn test_priority_filter_keys_in_tasks_view() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let mut app = App::new();
+
+        // Start in Overview, no filter
+        assert_eq!(app.current_view, View::Overview);
+        assert_eq!(app.priority_filter, None);
+
+        // Switch to Tasks view
+        app.switch_view(View::Tasks);
+        assert_eq!(app.current_view, View::Tasks);
+
+        // Press '0' - should set filter to P0
+        let key = KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE);
+        app.handle_key_event(key);
+        assert_eq!(app.priority_filter, Some(0));
+
+        // Press '1' - should change filter to P1
+        let key = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE);
+        app.handle_key_event(key);
+        assert_eq!(app.priority_filter, Some(1));
+
+        // Press '1' again - should toggle off (clear filter)
+        let key = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE);
+        app.handle_key_event(key);
+        assert_eq!(app.priority_filter, None);
+
+        // Set filter to P2
+        let key = KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE);
+        app.handle_key_event(key);
+        assert_eq!(app.priority_filter, Some(2));
+
+        // Press 'X' - should clear filter
+        let key = KeyEvent::new(KeyCode::Char('X'), KeyModifiers::NONE);
+        app.handle_key_event(key);
+        assert_eq!(app.priority_filter, None);
+    }
+
+    #[test]
+    fn test_priority_filter_keys_ignored_in_other_views() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let mut app = App::new();
+
+        // Start in Overview
+        app.switch_view(View::Overview);
+        assert_eq!(app.priority_filter, None);
+
+        // Press '0' in Overview - should NOT set filter (it's treated as spawn Opus + '0')
+        let key = KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE);
+        app.handle_key_event(key);
+
+        // Filter should still be None
+        assert_eq!(app.priority_filter, None);
+    }
+
+    #[test]
+    fn test_priority_filter_resets_scroll() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let mut app = App::new();
+        app.switch_view(View::Tasks);
+        app.scroll_offset = 10;
+
+        // Press '0' to filter - should reset scroll to 0
+        let key = KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE);
+        app.handle_key_event(key);
+
+        assert_eq!(app.priority_filter, Some(0));
+        assert_eq!(app.scroll_offset, 0);
+    }
+
+    #[test]
+    fn test_priority_filter_all_levels() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let mut app = App::new();
+        app.switch_view(View::Tasks);
+
+        // Test all priority levels 0-4
+        for p in 0..=4 {
+            let key = KeyEvent::new(KeyCode::Char(char::from_digit(p, 10).unwrap()), KeyModifiers::NONE);
+            app.handle_key_event(key);
+            assert_eq!(app.priority_filter, Some(p), "Priority filter should be P{}", p);
+        }
     }
 }

@@ -658,25 +658,39 @@ impl BeadManager {
 
     /// Get aggregated bead data across all workspaces.
     pub fn get_aggregated_data(&self) -> AggregatedBeadData {
+        self.get_filtered_aggregated_data(None)
+    }
+
+    /// Get aggregated bead data, optionally filtered by priority.
+    ///
+    /// When `priority_filter` is Some(p), only beads with priority == p are included.
+    /// When `priority_filter` is None, all beads are included.
+    pub fn get_filtered_aggregated_data(&self, priority_filter: Option<u8>) -> AggregatedBeadData {
         let mut data = AggregatedBeadData::default();
 
         for (_, cache) in &self.cache {
-            // Add ready beads
+            // Add ready beads (filtered)
             for bead in &cache.ready {
-                data.ready.push((cache.name.clone(), bead.clone()));
+                if priority_filter.map_or(true, |p| bead.priority == p) {
+                    data.ready.push((cache.name.clone(), bead.clone()));
+                }
             }
 
-            // Add blocked beads
+            // Add blocked beads (filtered)
             for bead in &cache.blocked {
-                data.blocked.push((cache.name.clone(), bead.clone()));
+                if priority_filter.map_or(true, |p| bead.priority == p) {
+                    data.blocked.push((cache.name.clone(), bead.clone()));
+                }
             }
 
-            // Add in-progress beads
+            // Add in-progress beads (filtered)
             for bead in &cache.in_progress {
-                data.in_progress.push((cache.name.clone(), bead.clone()));
+                if priority_filter.map_or(true, |p| bead.priority == p) {
+                    data.in_progress.push((cache.name.clone(), bead.clone()));
+                }
             }
 
-            // Aggregate counts
+            // Aggregate counts (always use totals regardless of filter for summary)
             data.total_ready += cache.stats.summary.ready_issues;
             data.total_blocked += cache.stats.summary.blocked_issues;
             data.total_in_progress += cache.stats.summary.in_progress_issues;
@@ -780,6 +794,14 @@ impl BeadManager {
 
     /// Format full task queue for the Tasks view.
     pub fn format_task_queue_full(&self) -> String {
+        self.format_task_queue_full_filtered(None)
+    }
+
+    /// Format full task queue for the Tasks view with optional priority filter.
+    ///
+    /// When `priority_filter` is Some(p), only beads with priority == p are shown.
+    /// When `priority_filter` is None, all beads are shown.
+    pub fn format_task_queue_full_filtered(&self, priority_filter: Option<u8>) -> String {
         if !self.has_br() {
             return "br CLI not available.\n\n\
                     Install beads_rust to enable task queue:\n\
@@ -801,12 +823,18 @@ impl BeadManager {
             return "Loading bead data...".to_string();
         }
 
-        let data = self.get_aggregated_data();
+        let data = self.get_filtered_aggregated_data(priority_filter);
         let mut lines = Vec::new();
+
+        // Filter indicator in header
+        let filter_text = match priority_filter {
+            Some(p) => format!(" [Filtered: P{}]", p),
+            None => String::new(),
+        };
 
         // Summary header
         lines.push("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".to_string());
-        lines.push(data.format_summary());
+        lines.push(format!("{}{}", data.format_summary(), filter_text));
         lines.push("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".to_string());
         lines.push(String::new());
 
@@ -868,9 +896,25 @@ impl BeadManager {
             lines.push(String::new());
         }
 
+        // Show message if filter is active but no results
+        if priority_filter.is_some()
+            && data.in_progress.is_empty()
+            && data.ready.is_empty()
+            && data.blocked.is_empty()
+        {
+            lines.push(format!(
+                "No P{} tasks found. Press {} to clear filter.",
+                priority_filter.unwrap(),
+                priority_filter.unwrap()
+            ));
+            lines.push(String::new());
+        }
+
         // Hotkeys
         lines.push("─────────────────────────────────────────────────────".to_string());
-        lines.push("[Enter] View details  [A] Assign  [P] Priority  [C] Close".to_string());
+        lines.push(
+            "[0-4] Filter by priority  [X] Clear filter  [Enter] View  [C] Close".to_string(),
+        );
 
         lines.join("\n")
     }
