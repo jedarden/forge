@@ -97,7 +97,7 @@ impl Default for BudgetConfig {
         Self {
             monthly_limit: 500.0, // $500/month default
             daily_limit: None,
-            warning_threshold: 70.0,
+            warning_threshold: 80.0,  // 80% triggers warning
             critical_threshold: 90.0,
         }
     }
