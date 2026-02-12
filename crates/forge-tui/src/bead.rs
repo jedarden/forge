@@ -897,17 +897,11 @@ impl BeadManager {
         }
 
         // Show message if filter is active but no results
-        if priority_filter.is_some()
-            && data.in_progress.is_empty()
-            && data.ready.is_empty()
-            && data.blocked.is_empty()
-        {
-            lines.push(format!(
-                "No P{} tasks found. Press {} to clear filter.",
-                priority_filter.unwrap(),
-                priority_filter.unwrap()
-            ));
-            lines.push(String::new());
+        if let Some(p) = priority_filter {
+            if data.in_progress.is_empty() && data.ready.is_empty() && data.blocked.is_empty() {
+                lines.push(format!("No P{p} tasks found. Press {p} to clear filter."));
+                lines.push(String::new());
+            }
         }
 
         // Hotkeys
