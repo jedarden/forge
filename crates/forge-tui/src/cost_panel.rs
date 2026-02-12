@@ -142,6 +142,8 @@ impl BudgetConfig {
 pub struct CostPanelData {
     /// Today's costs
     pub today: Option<DailyCost>,
+    /// This week's costs (last 7 days)
+    pub week: Option<DailyCost>,
     /// Current month's total cost
     pub monthly_total: f64,
     /// Monthly cost by model
@@ -197,6 +199,11 @@ impl CostPanelData {
         self.today = Some(today);
         self.last_update = Some(Utc::now());
         self.is_loading = false;
+    }
+
+    /// Update with week's cost data.
+    pub fn set_week(&mut self, week: DailyCost) {
+        self.week = Some(week);
     }
 
     /// Update with monthly data.
@@ -266,6 +273,21 @@ impl CostPanelData {
         self.today.as_ref().map(|t| t.total_tokens).unwrap_or(0)
     }
 
+    /// Get week's total cost.
+    pub fn week_total(&self) -> f64 {
+        self.week.as_ref().map(|w| w.total_cost_usd).unwrap_or(0.0)
+    }
+
+    /// Get week's call count.
+    pub fn week_calls(&self) -> i64 {
+        self.week.as_ref().map(|w| w.call_count).unwrap_or(0)
+    }
+
+    /// Get week's token count.
+    pub fn week_tokens(&self) -> i64 {
+        self.week.as_ref().map(|w| w.total_tokens).unwrap_or(0)
+    }
+
     /// Get monthly budget usage percentage.
     pub fn monthly_usage_pct(&self) -> f64 {
         if self.budget.monthly_limit > 0.0 {
@@ -297,7 +319,11 @@ impl CostPanelData {
 
     /// Check if we have any data.
     pub fn has_data(&self) -> bool {
-        self.today.is_some() || self.monthly_total > 0.0 || !self.monthly_by_model.is_empty() || self.realtime.has_data()
+        self.today.is_some()
+            || self.week.is_some()
+            || self.monthly_total > 0.0
+            || !self.monthly_by_model.is_empty()
+            || self.realtime.has_data()
     }
 }
 
@@ -450,6 +476,23 @@ impl<'a> CostPanel<'a> {
             ),
         ]);
         lines.push(today_line);
+
+        // Week costs (last 7 days)
+        let week_line = Line::from(vec![
+            Span::raw("Week:  "),
+            Span::styled(
+                format_usd(self.data.week_total()),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                format!("{} calls", self.data.week_calls()),
+                Style::default().fg(Color::Gray),
+            ),
+        ]);
+        lines.push(week_line);
 
         // Monthly costs with alert
         let monthly_alert = self.data.monthly_alert();
@@ -815,7 +858,7 @@ impl Widget for CostPanel<'_> {
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(10),     // Summary (increased for savings)
+                Constraint::Length(11),     // Summary (increased for week line)
                 Constraint::Min(5),         // Model table
                 Constraint::Length(4),      // Trend sparkline
                 Constraint::Length(rec_height), // Recommendations
@@ -873,6 +916,22 @@ impl Widget for CostSummaryCompact<'_> {
                 format_usd(self.data.today_total()),
                 Style::default()
                     .fg(daily_alert.color())
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        lines.push(Line::from(""));
+
+        // Week costs
+        lines.push(Line::from(vec![Span::styled(
+            " Week:",
+            Style::default().fg(Color::Cyan),
+        )]));
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                format_usd(self.data.week_total()),
+                Style::default()
+                    .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             ),
         ]));

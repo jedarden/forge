@@ -193,6 +193,72 @@ impl<'a> CostQuery<'a> {
         self.get_monthly_costs(now.year(), now.month())
     }
 
+    /// Get costs for the last 7 days (week).
+    pub fn get_weekly_costs(&self) -> Result<DailyCost> {
+        let conn = self.db.connection();
+        let conn = conn
+            .lock()
+            .map_err(|e| CostError::Query(format!("failed to acquire lock: {}", e)))?;
+
+        let today = Utc::now().date_naive();
+        let week_ago = today
+            .checked_sub_days(chrono::Days::new(6))
+            .unwrap_or(today);
+
+        let start_date = week_ago.format("%Y-%m-%d").to_string();
+        let end_date = today.format("%Y-%m-%d").to_string();
+
+        // Get aggregated totals for the week
+        let (total_cost_usd, call_count, total_tokens): (f64, i64, i64) = conn
+            .query_row(
+                "SELECT COALESCE(SUM(cost_usd), 0),
+                        COUNT(*),
+                        COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0)
+                 FROM api_calls
+                 WHERE DATE(timestamp) BETWEEN ?1 AND ?2",
+                params![start_date, end_date],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+
+        // Get per-model breakdown for the week
+        let mut stmt = conn.prepare(
+            "SELECT model,
+                    SUM(cost_usd),
+                    COUNT(*),
+                    SUM(input_tokens),
+                    SUM(output_tokens),
+                    SUM(cache_creation_tokens),
+                    SUM(cache_read_tokens)
+             FROM api_calls
+             WHERE DATE(timestamp) BETWEEN ?1 AND ?2
+             GROUP BY model
+             ORDER BY SUM(cost_usd) DESC",
+        )?;
+
+        let by_model: Vec<CostBreakdown> = stmt
+            .query_map(params![start_date, end_date], |row| {
+                Ok(CostBreakdown {
+                    model: row.get(0)?,
+                    total_cost_usd: row.get(1)?,
+                    call_count: row.get(2)?,
+                    input_tokens: row.get(3)?,
+                    output_tokens: row.get(4)?,
+                    cache_creation_tokens: row.get(5)?,
+                    cache_read_tokens: row.get(6)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(DailyCost {
+            date: today,
+            total_cost_usd,
+            call_count,
+            total_tokens,
+            by_model,
+        })
+    }
+
     /// Get cost for a specific bead/task.
     pub fn get_cost_per_task(&self, bead_id: &str) -> Result<CostBreakdown> {
         let conn = self.db.connection();
