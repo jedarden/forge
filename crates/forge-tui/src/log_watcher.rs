@@ -706,8 +706,6 @@ mod tests {
 
         // First poll should discover file AND read content
         let events = watcher.poll();
-        eprintln!("DEBUG: First poll events: {:?}", events);
-        eprintln!("DEBUG: Tracked files count: {}", watcher.tracked_file_count());
 
         // Should have at least one ApiCallParsed event on first poll
         let parsed = events.iter().any(|e| matches!(e, LogWatcherEvent::ApiCallParsed { .. }));
@@ -731,9 +729,9 @@ mod tests {
         // Valid result with usage data (matching real log format)
         writeln!(file, "{}", r#"{"type":"result","total_cost_usd":0.01,"usage":{"input_tokens":100,"output_tokens":50}}"#).unwrap();
         writeln!(file, "{}", r#"{"malformed":"json""#).unwrap(); // Invalid JSON
+        file.sync_all().unwrap();
 
-        // Poll twice (discover + read)
-        let _ = watcher.poll();
+        // First poll discovers file and reads content
         let events = watcher.poll();
 
         // Should still parse the valid entry
@@ -761,8 +759,7 @@ mod tests {
         write!(file, "{}\n", line1).unwrap();
         file.sync_all().unwrap();
 
-        // Poll twice (discover + read)
-        let _ = watcher.poll();
+        // First poll discovers file and reads first entry
         let events1 = watcher.poll();
         let parsed1 = events1
             .iter()

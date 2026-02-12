@@ -671,11 +671,13 @@ impl DataManager {
         use chrono::{Duration, Utc};
         use tracing::info;
 
+        eprintln!("[build_subscription_data] Tracker has {} subscriptions", tracker.len());
         info!("Building subscription data, tracker has {} subscriptions", tracker.len());
 
         let mut data = SubscriptionData::new();
 
         for summary in tracker.get_summaries() {
+            eprintln!("[build_subscription_data] Processing: {} (used: {} limit: {:?})", summary.name, summary.quota_used, summary.quota_limit);
             info!("Processing subscription: {} (usage: {}/{:?})", summary.name, summary.quota_used, summary.quota_limit);
             // Map subscription name to service type
             let service = if summary.name.to_lowercase().contains("anthropic") || summary.name.to_lowercase().contains("claude") {
