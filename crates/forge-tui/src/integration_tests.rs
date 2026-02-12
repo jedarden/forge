@@ -4634,7 +4634,10 @@ mod tests {
             .with_debounce_ms(20);
         let mut watcher = StatusWatcher::new(config).unwrap();
 
-        // Create worker with 0 tasks completed
+        // Consume initial scan event (empty directory)
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Create worker with 0 tasks completed (after watcher is ready)
         let initial_json = r#"{
             "worker_id": "productive-worker",
             "status": "active",
@@ -4644,11 +4647,12 @@ mod tests {
         let worker_path = status_dir.join("productive-worker.json");
         fs::write(&worker_path, initial_json).unwrap();
 
-        // Consume initial scan
-        let _ = watcher.recv_timeout(Duration::from_millis(100));
+        // Wait for file creation event to be processed
+        std::thread::sleep(Duration::from_millis(100));
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
 
         // Verify initial state
-        let worker = watcher.get_worker("productive-worker").unwrap();
+        let worker = watcher.get_worker("productive-worker").expect("Worker should be tracked after file creation");
         assert_eq!(
             worker.tasks_completed, 0,
             "Should start with 0 tasks completed"
@@ -4708,7 +4712,10 @@ mod tests {
             .with_debounce_ms(20);
         let mut watcher = StatusWatcher::new(config).unwrap();
 
-        // Create an active worker
+        // Consume initial scan event (empty directory)
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Create an active worker (after watcher is ready)
         let active_json = r#"{
             "worker_id": "doomed-worker",
             "status": "active",
@@ -4717,8 +4724,9 @@ mod tests {
         let worker_path = status_dir.join("doomed-worker.json");
         fs::write(&worker_path, active_json).unwrap();
 
-        // Consume initial scan
-        let _ = watcher.recv_timeout(Duration::from_millis(100));
+        // Wait for file creation event to be processed
+        std::thread::sleep(Duration::from_millis(100));
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
 
         // Verify worker exists
         assert!(
