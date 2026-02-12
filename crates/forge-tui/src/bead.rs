@@ -21,6 +21,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::debug;
 
+// Re-export TaskScorer for use in TUI
+pub use forge_worker::scorer::{ScoredBead, ScoreComponents, TaskScorer};
+
 /// Default polling interval in seconds for bead updates.
 const DEFAULT_POLL_INTERVAL_SECS: u64 = 30; // Increased from 5 to reduce blocking
 
@@ -155,6 +158,41 @@ impl Bead {
             3 => "🔵",
             _ => "⚪",
         }
+    }
+
+    /// Calculate the task value score (0-100).
+    ///
+    /// Uses the TaskScorer to compute a score based on:
+    /// - Priority (40% weight)
+    /// - Blockers (30% weight)
+    /// - Age (20% weight)
+    /// - Labels (10% weight)
+    pub fn calculate_score(&self) -> ScoredBead {
+        let scorer = TaskScorer::new();
+
+        // Parse age from created_at timestamp
+        let age_hours = if !self.created_at.is_empty() {
+            TaskScorer::parse_age_hours(&self.created_at)
+        } else {
+            None
+        };
+
+        scorer.score_with_components(
+            self.priority,
+            self.dependent_count,
+            age_hours,
+            &self.labels,
+        )
+    }
+
+    /// Get the score as a simple integer.
+    pub fn score(&self) -> u32 {
+        self.calculate_score().score
+    }
+
+    /// Format the score for display.
+    pub fn score_display(&self) -> String {
+        format!("{:3}", self.score())
     }
 }
 
@@ -698,11 +736,22 @@ impl BeadManager {
                 cache.stats.summary.open_issues + cache.stats.summary.in_progress_issues;
         }
 
-        // Sort by priority (P0 first)
-        data.ready.sort_by(|a, b| a.1.priority.cmp(&b.1.priority));
-        data.in_progress
-            .sort_by(|a, b| a.1.priority.cmp(&b.1.priority));
-        data.blocked.sort_by(|a, b| a.1.priority.cmp(&b.1.priority));
+        // Sort by score (highest first), then priority for stable ordering
+        data.ready.sort_by(|a, b| {
+            let score_a = a.1.calculate_score().score;
+            let score_b = b.1.calculate_score().score;
+            score_b.cmp(&score_a).then_with(|| a.1.priority.cmp(&b.1.priority))
+        });
+        data.in_progress.sort_by(|a, b| {
+            let score_a = a.1.calculate_score().score;
+            let score_b = b.1.calculate_score().score;
+            score_b.cmp(&score_a).then_with(|| a.1.priority.cmp(&b.1.priority))
+        });
+        data.blocked.sort_by(|a, b| {
+            let score_a = a.1.calculate_score().score;
+            let score_b = b.1.calculate_score().score;
+            score_b.cmp(&score_a).then_with(|| a.1.priority.cmp(&b.1.priority))
+        });
 
         data
     }
@@ -844,13 +893,15 @@ impl BeadManager {
             lines.push("─────────────────────────────────────────────────────".to_string());
             for (_ws, bead) in &data.in_progress {
                 let assignee = bead.assignee.as_deref().unwrap_or("-");
+                let score = bead.score();
                 lines.push(format!(
-                    "{} {:8} {} | {} [{}]",
+                    "{} {:8} {} | {:3} | {} [{}]",
                     bead.priority_indicator(),
                     bead.id,
                     bead.priority_str(),
-                    truncate_str(&bead.title, 30),
-                    truncate_str(assignee, 12)
+                    score,
+                    truncate_str(&bead.title, 25),
+                    truncate_str(assignee, 10)
                 ));
             }
             lines.push(String::new());
@@ -861,12 +912,14 @@ impl BeadManager {
             lines.push("○ READY".to_string());
             lines.push("─────────────────────────────────────────────────────".to_string());
             for (ws, bead) in data.ready.iter().take(10) {
+                let score = bead.score();
                 lines.push(format!(
-                    "{} {:8} {} | {} [{}]",
+                    "{} {:8} {} | {:3} | {} [{}]",
                     bead.priority_indicator(),
                     bead.id,
                     bead.priority_str(),
-                    truncate_str(&bead.title, 30),
+                    score,
+                    truncate_str(&bead.title, 25),
                     ws
                 ));
             }
@@ -881,12 +934,14 @@ impl BeadManager {
             lines.push("⊘ BLOCKED".to_string());
             lines.push("─────────────────────────────────────────────────────".to_string());
             for (_ws, bead) in data.blocked.iter().take(5) {
+                let score = bead.score();
                 lines.push(format!(
-                    "{} {:8} {} | {} ({} deps)",
+                    "{} {:8} {} | {:3} | {} ({} deps)",
                     bead.priority_indicator(),
                     bead.id,
                     bead.priority_str(),
-                    truncate_str(&bead.title, 25),
+                    score,
+                    truncate_str(&bead.title, 20),
                     bead.dependency_count
                 ));
             }

@@ -4,6 +4,7 @@
 //! and managing bead allocation to workers. It extends the existing bead module
 //! with queue-specific operations for launcher integration.
 
+use crate::scorer::{ScoredBead, TaskScorer};
 use crate::types::{LaunchConfig, SpawnRequest};
 use forge_core::types::BeadId;
 use forge_core::{ForgeError, Result};
@@ -46,6 +47,12 @@ pub struct QueuedBead {
     pub labels: Vec<String>,
     /// Number of dependencies this bead is blocked by
     pub dependency_count: usize,
+    /// Number of beads that depend on this one (for scoring)
+    #[serde(default)]
+    pub dependent_count: usize,
+    /// Creation timestamp (ISO 8601 format)
+    #[serde(default)]
+    pub created_at: Option<String>,
     /// Whether this bead is ready to work on
     pub is_ready: bool,
     /// Workspace path
@@ -69,9 +76,39 @@ impl QueuedBead {
         }
     }
 
+    /// Calculate the full task value score using the TaskScorer.
+    ///
+    /// This computes a score from 0-100 based on:
+    /// - Priority (40% weight): P0=40, P1=32, P2=24, P3=16, P4=8
+    /// - Blockers (30% weight): 10 points per blocked task, max 30
+    /// - Age (20% weight): 1 point per hour, max 20
+    /// - Labels (10% weight): critical=10, urgent=7, important=4
+    pub fn calculate_score(&self, scorer: &TaskScorer) -> ScoredBead {
+        let age_hours = self.created_at.as_ref().and_then(|s| TaskScorer::parse_age_hours(s));
+
+        scorer.score_with_components(
+            self.priority,
+            self.dependent_count,
+            age_hours,
+            &self.labels,
+        )
+    }
+
+    /// Calculate score using default scorer.
+    pub fn score(&self) -> u32 {
+        let scorer = TaskScorer::new();
+        self.calculate_score(&scorer).score
+    }
+
     /// Get the display string for this bead.
     pub fn display(&self) -> String {
         format!("{} [P{}] {}", self.id, self.priority, self.title)
+    }
+
+    /// Get the display string with score.
+    pub fn display_with_score(&self) -> String {
+        let score = self.score();
+        format!("{} [P{}] [Score:{}] {}", self.id, self.priority, score, self.title)
     }
 }
 
@@ -175,12 +212,22 @@ impl BeadQueueReader {
             })
             .unwrap_or_default();
 
-        // Check dependencies
+        // Check dependencies (tasks this bead depends on)
         let dependency_count = if let Some(deps) = value.get("dependencies") {
             deps.as_array().map(|a| a.len()).unwrap_or(0)
         } else {
             0
         };
+
+        // Check dependents (tasks that depend on this bead)
+        let dependent_count = value.get("dependent_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+
+        // Creation timestamp
+        let created_at = value.get("created_at")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
         let is_ready = dependency_count == 0 && status == "open";
 
@@ -193,21 +240,31 @@ impl BeadQueueReader {
             issue_type,
             labels,
             dependency_count,
+            dependent_count,
+            created_at,
             is_ready,
             workspace: workspace.to_path_buf(),
         })
     }
 
-    /// Get ready beads, sorted by priority.
+    /// Get ready beads, sorted by score (highest first).
+    ///
+    /// Uses the TaskScorer to calculate scores based on priority,
+    /// blockers, age, and labels. Higher-scored tasks appear first.
     pub fn get_ready_beads(&mut self) -> Result<Vec<QueuedBead>> {
         let beads = self.read_beads()?;
         let ready: Vec<_> = beads.into_iter().filter(|b| b.is_allocatable()).collect();
 
-        // Sort by priority score (P0 first)
+        // Sort by score (highest first), then by priority, then by id for stability
+        let scorer = TaskScorer::new();
         let mut sorted = ready;
         sorted.sort_by(|a, b| {
-            b.priority_score()
-                .cmp(&a.priority_score())
+            let score_a = a.calculate_score(&scorer).score;
+            let score_b = b.calculate_score(&scorer).score;
+
+            score_b
+                .cmp(&score_a)
+                .then_with(|| a.priority.cmp(&b.priority))
                 .then_with(|| a.id.cmp(&b.id))
         });
 
@@ -286,8 +343,11 @@ impl BeadQueueManager {
     }
 
     /// Get the next ready bead from all workspaces.
+    ///
+    /// Returns the bead with the highest score across all workspaces.
     pub fn pop_next_ready(&mut self) -> Option<(BeadId, QueuedBead, PathBuf)> {
         let mut candidates = Vec::new();
+        let scorer = TaskScorer::new();
 
         for reader in &mut self.readers {
             if let Some(bead) = reader.pop_ready_bead() {
@@ -295,15 +355,22 @@ impl BeadQueueManager {
             }
         }
 
-        // Sort by priority across all workspaces
-        candidates.sort_by(|a, b| b.1.priority_score().cmp(&a.1.priority_score()));
+        // Sort by score across all workspaces (highest first)
+        candidates.sort_by(|a, b| {
+            let score_a = a.1.calculate_score(&scorer).score;
+            let score_b = b.1.calculate_score(&scorer).score;
+            score_b.cmp(&score_a)
+        });
 
         candidates.pop()
     }
 
     /// Get all ready beads across all workspaces.
+    ///
+    /// Returns beads sorted by score (highest first).
     pub fn get_all_ready(&mut self) -> Vec<(BeadId, QueuedBead, PathBuf)> {
         let mut ready = Vec::new();
+        let scorer = TaskScorer::new();
 
         for reader in &mut self.readers {
             if let Ok(beads) = reader.get_ready_beads() {
@@ -313,7 +380,12 @@ impl BeadQueueManager {
             }
         }
 
-        ready.sort_by(|a, b| b.1.priority_score().cmp(&a.1.priority_score()));
+        // Sort by score (highest first)
+        ready.sort_by(|a, b| {
+            let score_a = a.1.calculate_score(&scorer).score;
+            let score_b = b.1.calculate_score(&scorer).score;
+            score_b.cmp(&score_a)
+        });
 
         ready
     }
@@ -454,5 +526,139 @@ mod tests {
         let bead = manager.pop_next_ready();
         assert!(bead.is_some());
         assert_eq!(bead.unwrap().0, "test-1");
+    }
+
+    #[test]
+    fn test_bead_score_calculation() {
+        let dir = create_test_workspace();
+        let mut reader = BeadQueueReader::new(dir.path()).unwrap();
+        let beads = reader.read_beads().unwrap();
+
+        // P0 should have higher score than P1
+        let p0_score = beads[0].score();
+        let p1_score = beads[1].score();
+        assert!(
+            p0_score > p1_score,
+            "P0 score ({}) should be > P1 score ({})",
+            p0_score,
+            p1_score
+        );
+    }
+
+    #[test]
+    fn test_bead_with_dependents_scores_higher() {
+        let scorer = TaskScorer::new();
+
+        // Create beads with different dependent counts
+        let bead_no_deps = QueuedBead {
+            id: "test-a".to_string(),
+            title: "No deps".to_string(),
+            description: String::new(),
+            status: "open".to_string(),
+            priority: 1,
+            issue_type: "task".to_string(),
+            labels: vec![],
+            dependency_count: 0,
+            dependent_count: 0,
+            created_at: None,
+            is_ready: true,
+            workspace: PathBuf::from("/test"),
+        };
+
+        let bead_with_deps = QueuedBead {
+            id: "test-b".to_string(),
+            title: "Has deps".to_string(),
+            description: String::new(),
+            status: "open".to_string(),
+            priority: 1,
+            issue_type: "task".to_string(),
+            labels: vec![],
+            dependency_count: 0,
+            dependent_count: 3,
+            created_at: None,
+            is_ready: true,
+            workspace: PathBuf::from("/test"),
+        };
+
+        let score_no_deps = bead_no_deps.calculate_score(&scorer).score;
+        let score_with_deps = bead_with_deps.calculate_score(&scorer).score;
+
+        assert!(
+            score_with_deps > score_no_deps,
+            "Bead with dependents ({}) should score > without ({})",
+            score_with_deps,
+            score_no_deps
+        );
+    }
+
+    #[test]
+    fn test_p0_scores_higher_than_p2_with_same_bonuses() {
+        let scorer = TaskScorer::new();
+
+        // P0 with no bonuses
+        let p0_bead = QueuedBead {
+            id: "p0".to_string(),
+            title: "Critical".to_string(),
+            description: String::new(),
+            status: "open".to_string(),
+            priority: 0,
+            issue_type: "task".to_string(),
+            labels: vec![],
+            dependency_count: 0,
+            dependent_count: 2,
+            created_at: None,
+            is_ready: true,
+            workspace: PathBuf::from("/test"),
+        };
+
+        // P2 with same bonuses
+        let p2_bead = QueuedBead {
+            id: "p2".to_string(),
+            title: "Medium".to_string(),
+            description: String::new(),
+            status: "open".to_string(),
+            priority: 2,
+            issue_type: "task".to_string(),
+            labels: vec![],
+            dependency_count: 0,
+            dependent_count: 2,
+            created_at: None,
+            is_ready: true,
+            workspace: PathBuf::from("/test"),
+        };
+
+        let p0_score = p0_bead.calculate_score(&scorer).score;
+        let p2_score = p2_bead.calculate_score(&scorer).score;
+
+        assert!(
+            p0_score > p2_score,
+            "P0 ({}) with same bonuses should score higher than P2 ({})",
+            p0_score,
+            p2_score
+        );
+    }
+
+    #[test]
+    fn test_display_with_score() {
+        let bead = QueuedBead {
+            id: "fg-123".to_string(),
+            title: "Test task".to_string(),
+            description: String::new(),
+            status: "open".to_string(),
+            priority: 0,
+            issue_type: "task".to_string(),
+            labels: vec![],
+            dependency_count: 0,
+            dependent_count: 0,
+            created_at: None,
+            is_ready: true,
+            workspace: PathBuf::from("/test"),
+        };
+
+        let display = bead.display_with_score();
+        assert!(display.contains("fg-123"));
+        assert!(display.contains("[P0]"));
+        assert!(display.contains("[Score:"));
+        assert!(display.contains("Test task"));
     }
 }
