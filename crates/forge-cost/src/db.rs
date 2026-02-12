@@ -1851,6 +1851,286 @@ impl CostDatabase {
 
         Ok(stats)
     }
+
+    /// Get 7-day trend data for sparklines.
+    ///
+    /// Returns a vector of daily task counts for the last 7 days,
+    /// suitable for rendering sparkline visualizations.
+    pub fn get_7day_task_trend(&self) -> Result<Vec<i64>> {
+        let conn = self.conn.lock().map_err(|e| {
+            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+
+        let today = Utc::now().date_naive();
+        let start_date = today - chrono::Days::new(6);
+
+        // Fill in missing days with zeros
+        let mut trend = Vec::with_capacity(7);
+        for i in 0..7 {
+            let date = start_date + chrono::Days::new(i);
+            let date_str = date.format("%Y-%m-%d").to_string();
+
+            // Check if we have data for this date
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COALESCE(tasks_completed, 0) FROM daily_stats WHERE date = ?1",
+                    params![date_str],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+
+            trend.push(count);
+        }
+
+        Ok(trend)
+    }
+
+    /// Get 7-day cost trend data for sparklines.
+    pub fn get_7day_cost_trend(&self) -> Result<Vec<f64>> {
+        let conn = self.conn.lock().map_err(|e| {
+            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+
+        let today = Utc::now().date_naive();
+        let start_date = today - chrono::Days::new(6);
+
+        let mut trend = Vec::with_capacity(7);
+        for i in 0..7 {
+            let date = start_date + chrono::Days::new(i);
+            let date_str = date.format("%Y-%m-%d").to_string();
+
+            let cost: f64 = conn
+                .query_row(
+                    "SELECT COALESCE(total_cost_usd, 0.0) FROM daily_stats WHERE date = ?1",
+                    params![date_str],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0.0);
+
+            trend.push(cost);
+        }
+
+        Ok(trend)
+    }
+
+    /// Get tasks per hour for the last 24 hours (for histogram).
+    pub fn get_tasks_per_hour(&self) -> Result<Vec<i64>> {
+        let conn = self.conn.lock().map_err(|e| {
+            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+
+        let cutoff = Utc::now() - chrono::Duration::hours(24);
+
+        let mut result = vec![0i64; 24];
+
+        let mut stmt = conn.prepare(
+            "SELECT hour, tasks_completed
+             FROM hourly_stats
+             WHERE hour >= ?1
+             ORDER BY hour ASC",
+        )?;
+
+        let cutoff_str = cutoff.format("%Y-%m-%dT%H:00:00Z").to_string();
+
+        let rows: Vec<(String, i64)> = stmt
+            .query_map(params![cutoff_str], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        for (hour_str, tasks) in rows {
+            if let Ok(hour_dt) = DateTime::parse_from_rfc3339(&hour_str) {
+                let hour_utc = hour_dt.with_timezone(&Utc);
+                let hours_ago = (Utc::now() - hour_utc).num_hours() as usize;
+                if hours_ago < 24 {
+                    result[23 - hours_ago] = tasks;
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Get model performance aggregated over the last 7 days with extended metrics.
+    pub fn get_model_performance_7day(&self) -> Result<Vec<ModelPerformance>> {
+        let conn = self.conn.lock().map_err(|e| {
+            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+
+        let start_date = Utc::now().date_naive() - chrono::Days::new(6);
+        let start_str = start_date.format("%Y-%m-%d").to_string();
+
+        let mut stmt = conn.prepare(
+            "SELECT model,
+                    SUM(total_calls) as total_calls,
+                    SUM(total_cost_usd) as total_cost,
+                    SUM(total_input_tokens) as input_tokens,
+                    SUM(total_output_tokens) as output_tokens,
+                    SUM(total_cache_creation_tokens) as cache_creation,
+                    SUM(total_cache_read_tokens) as cache_read,
+                    SUM(tasks_completed) as tasks_completed,
+                    SUM(tasks_failed) as tasks_failed
+             FROM model_performance
+             WHERE date >= ?1
+             GROUP BY model
+             ORDER BY total_cost DESC",
+        )?;
+
+        let models: Vec<ModelPerformance> = stmt
+            .query_map(params![start_str], |row| {
+                let model: String = row.get(0)?;
+                let total_calls: i64 = row.get(1)?;
+                let total_cost: f64 = row.get(2)?;
+                let input_tokens: i64 = row.get(3)?;
+                let output_tokens: i64 = row.get(4)?;
+                let cache_creation: i64 = row.get(5)?;
+                let cache_read: i64 = row.get(6)?;
+                let tasks_completed: i64 = row.get(7)?;
+                let tasks_failed: i64 = row.get(8)?;
+
+                let total_tasks = tasks_completed + tasks_failed;
+                let success_rate = if total_tasks == 0 {
+                    1.0
+                } else {
+                    tasks_completed as f64 / total_tasks as f64
+                };
+
+                let avg_cost_per_task = if tasks_completed == 0 {
+                    0.0
+                } else {
+                    total_cost / tasks_completed as f64
+                };
+
+                let total_tokens = input_tokens + output_tokens + cache_creation + cache_read;
+                let avg_tokens_per_call = if total_calls == 0 {
+                    0.0
+                } else {
+                    total_tokens as f64 / total_calls as f64
+                };
+
+                let total_input = input_tokens + cache_read;
+                let cache_hit_rate = if total_input == 0 {
+                    0.0
+                } else {
+                    cache_read as f64 / total_input as f64
+                };
+
+                Ok(ModelPerformance {
+                    model,
+                    date: start_date, // Representing the period start
+                    total_calls,
+                    total_cost_usd: total_cost,
+                    total_input_tokens: input_tokens,
+                    total_output_tokens: output_tokens,
+                    total_cache_creation_tokens: cache_creation,
+                    total_cache_read_tokens: cache_read,
+                    tasks_completed,
+                    tasks_failed,
+                    avg_cost_per_task,
+                    success_rate,
+                    avg_tokens_per_call,
+                    cache_hit_rate,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(models)
+    }
+
+    /// Get worker efficiency aggregated over the last 7 days.
+    pub fn get_worker_efficiency_7day(&self) -> Result<Vec<WorkerEfficiency>> {
+        let conn = self.conn.lock().map_err(|e| {
+            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+
+        let start_date = Utc::now().date_naive() - chrono::Days::new(6);
+        let start_str = start_date.format("%Y-%m-%d").to_string();
+
+        let mut stmt = conn.prepare(
+            "SELECT worker_id,
+                    SUM(total_calls) as total_calls,
+                    SUM(total_cost_usd) as total_cost,
+                    SUM(total_tokens) as total_tokens,
+                    SUM(tasks_completed) as tasks_completed,
+                    SUM(tasks_failed) as tasks_failed,
+                    SUM(active_time_secs) as active_time,
+                    model
+             FROM worker_efficiency
+             WHERE date >= ?1
+             GROUP BY worker_id
+             ORDER BY tasks_completed DESC",
+        )?;
+
+        let workers: Vec<WorkerEfficiency> = stmt
+            .query_map(params![start_str], |row| {
+                let worker_id: String = row.get(0)?;
+                let total_calls: i64 = row.get(1)?;
+                let total_cost: f64 = row.get(2)?;
+                let total_tokens: i64 = row.get(3)?;
+                let tasks_completed: i64 = row.get(4)?;
+                let tasks_failed: i64 = row.get(5)?;
+                let active_time: i64 = row.get(6)?;
+                let model: Option<String> = row.get(7)?;
+
+                let total_tasks = tasks_completed + tasks_failed;
+                let success_rate = if total_tasks == 0 {
+                    1.0
+                } else {
+                    tasks_completed as f64 / total_tasks as f64
+                };
+
+                let avg_cost_per_task = if tasks_completed == 0 {
+                    0.0
+                } else {
+                    total_cost / tasks_completed as f64
+                };
+
+                Ok(WorkerEfficiency {
+                    worker_id,
+                    date: start_date,
+                    total_calls,
+                    total_cost_usd: total_cost,
+                    total_tokens,
+                    tasks_completed,
+                    tasks_failed,
+                    avg_cost_per_task,
+                    success_rate,
+                    model,
+                    active_time_secs: active_time,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(workers)
+    }
+
+    /// Get average cost per task by model.
+    pub fn get_avg_cost_per_task_by_model(&self) -> Result<Vec<(String, f64)>> {
+        let conn = self.conn.lock().map_err(|e| {
+            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+
+        let today = Utc::now().date_naive();
+        let start_date = today - chrono::Days::new(6);
+        let start_str = start_date.format("%Y-%m-%d").to_string();
+
+        let mut stmt = conn.prepare(
+            "SELECT model,
+                    SUM(total_cost_usd) / NULLIF(SUM(tasks_completed), 0) as avg_cost
+             FROM model_performance
+             WHERE date >= ?1 AND tasks_completed > 0
+             GROUP BY model
+             ORDER BY avg_cost DESC",
+        )?;
+
+        let results: Vec<(String, f64)> = stmt
+            .query_map(params![start_str], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(results)
+    }
 }
 
 #[cfg(test)]

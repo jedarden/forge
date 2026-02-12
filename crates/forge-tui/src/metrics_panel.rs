@@ -2,9 +2,11 @@
 //!
 //! This module provides rich performance visualization with:
 //! - Summary statistics (tasks completed, avg duration, success rate)
-//! - Tasks per hour histogram
-//! - Model efficiency comparison table
-//! - Trend sparklines
+//! - Tasks per hour histogram (24-hour bar chart)
+//! - Model efficiency comparison table (5+ metrics)
+//! - Trend sparklines (7-day trend)
+//! - Worker efficiency ranking (sorted by tasks/hour)
+//! - Cost efficiency by priority level
 //! - Color-coded performance indicators
 
 use chrono::{DateTime, Utc};
@@ -38,6 +40,19 @@ pub struct MetricsPanelData {
     pub is_loading: bool,
     /// Error message if any
     pub error: Option<String>,
+    // Enhanced analytics data
+    /// 7-day task completion trend (for sparkline)
+    pub task_trend_7day: Vec<i64>,
+    /// 7-day cost trend (for sparkline)
+    pub cost_trend_7day: Vec<f64>,
+    /// Tasks per hour for last 24 hours (for histogram)
+    pub tasks_per_hour: Vec<i64>,
+    /// Model performance aggregated over 7 days
+    pub model_performance_7day: Vec<ModelPerformance>,
+    /// Worker efficiency aggregated over 7 days
+    pub worker_efficiency_7day: Vec<WorkerEfficiency>,
+    /// Average cost per task by model
+    pub avg_cost_by_model: Vec<(String, f64)>,
 }
 
 impl MetricsPanelData {
@@ -87,6 +102,36 @@ impl MetricsPanelData {
     /// Set real-time metrics from log parsing.
     pub fn set_realtime(&mut self, realtime: RealtimeMetrics) {
         self.realtime = realtime;
+    }
+
+    /// Set 7-day task trend data.
+    pub fn set_task_trend_7day(&mut self, trend: Vec<i64>) {
+        self.task_trend_7day = trend;
+    }
+
+    /// Set 7-day cost trend data.
+    pub fn set_cost_trend_7day(&mut self, trend: Vec<f64>) {
+        self.cost_trend_7day = trend;
+    }
+
+    /// Set tasks per hour data.
+    pub fn set_tasks_per_hour(&mut self, data: Vec<i64>) {
+        self.tasks_per_hour = data;
+    }
+
+    /// Set model performance for 7 days.
+    pub fn set_model_performance_7day(&mut self, models: Vec<ModelPerformance>) {
+        self.model_performance_7day = models;
+    }
+
+    /// Set worker efficiency for 7 days.
+    pub fn set_worker_efficiency_7day(&mut self, workers: Vec<WorkerEfficiency>) {
+        self.worker_efficiency_7day = workers;
+    }
+
+    /// Set average cost by model.
+    pub fn set_avg_cost_by_model(&mut self, data: Vec<(String, f64)>) {
+        self.avg_cost_by_model = data;
     }
 
     /// Get today's completed tasks.
@@ -143,6 +188,11 @@ impl MetricsPanelData {
             || !self.model_performance.is_empty()
             || !self.worker_efficiency.is_empty()
             || self.realtime.has_data()
+            || !self.task_trend_7day.is_empty()
+            || !self.cost_trend_7day.is_empty()
+            || !self.tasks_per_hour.is_empty()
+            || !self.model_performance_7day.is_empty()
+            || !self.worker_efficiency_7day.is_empty()
     }
 }
 
@@ -428,41 +478,46 @@ impl<'a> MetricsPanel<'a> {
         paragraph.render(area, buf);
     }
 
-    /// Render the model efficiency comparison table.
+    /// Render the model efficiency comparison table with 5+ metrics.
     fn render_model_comparison(&self, area: Rect, buf: &mut Buffer) {
-        if self.data.model_performance.is_empty() {
+        // Use 7-day aggregated data if available
+        let models = if !self.data.model_performance_7day.is_empty() {
+            &self.data.model_performance_7day
+        } else {
+            &self.data.model_performance
+        };
+
+        if models.is_empty() {
             let msg = Paragraph::new("No model data").style(Style::default().fg(Color::Gray));
             msg.render(area, buf);
             return;
         }
 
-        // Sort by tasks completed (descending)
-        let mut models = self.data.model_performance.clone();
-        models.sort_by(|a, b| b.tasks_completed.cmp(&a.tasks_completed));
+        // Sort by total cost (descending) to show most expensive models first
+        let mut sorted_models = models.clone();
+        sorted_models.sort_by(|a, b| b.total_cost_usd.partial_cmp(&a.total_cost_usd).unwrap_or(std::cmp::Ordering::Equal));
 
-        let rows: Vec<Row> = models
+        let rows: Vec<Row> = sorted_models
             .iter()
             .take(6)
             .map(|m| {
                 let success_pct = (m.success_rate * 100.0) as i64;
-                let _success_color = if m.success_rate >= 0.9 {
-                    Color::Green
-                } else if m.success_rate >= 0.7 {
-                    Color::Yellow
-                } else {
-                    Color::Red
-                };
+
+                // Format cache hit rate
+                let cache_pct = (m.cache_hit_rate * 100.0) as i64;
 
                 Row::new(vec![
-                    truncate_model_name(&m.model, 12),
+                    truncate_model_name(&m.model, 10),
+                    format!("{}", m.total_calls),
                     format!("{}", m.tasks_completed),
                     format!("{:.0}%", success_pct),
                     format_usd(m.avg_cost_per_task),
+                    format!("{:.0}%", cache_pct),
                 ])
             })
             .collect();
 
-        let header = Row::new(vec!["Model", "Done", "Success", "Avg Cost"])
+        let header = Row::new(vec!["Model", "Calls", "Done", "Success", "Cost/T", "Cache"])
             .style(
                 Style::default()
                     .fg(Color::Gray)
@@ -471,10 +526,12 @@ impl<'a> MetricsPanel<'a> {
             .bottom_margin(0);
 
         let widths = [
-            Constraint::Length(12),
+            Constraint::Length(10),
+            Constraint::Length(5),
+            Constraint::Length(4),
             Constraint::Length(6),
             Constraint::Length(7),
-            Constraint::Length(8),
+            Constraint::Length(5),
         ];
 
         let table = Table::new(rows, widths).header(header).column_spacing(1);
@@ -520,6 +577,178 @@ impl<'a> MetricsPanel<'a> {
         let paragraph = Paragraph::new(lines);
         paragraph.render(area, buf);
     }
+
+    /// Render the 7-day trend sparkline.
+    fn render_7day_trend(&self, area: Rect, buf: &mut Buffer) {
+        // Use the new 7-day trend data if available, otherwise fall back to hourly
+        let values = if !self.data.task_trend_7day.is_empty() {
+            self.data.task_trend_7day.clone()
+        } else {
+            self.data
+                .hourly_stats
+                .iter()
+                .map(|h| h.tasks_completed)
+                .collect()
+        };
+
+        if values.is_empty() {
+            let msg = Paragraph::new("No 7-day trend data").style(Style::default().fg(Color::Gray));
+            msg.render(area, buf);
+            return;
+        }
+
+        let sparkline = render_sparkline(&values, area.width.saturating_sub(14) as usize);
+
+        let total: i64 = values.iter().sum();
+        let avg = if !values.is_empty() {
+            total as f64 / values.len() as f64
+        } else {
+            0.0
+        };
+
+        let mut lines = Vec::new();
+        lines.push(Line::from(vec![
+            Span::styled("7-Day Trend", Style::default().fg(Color::Cyan)),
+            Span::raw("  "),
+            Span::styled(
+                format!("Total: {}", total),
+                Style::default().fg(Color::White),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                format!("Avg: {:.1}/day", avg),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+        lines.push(Line::from(Span::styled(
+            sparkline,
+            Style::default().fg(Color::Green),
+        )));
+
+        let paragraph = Paragraph::new(lines);
+        paragraph.render(area, buf);
+    }
+
+    /// Render the worker efficiency ranking.
+    fn render_worker_efficiency(&self, area: Rect, buf: &mut Buffer) {
+        let workers = if !self.data.worker_efficiency_7day.is_empty() {
+            &self.data.worker_efficiency_7day
+        } else {
+            &self.data.worker_efficiency
+        };
+
+        if workers.is_empty() {
+            let msg = Paragraph::new("No worker data").style(Style::default().fg(Color::Gray));
+            msg.render(area, buf);
+            return;
+        }
+
+        // Sort by tasks completed (descending)
+        let mut sorted_workers = workers.clone();
+        sorted_workers.sort_by(|a, b| b.tasks_completed.cmp(&a.tasks_completed));
+
+        let mut lines = Vec::new();
+        lines.push(Line::from(vec![
+            Span::styled(
+                "Worker Efficiency",
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" (7-day)"),
+        ]));
+        lines.push(Line::from(""));
+
+        // Show top 6 workers
+        for worker in sorted_workers.iter().take(6) {
+            let success_color = if worker.success_rate >= 0.9 {
+                Color::Green
+            } else if worker.success_rate >= 0.7 {
+                Color::Yellow
+            } else {
+                Color::Red
+            };
+
+            // Calculate tasks per day (7-day period)
+            let tasks_per_day = worker.tasks_completed as f64 / 7.0;
+
+            let worker_name = if worker.worker_id.len() > 18 {
+                format!("{}…", &worker.worker_id[..15])
+            } else {
+                worker.worker_id.clone()
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{:<18}", worker_name),
+                    Style::default().fg(Color::White),
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    format!("{:>3}", worker.tasks_completed),
+                    Style::default().fg(Color::Green),
+                ),
+                Span::raw(" tasks  "),
+                Span::styled(
+                    format!("{:>4.1}/d", tasks_per_day),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    format!("{:>5.1}%", worker.success_rate * 100.0),
+                    Style::default().fg(success_color),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    format_usd(worker.avg_cost_per_task),
+                    Style::default().fg(Color::Magenta),
+                ),
+            ]));
+        }
+
+        let paragraph = Paragraph::new(lines);
+        paragraph.render(area, buf);
+    }
+
+    /// Render compact worker efficiency for narrow layout.
+    fn render_worker_efficiency_compact(&self, area: Rect, buf: &mut Buffer) {
+        let workers = if !self.data.worker_efficiency_7day.is_empty() {
+            &self.data.worker_efficiency_7day
+        } else {
+            &self.data.worker_efficiency
+        };
+
+        if workers.is_empty() {
+            let msg = Paragraph::new("No worker data").style(Style::default().fg(Color::Gray));
+            msg.render(area, buf);
+            return;
+        }
+
+        let mut sorted_workers = workers.clone();
+        sorted_workers.sort_by(|a, b| b.tasks_completed.cmp(&a.tasks_completed));
+
+        // Create a single line summary
+        let top3: Vec<String> = sorted_workers
+            .iter()
+            .take(3)
+            .map(|w| {
+                let name = if w.worker_id.len() > 10 {
+                    &w.worker_id[..10]
+                } else {
+                    &w.worker_id
+                };
+                format!("{}:{}", name, w.tasks_completed)
+            })
+            .collect();
+
+        let summary = format!("Top Workers: {}", top3.join(" | "));
+
+        let line = Line::from(vec![
+            Span::styled("⚡ ", Style::default().fg(Color::Yellow)),
+            Span::styled(summary, Style::default().fg(Color::White)),
+        ]);
+
+        let paragraph = Paragraph::new(line);
+        paragraph.render(area, buf);
+    }
 }
 
 impl Widget for MetricsPanel<'_> {
@@ -542,7 +771,7 @@ impl Widget for MetricsPanel<'_> {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(border_style)
-            .title(Span::styled(" Performance Metrics ", title_style));
+            .title(Span::styled(" Performance Analytics ", title_style));
 
         let inner = block.inner(area);
         block.render(area, buf);
@@ -575,21 +804,71 @@ impl Widget for MetricsPanel<'_> {
             return;
         }
 
-        // Layout: Summary | Histogram | Model Comparison | Trend
+        // Determine layout based on available height
+        // For wider displays, use a 2-column layout
+        let is_wide = area.width >= 160;
+
+        if is_wide {
+            self.render_wide_layout(inner, buf);
+        } else {
+            self.render_narrow_layout(inner, buf);
+        }
+    }
+}
+
+impl MetricsPanel<'_> {
+    /// Render wide layout (2 columns) for screens >= 160 columns
+    fn render_wide_layout(&self, area: Rect, buf: &mut Buffer) {
+        // Split into left and right columns
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
+
+        // Left column: Summary + Histogram + 7-day Trend
+        let left_layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(4),  // Summary
+                Constraint::Min(10),    // Histogram (24h)
+                Constraint::Length(4),  // 7-day Trend
+            ])
+            .split(columns[0]);
+
+        // Right column: Model Comparison + Worker Efficiency
+        let right_layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(8),  // Model comparison
+                Constraint::Min(6),  // Worker efficiency
+            ])
+            .split(columns[1]);
+
+        self.render_summary(left_layout[0], buf);
+        self.render_histogram(left_layout[1], buf);
+        self.render_7day_trend(left_layout[2], buf);
+        self.render_model_comparison(right_layout[0], buf);
+        self.render_worker_efficiency(right_layout[1], buf);
+    }
+
+    /// Render narrow layout (single column) for screens < 160 columns
+    fn render_narrow_layout(&self, area: Rect, buf: &mut Buffer) {
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3), // Summary
-                Constraint::Min(8),    // Histogram
-                Constraint::Min(6),    // Model comparison
-                Constraint::Length(3), // Trend
+                Constraint::Min(6),    // Histogram
+                Constraint::Min(5),    // Model comparison
+                Constraint::Length(4), // 7-day Trend
+                Constraint::Min(4),    // Worker efficiency
             ])
-            .split(inner);
+            .split(area);
 
         self.render_summary(layout[0], buf);
         self.render_histogram(layout[1], buf);
         self.render_model_comparison(layout[2], buf);
         self.render_trend(layout[3], buf);
+        self.render_worker_efficiency(layout[4], buf);
     }
 }
 
@@ -680,7 +959,6 @@ impl Widget for MetricsSummaryCompact<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::NaiveDate;
 
     #[test]
     fn test_render_sparkline() {
