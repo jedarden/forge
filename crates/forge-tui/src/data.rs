@@ -477,8 +477,8 @@ fn truncate_string(s: &str, max_len: usize) -> String {
 /// Interval for tmux discovery polling (5 seconds).
 const TMUX_DISCOVERY_INTERVAL_SECS: u64 = 5;
 
-/// Interval for cost data polling (30 seconds).
-const COST_POLL_INTERVAL_SECS: u64 = 30;
+/// Interval for cost data polling (10 seconds).
+const COST_POLL_INTERVAL_SECS: u64 = 10;
 
 /// Interval for metrics data polling (10 seconds).
 const METRICS_POLL_INTERVAL_SECS: u64 = 10;
