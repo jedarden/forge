@@ -3236,8 +3236,8 @@ mod tests {
         app.switch_view(View::Tasks);
 
         // Test all priority levels 0-4
-        for p in 0..=4 {
-            let key = KeyEvent::new(KeyCode::Char(char::from_digit(p, 10).unwrap()), KeyModifiers::NONE);
+        for p in 0u8..=4 {
+            let key = KeyEvent::new(KeyCode::Char(char::from_digit(p as u32, 10).unwrap()), KeyModifiers::NONE);
             app.handle_key_event(key);
             assert_eq!(app.priority_filter, Some(p), "Priority filter should be P{}", p);
         }
