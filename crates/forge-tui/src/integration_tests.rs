@@ -4325,4 +4325,742 @@ mod tests {
             );
         }
     }
+
+    // ============================================================
+    // Integration Test 32: Real-Time Worker Status Update Tests (fg-56p)
+    // ============================================================
+    //
+    // These tests verify that worker status updates propagate in real-time
+    // with minimal latency (< 2 seconds) and that all status transitions
+    // are visible to the user.
+
+    /// Test that status updates are detected within 2 seconds of file modification.
+    ///
+    /// Success Criteria: Status updates within 1-2 seconds
+    #[test]
+    fn test_realtime_status_update_latency() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        // Create watcher with default debounce (50ms)
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(50);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Create a worker file and measure time to detection
+        let start = std::time::Instant::now();
+        let worker_json = r#"{"worker_id": "latency-test", "status": "starting"}"#;
+        fs::write(status_dir.join("latency-test.json"), worker_json).unwrap();
+
+        // Wait for the event with 2-second timeout
+        let event = watcher.recv_timeout(Duration::from_secs(2));
+        let elapsed = start.elapsed();
+
+        // Verify event was received within 2 seconds
+        assert!(
+            event.is_some(),
+            "Status update should be detected within 2 seconds"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "Status update latency should be < 2s, was {:?}",
+            elapsed
+        );
+
+        // Verify the event content
+        match event {
+            Some(StatusEvent::WorkerUpdated { worker_id, status }) => {
+                assert_eq!(worker_id, "latency-test");
+                assert_eq!(status.status, WorkerStatus::Starting);
+            }
+            Some(StatusEvent::InitialScanComplete { .. }) => {
+                // Initial scan might have picked it up - still valid
+            }
+            other => panic!("Unexpected event: {:?}", other),
+        }
+    }
+
+    /// Test that 'starting' status is visible immediately after worker spawn.
+    ///
+    /// Success Criteria: 'starting' status visible within 500ms
+    #[test]
+    fn test_realtime_starting_status_immediate() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(50);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Simulate worker spawn - create file with 'starting' status
+        let start = std::time::Instant::now();
+        let spawn_json = r#"{
+            "worker_id": "spawned-worker",
+            "status": "starting",
+            "model": "sonnet",
+            "workspace": "/project",
+            "started_at": "2026-02-12T10:00:00Z"
+        }"#;
+        fs::write(status_dir.join("spawned-worker.json"), spawn_json).unwrap();
+
+        // Drain events until we see the worker
+        let mut found_starting = false;
+        let max_wait = Duration::from_millis(500);
+        while start.elapsed() < max_wait {
+            if let Some(event) = watcher.recv_timeout(Duration::from_millis(50)) {
+                if let StatusEvent::WorkerUpdated { ref status, .. } = event {
+                    if status.status == WorkerStatus::Starting {
+                        found_starting = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        assert!(
+            found_starting,
+            "'starting' status should be visible within 500ms of spawn"
+        );
+        assert!(
+            start.elapsed() < Duration::from_millis(500),
+            "Starting status latency was {:?}, should be < 500ms",
+            start.elapsed()
+        );
+
+        // Verify the worker is tracked with starting status
+        let worker = watcher.get_worker("spawned-worker");
+        assert!(
+            worker.is_some(),
+            "Spawned worker should be tracked immediately"
+        );
+        assert_eq!(
+            worker.unwrap().status,
+            WorkerStatus::Starting,
+            "Worker should be in 'starting' status immediately after spawn"
+        );
+    }
+
+    /// Test that all status transitions are visible in sequence.
+    ///
+    /// Success Criteria: All transitions visible, no stale data
+    #[test]
+    fn test_realtime_all_status_transitions_visible() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(20);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        let worker_path = status_dir.join("transition-worker.json");
+
+        // Define the sequence of transitions
+        let transitions: [(&str, WorkerStatus); 4] = [
+            ("starting", WorkerStatus::Starting),
+            ("active", WorkerStatus::Active),
+            ("idle", WorkerStatus::Idle),
+            ("stopped", WorkerStatus::Stopped),
+        ];
+
+        let mut observed_statuses: Vec<WorkerStatus> = Vec::new();
+
+        for (status_str, expected_status) in transitions {
+            let json = format!(
+                r#"{{"worker_id": "transition-worker", "status": "{}"}}"#,
+                status_str
+            );
+            fs::write(&worker_path, &json).unwrap();
+
+            // Wait for the update to propagate
+            let start = std::time::Instant::now();
+            while start.elapsed() < Duration::from_millis(200) {
+                if let Some(event) = watcher.recv_timeout(Duration::from_millis(50)) {
+                    if let StatusEvent::WorkerUpdated { ref status, .. } = event {
+                        if status.worker_id == "transition-worker" {
+                            observed_statuses.push(status.status);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Also verify internal state
+            if let Some(worker) = watcher.get_worker("transition-worker") {
+                assert_eq!(
+                    worker.status, expected_status,
+                    "Internal state should reflect transition to {:?}",
+                    expected_status
+                );
+            }
+        }
+
+        // Verify we observed all transitions (may have duplicates due to multiple events)
+        assert!(
+            observed_statuses.contains(&WorkerStatus::Starting),
+            "Should have observed 'starting' status"
+        );
+        assert!(
+            observed_statuses.contains(&WorkerStatus::Active),
+            "Should have observed 'active' status"
+        );
+        assert!(
+            observed_statuses.contains(&WorkerStatus::Idle),
+            "Should have observed 'idle' status"
+        );
+        assert!(
+            observed_statuses.contains(&WorkerStatus::Stopped),
+            "Should have observed 'stopped' status"
+        );
+
+        // Final state should match last written status
+        let final_worker = watcher.get_worker("transition-worker").unwrap();
+        assert_eq!(
+            final_worker.status,
+            WorkerStatus::Stopped,
+            "Final status should be 'stopped'"
+        );
+    }
+
+    /// Test that current_task field updates in real-time when worker picks up a task.
+    ///
+    /// Success Criteria: current_task field updates within 1 second
+    #[test]
+    fn test_realtime_current_task_updates() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(20);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Consume initial scan (empty)
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Create idle worker with no task
+        let idle_json = r#"{
+            "worker_id": "task-worker",
+            "status": "idle",
+            "current_task": null
+        }"#;
+        let worker_path = status_dir.join("task-worker.json");
+        fs::write(&worker_path, idle_json).unwrap();
+
+        // Wait for file creation to be processed
+        let start = std::time::Instant::now();
+        while start.elapsed() < Duration::from_secs(1) {
+            if let Some(event) = watcher.recv_timeout(Duration::from_millis(50)) {
+                if let StatusEvent::WorkerUpdated { ref worker_id, .. } = event {
+                    if worker_id == "task-worker" {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Verify initial state
+        let worker = watcher.get_worker("task-worker")
+            .expect("Worker should be tracked after creation");
+        assert_eq!(worker.current_task, None, "Worker should have no task initially");
+
+        // Worker picks up a task
+        let start = std::time::Instant::now();
+        let active_json = r#"{
+            "worker_id": "task-worker",
+            "status": "active",
+            "current_task": "fg-123"
+        }"#;
+        fs::write(&worker_path, active_json).unwrap();
+
+        // Wait for update
+        let mut task_updated = false;
+        while start.elapsed() < Duration::from_secs(1) {
+            if let Some(event) = watcher.recv_timeout(Duration::from_millis(50)) {
+                if let StatusEvent::WorkerUpdated { ref status, .. } = event {
+                    if status.worker_id == "task-worker"
+                        && status.current_task == Some("fg-123".to_string())
+                    {
+                        task_updated = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        assert!(
+            task_updated,
+            "current_task should update within 1 second"
+        );
+
+        // Verify internal state
+        let worker = watcher.get_worker("task-worker").unwrap();
+        assert_eq!(
+            worker.current_task,
+            Some("fg-123".to_string()),
+            "Worker should have current_task set"
+        );
+        assert_eq!(
+            worker.status,
+            WorkerStatus::Active,
+            "Worker should be active after picking up task"
+        );
+    }
+
+    /// Test that tasks_completed increments in real-time.
+    ///
+    /// Success Criteria: tasks_completed field updates within 1 second
+    #[test]
+    fn test_realtime_tasks_completed_increments() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(20);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Create worker with 0 tasks completed
+        let initial_json = r#"{
+            "worker_id": "productive-worker",
+            "status": "active",
+            "tasks_completed": 0,
+            "current_task": "task-1"
+        }"#;
+        let worker_path = status_dir.join("productive-worker.json");
+        fs::write(&worker_path, initial_json).unwrap();
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Verify initial state
+        let worker = watcher.get_worker("productive-worker").unwrap();
+        assert_eq!(worker.tasks_completed, 0, "Should start with 0 tasks completed");
+
+        // Simulate task completion
+        let start = std::time::Instant::now();
+        let completed_json = r#"{
+            "worker_id": "productive-worker",
+            "status": "idle",
+            "tasks_completed": 1,
+            "current_task": null
+        }"#;
+        fs::write(&worker_path, completed_json).unwrap();
+
+        // Wait for update
+        let mut count_updated = false;
+        while start.elapsed() < Duration::from_secs(1) {
+            if let Some(event) = watcher.recv_timeout(Duration::from_millis(50)) {
+                if let StatusEvent::WorkerUpdated { ref status, .. } = event {
+                    if status.worker_id == "productive-worker" && status.tasks_completed == 1 {
+                        count_updated = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        assert!(
+            count_updated,
+            "tasks_completed should increment within 1 second"
+        );
+
+        // Verify internal state
+        let worker = watcher.get_worker("productive-worker").unwrap();
+        assert_eq!(
+            worker.tasks_completed, 1,
+            "Worker should have 1 task completed"
+        );
+    }
+
+    /// Test that external worker kill (file deletion) shows stopped/failed status.
+    ///
+    /// Simulates what happens when a worker is killed via `tmux kill-session`.
+    /// The worker process terminates and the status file is either deleted
+    /// or updated to show stopped/failed status.
+    ///
+    /// Success Criteria: Status shows 'stopped' or worker is removed within 2 seconds
+    #[test]
+    fn test_realtime_external_worker_kill_file_deletion() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(20);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Create an active worker
+        let active_json = r#"{
+            "worker_id": "doomed-worker",
+            "status": "active",
+            "current_task": "unfinished-task"
+        }"#;
+        let worker_path = status_dir.join("doomed-worker.json");
+        fs::write(&worker_path, active_json).unwrap();
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Verify worker exists
+        assert!(
+            watcher.get_worker("doomed-worker").is_some(),
+            "Worker should be tracked before kill"
+        );
+
+        // Simulate external kill - delete the status file
+        // (In real scenario, worker process dies and can't update its status)
+        let start = std::time::Instant::now();
+        fs::remove_file(&worker_path).unwrap();
+
+        // Wait for the removal event
+        let mut worker_removed = false;
+        while start.elapsed() < Duration::from_secs(2) {
+            if let Some(event) = watcher.recv_timeout(Duration::from_millis(50)) {
+                if let StatusEvent::WorkerRemoved { ref worker_id } = event {
+                    if worker_id == "doomed-worker" {
+                        worker_removed = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        assert!(
+            worker_removed,
+            "Worker should be removed within 2 seconds of status file deletion"
+        );
+
+        // Verify worker is no longer tracked
+        assert!(
+            watcher.get_worker("doomed-worker").is_none(),
+            "Killed worker should no longer be tracked"
+        );
+    }
+
+    /// Test that external worker kill with status update shows 'stopped' or 'failed'.
+    ///
+    /// Alternative scenario: Worker has time to update its status to 'stopped'
+    /// before terminating (graceful shutdown).
+    #[test]
+    fn test_realtime_external_worker_kill_graceful_shutdown() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(20);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Create an active worker
+        let active_json = r#"{
+            "worker_id": "graceful-worker",
+            "status": "active",
+            "current_task": "wrapping-up"
+        }"#;
+        let worker_path = status_dir.join("graceful-worker.json");
+        fs::write(&worker_path, active_json).unwrap();
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Simulate graceful shutdown - worker updates status to 'stopped'
+        let start = std::time::Instant::now();
+        let stopped_json = r#"{
+            "worker_id": "graceful-worker",
+            "status": "stopped"
+        }"#;
+        fs::write(&worker_path, stopped_json).unwrap();
+
+        // Wait for the update
+        let mut status_updated = false;
+        while start.elapsed() < Duration::from_secs(2) {
+            if let Some(event) = watcher.recv_timeout(Duration::from_millis(50)) {
+                if let StatusEvent::WorkerUpdated { ref status, .. } = event {
+                    if status.worker_id == "graceful-worker"
+                        && (status.status == WorkerStatus::Stopped
+                            || status.status == WorkerStatus::Failed)
+                    {
+                        status_updated = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        assert!(
+            status_updated,
+            "Worker status should show 'stopped' or 'failed' within 2 seconds of graceful shutdown"
+        );
+
+        // Verify internal state
+        let worker = watcher.get_worker("graceful-worker").unwrap();
+        assert!(
+            matches!(worker.status, WorkerStatus::Stopped | WorkerStatus::Failed),
+            "Worker should be in 'stopped' or 'failed' status, got {:?}",
+            worker.status
+        );
+        assert!(
+            !worker.is_healthy(),
+            "Stopped/failed worker should not be healthy"
+        );
+    }
+
+    /// Test no stale data is displayed after rapid status changes.
+    ///
+    /// Success Criteria: Final state is correctly reflected, no intermediate stale data
+    #[test]
+    fn test_realtime_no_stale_data_after_rapid_changes() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(20);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        let worker_path = status_dir.join("rapid-worker.json");
+
+        // Rapidly change status multiple times
+        let statuses = ["starting", "active", "idle", "active", "failed", "stopped"];
+        let mut last_json = String::new();
+
+        for status in &statuses {
+            last_json = format!(
+                r#"{{"worker_id": "rapid-worker", "status": "{}", "tasks_completed": 0}}"#,
+                status
+            );
+            fs::write(&worker_path, &last_json).unwrap();
+            thread::sleep(Duration::from_millis(30)); // Rapid but not instant
+        }
+
+        // Wait for all events to be processed
+        thread::sleep(Duration::from_millis(200));
+        while watcher.recv_timeout(Duration::from_millis(50)).is_some() {}
+
+        // Verify final state is 'stopped' (the last written status)
+        let worker = watcher.get_worker("rapid-worker");
+        assert!(
+            worker.is_some(),
+            "Worker should still be tracked after rapid changes"
+        );
+        let worker = worker.unwrap();
+        assert_eq!(
+            worker.status,
+            WorkerStatus::Stopped,
+            "Final status should be 'stopped', not stale data"
+        );
+        assert!(
+            !worker.is_healthy(),
+            "Stopped worker should not be healthy"
+        );
+    }
+
+    /// Test that status watcher handles concurrent worker spawns gracefully.
+    ///
+    /// Success Criteria: All workers tracked correctly, no missing or duplicate events
+    #[test]
+    fn test_realtime_concurrent_worker_spawns() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(20);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        // Spawn multiple workers concurrently (simulating rapid S key presses)
+        let worker_count = 5;
+        let start = std::time::Instant::now();
+
+        for i in 0..worker_count {
+            let json = format!(
+                r#"{{"worker_id": "concurrent-{}", "status": "starting"}}"#,
+                i
+            );
+            fs::write(status_dir.join(format!("concurrent-{}.json", i)), json).unwrap();
+        }
+
+        // Wait for all workers to be detected
+        let mut detected_count = 0;
+        while start.elapsed() < Duration::from_secs(2) && detected_count < worker_count {
+            if let Some(event) = watcher.recv_timeout(Duration::from_millis(50)) {
+                if let StatusEvent::WorkerUpdated { ref worker_id, .. } = event {
+                    if worker_id.starts_with("concurrent-") {
+                        detected_count += 1;
+                    }
+                }
+            }
+        }
+
+        // Drain remaining events
+        while watcher.recv_timeout(Duration::from_millis(20)).is_some() {}
+
+        // Verify all workers are tracked
+        assert_eq!(
+            detected_count, worker_count,
+            "All {} workers should be detected within 2 seconds, got {}",
+            worker_count, detected_count
+        );
+
+        // Verify internal state has all workers
+        for i in 0..worker_count {
+            let worker_id = format!("concurrent-{}", i);
+            assert!(
+                watcher.get_worker(&worker_id).is_some(),
+                "Worker {} should be tracked",
+                worker_id
+            );
+        }
+
+        let counts = watcher.worker_counts();
+        assert_eq!(counts.total, worker_count);
+        assert_eq!(counts.starting, worker_count);
+    }
+
+    /// Test that the watcher correctly handles worker status transitions
+    /// with current_task as both string and object formats.
+    #[test]
+    fn test_realtime_current_task_format_variations() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        let config = StatusWatcherConfig::default()
+            .with_status_dir(&status_dir)
+            .with_debounce_ms(20);
+        let mut watcher = StatusWatcher::new(config).unwrap();
+
+        // Consume initial scan
+        let _ = watcher.recv_timeout(Duration::from_millis(100));
+
+        let worker_path = status_dir.join("format-worker.json");
+
+        // Test string format
+        let string_format = r#"{
+            "worker_id": "format-worker",
+            "status": "active",
+            "current_task": "bd-string"
+        }"#;
+        fs::write(&worker_path, string_format).unwrap();
+        thread::sleep(Duration::from_millis(100));
+        while watcher.recv_timeout(Duration::from_millis(20)).is_some() {}
+
+        let worker = watcher.get_worker("format-worker").unwrap();
+        assert_eq!(
+            worker.current_task,
+            Some("bd-string".to_string()),
+            "String format current_task should work"
+        );
+
+        // Test object format
+        let object_format = r#"{
+            "worker_id": "format-worker",
+            "status": "active",
+            "current_task": {"bead_id": "bd-object", "priority": 1}
+        }"#;
+        fs::write(&worker_path, object_format).unwrap();
+        thread::sleep(Duration::from_millis(100));
+        while watcher.recv_timeout(Duration::from_millis(20)).is_some() {}
+
+        let worker = watcher.get_worker("format-worker").unwrap();
+        assert_eq!(
+            worker.current_task,
+            Some("bd-object".to_string()),
+            "Object format current_task should extract bead_id"
+        );
+
+        // Test null format
+        let null_format = r#"{
+            "worker_id": "format-worker",
+            "status": "idle",
+            "current_task": null
+        }"#;
+        fs::write(&worker_path, null_format).unwrap();
+        thread::sleep(Duration::from_millis(100));
+        while watcher.recv_timeout(Duration::from_millis(20)).is_some() {}
+
+        let worker = watcher.get_worker("format-worker").unwrap();
+        assert_eq!(
+            worker.current_task, None,
+            "Null current_task should be None"
+        );
+    }
+
+    /// Test that the UI correctly reflects worker status changes.
+    #[test]
+    fn test_realtime_ui_reflects_status_changes() {
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().join("status");
+        fs::create_dir_all(&status_dir).unwrap();
+
+        // Create a worker
+        let worker_json = r#"{
+            "worker_id": "ui-test-worker",
+            "status": "starting",
+            "model": "sonnet"
+        }"#;
+        fs::write(status_dir.join("ui-test-worker.json"), worker_json).unwrap();
+
+        // Create app with custom status dir
+        let mut app = App::with_status_dir(status_dir.clone());
+
+        // Render and verify worker appears
+        app.switch_view(View::Workers);
+        let buffer = render_app(&mut app, 120, 40);
+        let content = buffer_to_string(&buffer);
+
+        // The UI should show worker-related content
+        assert!(
+            content.contains("Worker") || content.contains("Pool"),
+            "Workers view should display worker pool"
+        );
+
+        // Update worker status
+        let active_json = r#"{
+            "worker_id": "ui-test-worker",
+            "status": "active",
+            "model": "sonnet",
+            "current_task": "fg-56p"
+        }"#;
+        fs::write(status_dir.join("ui-test-worker.json"), active_json).unwrap();
+
+        // Give time for update
+        thread::sleep(Duration::from_millis(100));
+
+        // Re-render
+        let buffer = render_app(&mut app, 120, 40);
+
+        // App should still render without error after status change
+        assert!(
+            buffer_contains(&buffer, "Worker"),
+            "UI should still render after status change"
+        );
+    }
 }
