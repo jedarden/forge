@@ -32,5 +32,15 @@ tokio.workspace = true
 notify.workspace = true
 notify-debouncer-full.workspace = true
 
+# HTTP client (for self-update)
+reqwest = { workspace = true, optional = true }
+
+# Async utilities (for streaming downloads)
+futures-util = { workspace = true, optional = true }
+
+[features]
+default = ["self-update"]
+self-update = ["reqwest", "futures-util"]
+
 [dev-dependencies]
 tempfile.workspace = true

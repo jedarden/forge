@@ -124,6 +124,8 @@ pub struct App {
     update_available: bool,
     /// Whether an update is currently in progress
     update_in_progress: bool,
+    /// Update progress information for display
+    update_progress: UpdateProgress,
     /// Channel receiver for update completion results
     update_result_rx: Option<Receiver<UpdateResult>>,
     /// Last time we checked for updates
@@ -166,10 +168,28 @@ pub struct ChatExchange {
 /// Result of an update operation.
 #[derive(Clone, Debug)]
 pub enum UpdateResult {
-    /// Update completed successfully
-    Success,
+    /// Update completed successfully with version info
+    Success {
+        /// Previous version
+        old_version: String,
+        /// New version
+        new_version: String,
+    },
     /// Update failed with an error message
     Failed(String),
+    /// Already up to date
+    AlreadyUpToDate,
+}
+
+/// Progress information for update downloads.
+#[derive(Clone, Debug, Default)]
+pub struct UpdateProgress {
+    /// Current status message
+    pub status: String,
+    /// Download progress percentage (0-100)
+    pub percent: u8,
+    /// Whether the update is in progress
+    pub in_progress: bool,
 }
 
 impl Default for App {
@@ -236,6 +256,7 @@ impl App {
             last_terminal_width: 0,
             update_available: false,
             update_in_progress: false,
+            update_progress: UpdateProgress::default(),
             update_result_rx: None,
             last_update_check: now,
             chat_backend,
@@ -278,6 +299,7 @@ impl App {
             last_terminal_width: 0,
             update_available: false,
             update_in_progress: false,
+            update_progress: UpdateProgress::default(),
             update_result_rx: None,
             last_update_check: now,
             chat_backend: None, // Don't initialize in test mode
@@ -1133,13 +1155,16 @@ impl App {
         }
     }
 
-    /// Trigger forge update/rebuild and restart (non-blocking).
+    /// Trigger forge self-update from GitHub releases (non-blocking).
     ///
-    /// Spawns the build process in a background thread and shows immediate
-    /// visual feedback via the update_in_progress overlay.
+    /// Spawns an async task to:
+    /// 1. Check GitHub releases for latest version
+    /// 2. Download the new binary if update available
+    /// 3. Perform atomic swap
+    ///
+    /// Shows immediate visual feedback via the update_progress overlay.
+    #[cfg(feature = "self-update")]
     fn trigger_update(&mut self) {
-        use std::env;
-        use std::process::Command;
         use std::thread;
 
         // Prevent multiple concurrent updates
@@ -1151,63 +1176,122 @@ impl App {
 
         // Show immediate visual feedback
         self.update_in_progress = true;
-        self.status_message = Some("Building forge... (this may take a moment)".to_string());
+        self.update_progress = UpdateProgress {
+            status: "Checking for updates...".to_string(),
+            percent: 0,
+            in_progress: true,
+        };
         self.mark_dirty();
 
-        // Get the forge source directory
-        let forge_src = env::var("FORGE_SRC").unwrap_or_else(|_| "/home/coder/forge".to_string());
+        // Get current version
+        let current_version = env!("CARGO_PKG_VERSION").to_string();
 
         // Create channel for receiving result
-        let (tx, rx) = mpsc::channel();
-        self.update_result_rx = Some(rx);
+        let (tx_result, rx_result) = mpsc::channel();
+        self.update_result_rx = Some(rx_result);
 
-        // Spawn background thread to run the build
+        // Spawn background thread with tokio runtime for async operations
         thread::spawn(move || {
-            let result = match Command::new("sh")
-                .arg("-c")
-                .arg(format!(
-                    "cd {} && cargo build --release 2>&1 | tail -5 && cp target/release/forge ~/.cargo/bin/forge",
-                    forge_src
-                ))
-                .output()
+            // Create a tokio runtime for this thread
+            let rt = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
             {
-                Ok(output) => {
-                    if output.status.success() {
-                        UpdateResult::Success
-                    } else {
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        let error_msg = if !stderr.is_empty() {
-                            stderr.lines().last().unwrap_or("Build failed").to_string()
-                        } else if !stdout.is_empty() {
-                            stdout.lines().last().unwrap_or("Build failed").to_string()
-                        } else {
-                            "Build failed with unknown error".to_string()
-                        };
-                        UpdateResult::Failed(error_msg)
-                    }
+                Ok(rt) => rt,
+                Err(e) => {
+                    let _ = tx_result.send(UpdateResult::Failed(format!(
+                        "Failed to create runtime: {}",
+                        e
+                    )));
+                    return;
                 }
-                Err(e) => UpdateResult::Failed(format!("Failed to start build: {}", e)),
             };
 
-            // Send result back to main thread (ignore error if receiver dropped)
-            let _ = tx.send(result);
+            rt.block_on(async {
+                use forge_core::self_update::{check_for_update, perform_update, UpdateStatus};
+
+                // Check for updates
+                let status = match check_for_update(&current_version).await {
+                    Ok(status) => status,
+                    Err(e) => {
+                        let _ = tx_result.send(UpdateResult::Failed(format!(
+                            "Failed to check for updates: {}",
+                            e
+                        )));
+                        return;
+                    }
+                };
+
+                match status {
+                    UpdateStatus::UpToDate => {
+                        let _ = tx_result.send(UpdateResult::AlreadyUpToDate);
+                    }
+                    UpdateStatus::Available {
+                        current: _,
+                        latest: _,
+                        download_url,
+                        asset_size,
+                    } => {
+                        // Perform the update without progress callback (download is typically fast)
+                        let result = perform_update(&download_url, asset_size, None).await;
+
+                        match result {
+                            Ok(forge_core::self_update::UpdateResult::Success { old_version, new_version }) => {
+                                let _ = tx_result.send(UpdateResult::Success {
+                                    old_version,
+                                    new_version,  // Use the version from the result
+                                });
+                            }
+                            Ok(forge_core::self_update::UpdateResult::AlreadyUpToDate) => {
+                                let _ = tx_result.send(UpdateResult::AlreadyUpToDate);
+                            }
+                            Ok(forge_core::self_update::UpdateResult::Failed(err)) => {
+                                let _ = tx_result.send(UpdateResult::Failed(err));
+                            }
+                            Err(e) => {
+                                let _ = tx_result.send(UpdateResult::Failed(format!(
+                                    "Update failed: {}",
+                                    e
+                                )));
+                            }
+                        }
+                    }
+                }
+            });
         });
     }
 
-    /// Poll for update completion (called from event loop).
+    /// Trigger forge update fallback (when self-update feature is disabled).
+    #[cfg(not(feature = "self-update"))]
+    fn trigger_update(&mut self) {
+        self.status_message = Some("Self-update not available in this build.".to_string());
+        self.mark_dirty();
+    }
+
+    /// Poll for update completion and progress (called from event loop).
     fn poll_update_result(&mut self) {
         if let Some(ref rx) = self.update_result_rx {
             // Non-blocking check for result
             if let Ok(result) = rx.try_recv() {
                 self.update_in_progress = false;
+                self.update_progress.in_progress = false;
                 self.update_result_rx = None;
 
                 match result {
-                    UpdateResult::Success => {
+                    UpdateResult::Success {
+                        old_version,
+                        new_version,
+                    } => {
+                        self.status_message = Some(format!(
+                            "Updated forge v{} -> v{}! Please restart.",
+                            old_version, new_version
+                        ));
+                        self.update_available = false;
+                        self.update_progress.percent = 100;
+                    }
+                    UpdateResult::AlreadyUpToDate => {
                         self.status_message =
-                            Some("Update complete! Please restart forge.".to_string());
-                        self.update_available = false; // Clear the update available flag
+                            Some(format!("Already running latest version v{}", env!("CARGO_PKG_VERSION")));
                     }
                     UpdateResult::Failed(err) => {
                         self.status_message = Some(format!("Update failed: {}", err));
@@ -2153,8 +2237,8 @@ Press any key to close this help.";
     /// Draw a prominent overlay when update is in progress.
     fn draw_update_progress_overlay(&self, frame: &mut Frame, area: Rect) {
         // Create a centered overlay
-        let overlay_width = 50.min(area.width.saturating_sub(4));
-        let overlay_height = 5;
+        let overlay_width = 60.min(area.width.saturating_sub(4));
+        let overlay_height = 7;
         let overlay_x = (area.width.saturating_sub(overlay_width)) / 2;
         let overlay_y = (area.height.saturating_sub(overlay_height)) / 2;
 
@@ -2163,12 +2247,33 @@ Press any key to close this help.";
         // Clear background
         frame.render_widget(Clear, overlay_area);
 
-        let status_text = self
-            .status_message
-            .as_deref()
-            .unwrap_or("Updating forge...");
+        // Status text from update_progress or status_message
+        let status_text = if !self.update_progress.status.is_empty() {
+            &self.update_progress.status
+        } else {
+            self.status_message
+                .as_deref()
+                .unwrap_or("Updating forge...")
+        };
 
-        let content = format!("\n  {}  ", status_text);
+        // Create progress bar
+        let progress_percent = self.update_progress.percent as usize;
+        let bar_width = (overlay_width as usize).saturating_sub(4);
+        let filled = (bar_width * progress_percent) / 100;
+        let empty = bar_width - filled;
+
+        let progress_bar = format!(
+            "[{}{}] {}%",
+            "=".repeat(filled),
+            " ".repeat(empty),
+            progress_percent
+        );
+
+        let content = format!(
+            "\n  {}\n\n  {}\n  ",
+            status_text, progress_bar
+        );
+
         let overlay = Paragraph::new(content)
             .style(
                 Style::default()
@@ -2181,13 +2286,13 @@ Press any key to close this help.";
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::LightBlue))
                     .title(Span::styled(
-                        " Forge Update ",
+                        " Forge Update (Ctrl+U) ",
                         Style::default()
                             .fg(Color::White)
                             .add_modifier(Modifier::BOLD),
                     )),
             )
-            .alignment(ratatui::layout::Alignment::Center);
+            .alignment(ratatui::layout::Alignment::Left);
 
         frame.render_widget(overlay, overlay_area);
     }
