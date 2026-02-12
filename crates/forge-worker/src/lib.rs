@@ -138,6 +138,8 @@ pub mod bead_queue;
 pub mod discovery;
 pub mod health;
 pub mod launcher;
+#[cfg(test)]
+mod lifecycle_tests;
 pub mod router;
 pub mod scorer;
 pub mod tmux;
