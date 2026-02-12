@@ -1143,6 +1143,56 @@ impl DataManager {
                 // Worker efficiency failure is non-critical
             }
         }
+
+        // Get 7-day trend data for sparklines
+        match db.get_7day_task_trend() {
+            Ok(trend) => {
+                self.metrics_data.set_task_trend_7day(trend);
+            }
+            Err(_) => {
+                // Trend data failure is non-critical
+            }
+        }
+
+        // Get 7-day cost trend
+        match db.get_7day_cost_trend() {
+            Ok(trend) => {
+                self.metrics_data.set_cost_trend_7day(trend);
+            }
+            Err(_) => {}
+        }
+
+        // Get tasks per hour for histogram
+        match db.get_tasks_per_hour() {
+            Ok(data) => {
+                self.metrics_data.set_tasks_per_hour(data);
+            }
+            Err(_) => {}
+        }
+
+        // Get 7-day model performance aggregation
+        match db.get_model_performance_7day() {
+            Ok(models) => {
+                self.metrics_data.set_model_performance_7day(models);
+            }
+            Err(_) => {}
+        }
+
+        // Get 7-day worker efficiency aggregation
+        match db.get_worker_efficiency_7day() {
+            Ok(workers) => {
+                self.metrics_data.set_worker_efficiency_7day(workers);
+            }
+            Err(_) => {}
+        }
+
+        // Get average cost by model
+        match db.get_avg_cost_per_task_by_model() {
+            Ok(data) => {
+                self.metrics_data.set_avg_cost_by_model(data);
+            }
+            Err(_) => {}
+        }
     }
 
     /// Poll log watcher for real-time API usage updates.
