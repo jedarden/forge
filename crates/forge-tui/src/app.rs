@@ -2388,8 +2388,8 @@ mod tests {
         let buffer = render_app(&mut app, 100, 30);
 
         assert!(
-            buffer_contains(&buffer, "FORGE v0.1.7"),
-            "Header should contain FORGE v0.1.7 title"
+            buffer_contains(&buffer, "FORGE v0.1.9"),
+            "Header should contain FORGE v0.1.9 title"
         );
     }
 
@@ -2461,7 +2461,7 @@ mod tests {
         assert!(buffer.area.height == 20);
 
         // Should render header and some content
-        assert!(buffer_contains(&buffer, "FORGE v0.1.7"));
+        assert!(buffer_contains(&buffer, "FORGE v0.1.9"));
     }
 
     #[test]
@@ -2475,7 +2475,7 @@ mod tests {
         assert!(buffer.area.height == 50);
 
         // Should render content
-        assert!(buffer_contains(&buffer, "FORGE v0.1.7"));
+        assert!(buffer_contains(&buffer, "FORGE v0.1.9"));
     }
 
     #[test]
@@ -3124,7 +3124,7 @@ mod tests {
             let buffer = render_app(&mut app, 199, height);
             assert_eq!(buffer.area.height, height);
             // Should render something without panic
-            assert!(buffer_contains(&buffer, "FORGE v0.1.7"));
+            assert!(buffer_contains(&buffer, "FORGE v0.1.9"));
         }
     }
 
