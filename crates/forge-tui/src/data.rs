@@ -5,7 +5,7 @@
 //! forge-core's StatusWatcher to provide real-time updates, forge-worker's
 //! tmux discovery for additional session information, the BeadManager
 //! for task queue data from monitored workspaces, forge-cost for cost analytics,
-//! and LogWatcher for real-time log parsing.
+//! LogWatcher for real-time log parsing, and HealthMonitor for worker health tracking.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -19,6 +19,7 @@ use crate::subscription_panel::SubscriptionData;
 use forge_core::types::WorkerStatus;
 use forge_cost::{CostDatabase, CostQuery, SubscriptionTracker};
 use forge_worker::discovery::DiscoveryResult;
+use forge_worker::health::{HealthMonitor, HealthMonitorConfig, HealthLevel, WorkerHealthStatus};
 
 /// Aggregated worker data for TUI display.
 #[derive(Debug, Default)]
@@ -33,6 +34,10 @@ pub struct WorkerData {
     pub tmux_sessions: Option<DiscoveryResult>,
     /// Last tmux discovery timestamp
     pub tmux_last_update: Option<std::time::Instant>,
+    /// Health status per worker
+    pub health_status: HashMap<String, WorkerHealthStatus>,
+    /// Last health check timestamp
+    pub health_last_update: Option<std::time::Instant>,
 }
 
 impl WorkerData {
@@ -52,6 +57,34 @@ impl WorkerData {
     pub fn update_from_tmux(&mut self, result: DiscoveryResult) {
         self.tmux_sessions = Some(result);
         self.tmux_last_update = Some(std::time::Instant::now());
+    }
+
+    /// Update health status from health monitor.
+    pub fn update_health_status(&mut self, health: HashMap<String, WorkerHealthStatus>) {
+        self.health_status = health;
+        self.health_last_update = Some(std::time::Instant::now());
+    }
+
+    /// Get health status for a specific worker.
+    pub fn get_health(&self, worker_id: &str) -> Option<&WorkerHealthStatus> {
+        self.health_status.get(worker_id)
+    }
+
+    /// Count workers by health level.
+    pub fn health_counts(&self) -> (usize, usize, usize) {
+        let mut healthy = 0;
+        let mut degraded = 0;
+        let mut unhealthy = 0;
+
+        for health in self.health_status.values() {
+            match health.health_level() {
+                HealthLevel::Healthy => healthy += 1,
+                HealthLevel::Degraded => degraded += 1,
+                HealthLevel::Unhealthy => unhealthy += 1,
+            }
+        }
+
+        (healthy, degraded, unhealthy)
     }
 
     /// Check if data has been loaded.
@@ -121,6 +154,25 @@ impl WorkerData {
                 "Total: {} ({} active, {} idle)",
                 c.total, c.active, c.idle
             ));
+
+            // Show health summary
+            if !self.health_status.is_empty() {
+                let (healthy, degraded, unhealthy) = self.health_counts();
+                if unhealthy > 0 {
+                    lines.push(format!(
+                        "Health: {} ● | {} ◐ | {} ○",
+                        healthy, degraded, unhealthy
+                    ));
+                } else if degraded > 0 {
+                    lines.push(format!(
+                        "Health: {} ● | {} ◐",
+                        healthy, degraded
+                    ));
+                } else {
+                    lines.push(format!("Health: {} ● (all healthy)", healthy));
+                }
+            }
+
             if c.unhealthy() > 0 {
                 lines.push(format!("Unhealthy: {}", c.unhealthy()));
             }
@@ -198,16 +250,31 @@ impl WorkerData {
 
         let mut lines = Vec::new();
 
-        // If we have status file workers, show the detailed table
+        // If we have status file workers, show the detailed table with health
         if !self.is_empty() {
-            lines.push("┌─────────────────┬──────────┬──────────┬─────────────┐".to_string());
-            lines.push("│ Worker ID       │ Model    │ Status   │ Task        │".to_string());
-            lines.push("├─────────────────┼──────────┼──────────┼─────────────┤".to_string());
+            // Show health summary if we have health data
+            if !self.health_status.is_empty() {
+                let (healthy, degraded, unhealthy) = self.health_counts();
+                let total = healthy + degraded + unhealthy;
+                lines.push(format!(
+                    "Health: {} healthy | {} degraded | {} unhealthy | {} total",
+                    healthy, degraded, unhealthy, total
+                ));
+                lines.push(String::new());
+            }
+
+            lines.push("┌───┬─────────────────┬──────────┬──────────┬─────────────┐".to_string());
+            lines.push("│ H │ Worker ID       │ Model    │ Status   │ Task        │".to_string());
+            lines.push("├───┼─────────────────┼──────────┼──────────┼─────────────┤".to_string());
 
             let mut workers: Vec<_> = self.workers.values().collect();
             workers.sort_by(|a, b| a.worker_id.cmp(&b.worker_id));
 
             for worker in workers.iter().take(10) {
+                let health_indicator = self
+                    .get_health(&worker.worker_id)
+                    .map(|h| h.health_indicator())
+                    .unwrap_or("?");
                 let worker_id = truncate_string(&worker.worker_id, 15);
                 let model = format_model_name_short(&worker.model);
                 let status = format_status(&worker.status);
@@ -218,12 +285,12 @@ impl WorkerData {
                     .unwrap_or_else(|| "-".to_string());
 
                 lines.push(format!(
-                    "│ {:<15} │ {:<8} │ {:<8} │ {:<11} │",
-                    worker_id, model, status, task
+                    "│ {} │ {:<15} │ {:<8} │ {:<8} │ {:<11} │",
+                    health_indicator, worker_id, model, status, task
                 ));
             }
 
-            lines.push("└─────────────────┴──────────┴──────────┴─────────────┘".to_string());
+            lines.push("└───┴─────────────────┴──────────┴──────────┴─────────────┘".to_string());
 
             if self.workers.len() > 10 {
                 lines.push(format!(
@@ -422,7 +489,10 @@ const LOG_WATCHER_POLL_INTERVAL_MS: u64 = 500;
 /// Interval for subscription data polling (60 seconds).
 const SUBSCRIPTION_POLL_INTERVAL_SECS: u64 = 60;
 
-/// Data manager that handles the StatusWatcher, BeadManager, CostDatabase, LogWatcher, and provides formatted data.
+/// Interval for health monitoring (30 seconds).
+const HEALTH_POLL_INTERVAL_SECS: u64 = 30;
+
+/// Data manager that handles the StatusWatcher, BeadManager, CostDatabase, LogWatcher, HealthMonitor, and provides formatted data.
 pub struct DataManager {
     /// StatusWatcher for real-time updates
     watcher: Option<StatusWatcher>,
@@ -442,6 +512,8 @@ pub struct DataManager {
     pub metrics_data: MetricsPanelData,
     /// Real-time metrics from log parsing
     pub realtime_metrics: RealtimeMetrics,
+    /// Health monitor for worker health checks
+    health_monitor: Option<HealthMonitor>,
     /// Error message if watcher failed to initialize
     init_error: Option<String>,
     /// Last tmux discovery time
@@ -454,6 +526,8 @@ pub struct DataManager {
     last_log_poll: Option<std::time::Instant>,
     /// Last subscription poll time
     last_subscription_poll: Option<std::time::Instant>,
+    /// Last health check time
+    last_health_poll: Option<std::time::Instant>,
     /// Tokio runtime for async tmux discovery
     runtime: Option<tokio::runtime::Runtime>,
     /// Dirty flag - whether data changed since last check
@@ -547,6 +621,19 @@ impl DataManager {
             }
         };
 
+        // Initialize health monitor
+        let health_start = Instant::now();
+        let health_monitor = match HealthMonitor::new(HealthMonitorConfig::default()) {
+            Ok(m) => {
+                info!("⏱️ HealthMonitor initialized in {:?}", health_start.elapsed());
+                Some(m)
+            }
+            Err(e) => {
+                info!("Failed to initialize health monitor: {}", e);
+                None
+            }
+        };
+
         let manager = Self {
             watcher,
             worker_data: WorkerData::new(),
@@ -557,12 +644,14 @@ impl DataManager {
             subscription_data,
             metrics_data,
             realtime_metrics,
+            health_monitor,
             init_error,
             last_tmux_poll: None,
             last_cost_poll: None,
             last_metrics_poll: None,
             last_log_poll: None,
             last_subscription_poll: None,
+            last_health_poll: None,
             runtime,
             dirty: false,
             cached_worker_count: 0,
@@ -637,6 +726,9 @@ impl DataManager {
             Err(_) => (None, None),
         };
 
+        // Initialize health monitor
+        let health_monitor = HealthMonitor::new(HealthMonitorConfig::default()).ok();
+
         // Skip initial poll_updates during initialization - it blocks for too long
         // due to bead manager calling `br` commands which can take seconds each.
         // Let the first poll happen during the main loop instead.
@@ -650,12 +742,14 @@ impl DataManager {
             subscription_data,
             metrics_data,
             realtime_metrics,
+            health_monitor,
             init_error,
             last_tmux_poll: None,
             last_cost_poll: None,
             last_metrics_poll: None,
             last_log_poll: None,
             last_subscription_poll: None,
+            last_health_poll: None,
             runtime,
             dirty: false,
             cached_worker_count: 0,
@@ -671,13 +765,11 @@ impl DataManager {
         use chrono::{Duration, Utc};
         use tracing::info;
 
-        eprintln!("[build_subscription_data] Tracker has {} subscriptions", tracker.len());
         info!("Building subscription data, tracker has {} subscriptions", tracker.len());
 
         let mut data = SubscriptionData::new();
 
         for summary in tracker.get_summaries() {
-            eprintln!("[build_subscription_data] Processing: {} (used: {} limit: {:?})", summary.name, summary.quota_used, summary.quota_limit);
             info!("Processing subscription: {} (usage: {}/{:?})", summary.name, summary.quota_used, summary.quota_limit);
             // Map subscription name to service type
             let service = if summary.name.to_lowercase().contains("anthropic") || summary.name.to_lowercase().contains("claude") {
@@ -819,6 +911,16 @@ impl DataManager {
             self.last_subscription_poll = Some(std::time::Instant::now());
         }
 
+        // Periodically poll health monitoring (every 30 seconds)
+        let should_poll_health = self.last_health_poll.map_or(true, |t| {
+            t.elapsed().as_secs() >= HEALTH_POLL_INTERVAL_SECS
+        });
+
+        if should_poll_health {
+            self.poll_health_monitor();
+            self.last_health_poll = Some(std::time::Instant::now());
+        }
+
         // Update cached counts and mark dirty if changed
         self.cached_worker_count = self.worker_data.total_worker_count();
         self.cached_bead_count = self.bead_manager.total_bead_count();
@@ -831,6 +933,33 @@ impl DataManager {
         }
 
         self.dirty
+    }
+
+    /// Poll health monitor for worker health status.
+    fn poll_health_monitor(&mut self) {
+        let Some(ref mut monitor) = self.health_monitor else {
+            return;
+        };
+
+        match monitor.check_all_health() {
+            Ok(health_status) => {
+                // Check if any worker became unhealthy
+                let unhealthy_count = health_status.values().filter(|h| !h.is_healthy).count();
+                if unhealthy_count > 0 {
+                    tracing::info!(
+                        "Health check: {} unhealthy workers detected",
+                        unhealthy_count
+                    );
+                    self.dirty = true;
+                }
+
+                // Update worker data with health status
+                self.worker_data.update_health_status(health_status);
+            }
+            Err(e) => {
+                tracing::warn!("Health check failed: {}", e);
+            }
+        }
     }
 
     /// Poll subscription tracker for updates.
@@ -1042,6 +1171,12 @@ impl DataManager {
                     self.dirty = true;
                 }
             }
+        }
+
+        // Propagate realtime metrics to cost_data and metrics_data for panel display
+        if self.realtime_metrics.has_data() {
+            self.cost_data.set_realtime(self.realtime_metrics.clone());
+            self.metrics_data.set_realtime(self.realtime_metrics.clone());
         }
     }
 

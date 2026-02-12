@@ -136,6 +136,7 @@
 
 pub mod bead_queue;
 pub mod discovery;
+pub mod health;
 pub mod launcher;
 pub mod router;
 pub mod scorer;
@@ -145,6 +146,11 @@ pub mod types;
 // Re-export main types for convenience
 pub use bead_queue::{BeadAllocation, BeadQueueManager, BeadQueueReader, QueuedBead};
 pub use discovery::{DiscoveredWorker, DiscoveryResult, WorkerType, discover_workers};
+pub use health::{
+    HealthCheckResult, HealthCheckType, HealthErrorType, HealthLevel, HealthMonitor,
+    HealthMonitorConfig, WorkerHealthStatus, DEFAULT_CHECK_INTERVAL_SECS,
+    DEFAULT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MEMORY_LIMIT_MB, DEFAULT_STALE_THRESHOLD_SECS,
+};
 pub use launcher::WorkerLauncher;
 pub use router::{
     FallbackOption, ModelAvailability, ModelConfig, ModelHealth, Router, RouterConfig,
