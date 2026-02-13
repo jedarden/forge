@@ -32,6 +32,7 @@ This test suite provides comprehensive automated testing of the FORGE TUI by:
 | `test-forge-theme.sh` | Theme cycling, persistence, visual changes | ~8s |
 | `test-forge-workers.sh` | Worker spawn/kill, panel display, status updates | ~15s |
 | `test-forge-chat.sh` | Chat mode, query submission, response verification | ~45s |
+| `test-forge-e2e.sh` | End-to-end integration test at multiple terminal sizes | ~60s |
 
 ## Quick Start
 
@@ -39,7 +40,7 @@ This test suite provides comprehensive automated testing of the FORGE TUI by:
 # Run all tests
 ./tests/run-all-tests.sh
 
-# Run quick tests (skip slow chat test)
+# Run quick tests (skip slow chat and e2e tests)
 ./tests/run-all-tests.sh --quick
 
 # Run with verbose output
@@ -50,6 +51,31 @@ This test suite provides comprehensive automated testing of the FORGE TUI by:
 ./tests/test-forge-workers.sh
 ./tests/test-forge-theme.sh
 ./tests/test-forge-chat.sh
+./tests/test-forge-e2e.sh
+```
+
+## End-to-End (E2E) Test
+
+The `test-forge-e2e.sh` script performs comprehensive integration testing across three terminal size modes:
+
+- **Narrow mode** (80x24): Minimum viable terminal size
+- **Wide mode** (120x40): Two-column layout
+- **Ultra-wide mode** (199x55): Three-column layout with all panels visible
+
+### E2E Acceptance Criteria
+
+| Criterion | Description |
+|-----------|-------------|
+| Terminal sizes | All 3 sizes pass (80x24, 120x40, 199x55) |
+| No crashes | No panics or fatal errors in logs |
+| View accessibility | All views accessible via hotkeys |
+| Clean shutdown | Forge exits cleanly on 'q' command |
+| Duration | Test completes in < 2 minutes |
+
+### Running E2E Test Only
+
+```bash
+./tests/test-forge-e2e.sh
 ```
 
 ## Test Framework Architecture
