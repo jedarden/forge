@@ -554,9 +554,9 @@ impl AlertBadge {
     /// Format compact badge (just count and icon).
     pub fn format_compact(&self) -> String {
         if self.critical > 0 {
-            format!("⚠️{}", self.total)
+            format!("⚠️{}", self.critical)
         } else if self.warning > 0 {
-            format!("⚡{}", self.total)
+            format!("⚡{}", self.warning)
         } else {
             String::new()
         }
