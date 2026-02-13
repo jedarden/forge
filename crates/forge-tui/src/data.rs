@@ -1051,13 +1051,85 @@ impl DataManager {
 
         match monitor.check_all_health() {
             Ok(health_status) => {
+                // Track previous health for comparison
+                let prev_health = self.worker_data.health_status.clone();
+
                 // Check if any worker became unhealthy and add activity entries
                 for (worker_id, health) in &health_status {
-                    if !health.is_healthy {
+                    let prev_was_healthy = prev_health
+                        .get(worker_id)
+                        .map(|h| h.is_healthy)
+                        .unwrap_or(true);
+
+                    // Log status transitions
+                    if !health.is_healthy && prev_was_healthy {
+                        // Worker just became unhealthy
+                        let level = health.health_level();
+                        let msg = match level {
+                            forge_worker::health::HealthLevel::Degraded => {
+                                format!("Worker degraded: {} (score: {:.0}%)",
+                                    health.primary_error.as_deref().unwrap_or("unknown"),
+                                    health.health_score * 100.0)
+                            }
+                            forge_worker::health::HealthLevel::Unhealthy => {
+                                format!("Worker unhealthy: {} (score: {:.0}%)",
+                                    health.primary_error.as_deref().unwrap_or("unknown"),
+                                    health.health_score * 100.0)
+                            }
+                            forge_worker::health::HealthLevel::Healthy => {
+                                "Worker healthy".to_string()
+                            }
+                        };
+
+                        self.activity_data.push(
+                            ActivityEntry::new(ActivityEventType::Warning, msg)
+                                .with_source(worker_id),
+                        );
+
+                        // Add guidance for recovery
+                        if !health.guidance.is_empty() {
+                            for guidance in &health.guidance {
+                                self.activity_data.push(
+                                    ActivityEntry::new(
+                                        ActivityEventType::Info,
+                                        format!("Recovery: {}", guidance),
+                                    )
+                                    .with_source(worker_id),
+                                );
+                            }
+                        }
+                    }
+
+                    // Check for auto-restart trigger
+                    if health.should_auto_restart {
                         self.activity_data.push(
                             ActivityEntry::new(
                                 ActivityEventType::Warning,
-                                format!("Health check: {:?}", health.health_level()),
+                                format!("Auto-restart triggered after {} consecutive failures",
+                                    health.consecutive_failures),
+                            )
+                            .with_source(worker_id),
+                        );
+                    }
+
+                    // Check for recovery exhaustion
+                    if health.recovery_exhausted && !health.is_healthy {
+                        self.activity_data.push(
+                            ActivityEntry::new(
+                                ActivityEventType::Error,
+                                format!("Recovery exhausted ({} attempts) - manual intervention required",
+                                    health.recovery_attempts),
+                            )
+                            .with_source(worker_id),
+                        );
+                    }
+
+                    // Log when worker recovers
+                    if health.is_healthy && !prev_was_healthy {
+                        self.activity_data.push(
+                            ActivityEntry::new(
+                                ActivityEventType::Info,
+                                "Worker recovered - all health checks passing".to_string(),
                             )
                             .with_source(worker_id),
                         );
@@ -1065,10 +1137,14 @@ impl DataManager {
                 }
 
                 let unhealthy_count = health_status.values().filter(|h| !h.is_healthy).count();
-                if unhealthy_count > 0 {
+                let degraded_count = health_status.values().filter(|h| {
+                    matches!(h.health_level(), forge_worker::health::HealthLevel::Degraded)
+                }).count();
+
+                if unhealthy_count > 0 || degraded_count > 0 {
                     tracing::info!(
-                        "Health check: {} unhealthy workers detected",
-                        unhealthy_count
+                        "Health check: {} unhealthy, {} degraded workers detected",
+                        unhealthy_count, degraded_count
                     );
                     self.dirty = true;
                 }
