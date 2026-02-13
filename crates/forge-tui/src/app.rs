@@ -1340,6 +1340,11 @@ impl App {
                     if self.selected_alert_index > 0 {
                         self.selected_alert_index -= 1;
                     }
+                } else if self.current_view == View::Tasks {
+                    // In Tasks view, navigate up through tasks
+                    if self.selected_task_index > 0 {
+                        self.selected_task_index -= 1;
+                    }
                 } else if self.scroll_offset > 0 {
                     self.scroll_offset -= 1;
                 }
@@ -1355,6 +1360,13 @@ impl App {
                     if self.selected_alert_index < alert_count.saturating_sub(1) {
                         self.selected_alert_index += 1;
                     }
+                } else if self.current_view == View::Tasks {
+                    // In Tasks view, navigate down through tasks
+                    // Get actual task count for proper clamping
+                    let task_count = self.data_manager.bead_manager.task_count_filtered(self.priority_filter);
+                    if self.selected_task_index < task_count.saturating_sub(1) {
+                        self.selected_task_index += 1;
+                    }
                 } else {
                     self.scroll_offset += 1;
                 }
@@ -1364,6 +1376,12 @@ impl App {
                 // In Logs view, scroll the activity log
                 if self.current_view == View::Logs {
                     self.data_manager.activity_log_mut().scroll_up(10);
+                } else if self.current_view == View::Alerts {
+                    // In Alerts view, page up through alerts
+                    self.selected_alert_index = self.selected_alert_index.saturating_sub(10);
+                } else if self.current_view == View::Tasks {
+                    // In Tasks view, page up through tasks
+                    self.selected_task_index = self.selected_task_index.saturating_sub(10);
                 } else {
                     self.scroll_offset = self.scroll_offset.saturating_sub(10);
                 }
@@ -1373,6 +1391,14 @@ impl App {
                 // In Logs view, scroll the activity log
                 if self.current_view == View::Logs {
                     self.data_manager.activity_log_mut().scroll_down(10);
+                } else if self.current_view == View::Alerts {
+                    // In Alerts view, page down through alerts
+                    let alert_count = self.data_manager.alert_manager.active_count();
+                    self.selected_alert_index = (self.selected_alert_index + 10).min(alert_count.saturating_sub(1));
+                } else if self.current_view == View::Tasks {
+                    // In Tasks view, page down through tasks
+                    let task_count = self.data_manager.bead_manager.task_count_filtered(self.priority_filter);
+                    self.selected_task_index = (self.selected_task_index + 10).min(task_count.saturating_sub(1));
                 } else {
                     self.scroll_offset += 10;
                 }
@@ -1382,6 +1408,12 @@ impl App {
                 // In Logs view, scroll to top of activity log
                 if self.current_view == View::Logs {
                     self.data_manager.activity_log_mut().scroll_to_top();
+                } else if self.current_view == View::Alerts {
+                    // In Alerts view, go to first alert
+                    self.selected_alert_index = 0;
+                } else if self.current_view == View::Tasks {
+                    // In Tasks view, go to first task
+                    self.selected_task_index = 0;
                 } else {
                     self.scroll_offset = 0;
                 }
@@ -1391,9 +1423,17 @@ impl App {
                 // In Logs view, scroll to bottom of activity log (resume auto-scroll)
                 if self.current_view == View::Logs {
                     self.data_manager.activity_log_mut().scroll_to_bottom();
+                } else if self.current_view == View::Alerts {
+                    // In Alerts view, go to last alert
+                    let alert_count = self.data_manager.alert_manager.active_count();
+                    self.selected_alert_index = alert_count.saturating_sub(1);
+                } else if self.current_view == View::Tasks {
+                    // In Tasks view, go to last task
+                    let task_count = self.data_manager.bead_manager.task_count_filtered(self.priority_filter);
+                    self.selected_task_index = task_count.saturating_sub(1);
                 } else {
-                    // In a real impl, this would go to the end of the list
-                    self.scroll_offset = 100;
+                    // For other views, just reset to 0 since we don't have exact content height
+                    self.scroll_offset = 0;
                 }
                 self.mark_dirty();
             }
@@ -4121,7 +4161,8 @@ mod tests {
     #[test]
     fn test_footer_renders_hotkey_hints() {
         let mut app = App::new();
-        let buffer = render_app(&mut app, 100, 30);
+        // Use wider terminal to ensure all hotkeys fit in footer
+        let buffer = render_app(&mut app, 150, 30);
 
         assert!(
             buffer_contains(&buffer, "[o]"),

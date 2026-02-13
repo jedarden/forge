@@ -29,12 +29,19 @@ pub enum WorkerStatus {
     Error,
     /// Worker is starting up
     Starting,
+    /// Worker is paused (not claiming new tasks)
+    Paused,
 }
 
 impl WorkerStatus {
     /// Returns true if the worker is considered healthy.
     pub fn is_healthy(&self) -> bool {
-        matches!(self, Self::Active | Self::Idle | Self::Starting)
+        matches!(self, Self::Active | Self::Idle | Self::Starting | Self::Paused)
+    }
+
+    /// Returns true if the worker is paused.
+    pub fn is_paused(&self) -> bool {
+        matches!(self, Self::Paused)
     }
 
     /// Returns the status indicator emoji for TUI display.
@@ -46,6 +53,7 @@ impl WorkerStatus {
             Self::Stopped => "⏹️",
             Self::Error => "⚠️",
             Self::Starting => "🔄",
+            Self::Paused => "⏸️",
         }
     }
 }
@@ -59,6 +67,7 @@ impl std::fmt::Display for WorkerStatus {
             Self::Stopped => write!(f, "stopped"),
             Self::Error => write!(f, "error"),
             Self::Starting => write!(f, "starting"),
+            Self::Paused => write!(f, "paused"),
         }
     }
 }
@@ -256,7 +265,17 @@ mod tests {
     fn test_worker_status_healthy() {
         assert!(WorkerStatus::Active.is_healthy());
         assert!(WorkerStatus::Idle.is_healthy());
+        assert!(WorkerStatus::Paused.is_healthy());
+        assert!(WorkerStatus::Starting.is_healthy());
         assert!(!WorkerStatus::Failed.is_healthy());
+        assert!(!WorkerStatus::Stopped.is_healthy());
+    }
+
+    #[test]
+    fn test_worker_status_paused() {
+        assert!(WorkerStatus::Paused.is_paused());
+        assert!(!WorkerStatus::Active.is_paused());
+        assert!(!WorkerStatus::Idle.is_paused());
     }
 
     #[test]
@@ -276,6 +295,7 @@ mod tests {
     #[test]
     fn test_status_display() {
         assert_eq!(WorkerStatus::Active.to_string(), "active");
+        assert_eq!(WorkerStatus::Paused.to_string(), "paused");
         assert_eq!(Priority::P0.to_string(), "P0");
         assert_eq!(BeadStatus::InProgress.to_string(), "in_progress");
     }

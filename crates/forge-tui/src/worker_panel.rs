@@ -189,6 +189,10 @@ impl<'a> WorkerPanel<'a> {
             "\n[G] Spawn GLM  [S] Spawn Sonnet  [O] Spawn Opus  [K] Kill",
             Style::default().fg(Color::DarkGray),
         )));
+        lines.push(Line::from(Span::styled(
+            "[p] Pause  [P] Pause All  [r] Resume  [R] Resume All",
+            Style::default().fg(Color::DarkGray),
+        )));
 
         lines
     }
