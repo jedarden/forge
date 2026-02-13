@@ -112,9 +112,19 @@ The Chat view does NOT use this pattern, which may be the root cause.
 
 | Dimension | Size | Artifact Severity |
 |-----------|------|-------------------|
-| Narrow | 80x24 | Not tested |
+| Narrow | 80x24 | Severe (content bleeding visible) |
 | Wide | 120x40 | Severe |
-| UltraWide | 200x50 | Not tested |
+| Wide | 140x45 | Severe (confirmed on 2026-02-13) |
+| UltraWide | 160x50 | Severe (confirmed on 2026-02-13) |
+
+### Test Results from 2026-02-13
+
+Testing confirmed visual artifacts persist across all layout modes:
+
+1. **80x24 (Narrow)**: Content bleeding and fragmented text visible
+2. **120x40 (Wide)**: Severe overlap between panels, Chat History title corrupted
+3. **140x45 (Wide)**: Multiple panel titles from Overview visible in Chat view
+4. **160x50 (UltraWide)**: Border corruption, input field overlap
 
 ## Screenshots/Captures
 
@@ -139,5 +149,12 @@ fn draw_chat(&self, frame: &mut Frame, area: Rect) {
 
 - [x] Artifacts reproduced
 - [x] Root cause identified (suspected missing Clear widget)
+- [x] Tested at multiple dimensions (80x24, 120x40, 140x45, 160x50)
 - [ ] Fix implemented
 - [ ] Fix tested at multiple dimensions
+
+## Additional Notes
+
+- Chat backend not initialized message appears in Input panel (expected - requires config.yaml with chat_backend section)
+- Test script available at `tests/test-forge-chat.sh` for automated testing
+- The issue affects all views that don't use the `Clear` widget pattern before rendering
