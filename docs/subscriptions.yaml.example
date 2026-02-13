@@ -1,0 +1,65 @@
+# FORGE Subscription Configuration
+# ================================
+# Place this file at ~/.forge/subscriptions.yaml
+#
+# This file tracks AI service subscriptions to help optimize usage
+# and avoid quota exhaustion. FORGE will display subscription status
+# in the dashboard and alert when quota is low or renewal is approaching.
+#
+# Supported subscription types:
+# - fixed_quota: Fixed monthly quota (e.g., 45M tokens)
+# - unlimited: Unlimited usage with monthly cost
+# - pay_per_use: Pay-per-use API (no fixed cost)
+
+subscriptions:
+  # Anthropic Claude Max 5x subscription
+  # 45M tokens/month, $100/month, renews on the 15th
+  - provider: anthropic
+    plan: max_5x
+    monthly_tokens: 45000000  # 45M tokens
+    monthly_cost: 100.00
+    renewal_date: "15"  # Day of month, or "2026-02-15" for specific date
+    current_usage: 12500000  # 12.5M tokens used so far
+    model: claude-opus-4.6
+    subscription_type: fixed_quota
+    active: true
+
+  # OpenAI ChatGPT Plus subscription
+  # $20/month, renews on the 20th
+  - provider: openai
+    plan: plus
+    monthly_cost: 20.00
+    renewal_date: "20"
+    model: gpt-4
+    subscription_type: fixed_quota
+    active: true
+
+  # Cursor Pro subscription
+  # 500 fast requests/month, renews on the 1st
+  - provider: cursor
+    plan: pro
+    monthly_tokens: 500  # requests in this case
+    monthly_cost: 20.00
+    renewal_date: "1"
+    current_usage: 487
+    model: cursor-fast
+    subscription_type: fixed_quota
+    active: true
+
+  # DeepSeek API (pay-per-use)
+  # No monthly cost, charges per token
+  - provider: deepseek
+    plan: api
+    monthly_cost: 0.00
+    subscription_type: pay_per_use
+    active: true
+
+  # Example: Paused subscription
+  # This subscription is not currently active
+  - provider: anthropic
+    plan: claude_pro
+    monthly_tokens: 500  # messages
+    monthly_cost: 20.00
+    renewal_date: "28"
+    subscription_type: fixed_quota
+    active: false
