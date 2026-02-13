@@ -1,0 +1,5 @@
+{"id":"e2e-001","title":"E2E Test Task - Basic Verification","status":"open","priority":0,"labels":["e2e","test"],"created":"2024-02-13T00:00:00Z"}
+{"id":"e2e-002","title":"E2E Test Task - Worker Integration","status":"in_progress","priority":1,"labels":["e2e","worker"],"created":"2024-02-13T00:01:00Z"}
+{"id":"e2e-003","title":"E2E Test Task - Chat Verification","status":"open","priority":2,"labels":["e2e","chat"],"created":"2024-02-13T00:02:00Z"}
+{"id":"e2e-004","title":"E2E Test Task - View Navigation","status":"closed","priority":3,"labels":["e2e","views"],"created":"2024-02-13T00:03:00Z","closed":"2024-02-13T00:10:00Z"}
+{"id":"e2e-005","title":"E2E Test Task - Cost Tracking","status":"open","priority":4,"labels":["e2e","costs"],"created":"2024-02-13T00:04:00Z"}
