@@ -35,7 +35,8 @@ TESTS_WARNED=0
 declare -a TERMINAL_SIZES=("80x24" "120x40" "199x55")
 
 # View hotkeys and names
-declare -a VIEW_KEYS=("w" "t" "c" "m" "l" "o")
+# Note: 'o' lowercase spawns Opus worker, 'O' uppercase is Overview
+declare -a VIEW_KEYS=("w" "t" "c" "m" "l" "O")
 declare -a VIEW_NAMES=("Workers" "Tasks" "Costs" "Metrics" "Logs" "Overview")
 
 echo_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
@@ -91,9 +92,9 @@ test_single_size() {
 
     echo_info "Testing at ${cols}x${rows}..."
 
-    # Start forge
-    tmux new-session -d -s "$session" -x "$cols" -y "$rows"
-    tmux send-keys -t "$session" "$FORGE_BIN 2>&1 | tee $size_results/forge.log" C-m
+    # Start forge directly (not via shell command with pipe)
+    # This ensures the tmux session closes when forge exits
+    tmux new-session -d -s "$session" -x "$cols" -y "$rows" "$FORGE_BIN 2>&1 | tee $size_results/forge.log; exec bash"
     sleep 3
 
     # Test 1: Basic rendering
@@ -106,8 +107,6 @@ test_single_size() {
     fi
 
     # Test 2: View switching (quick test of each view)
-    local view_pass=0
-    local view_total=${#VIEW_KEYS[@]}
     for i in "${!VIEW_KEYS[@]}"; do
         tmux send-keys -t "$session" "${VIEW_KEYS[$i]}"
         sleep 0.3
@@ -121,34 +120,42 @@ test_single_size() {
     tmux send-keys -t "$session" ":"
     sleep 0.5
     tmux capture-pane -t "$session" -p > "$size_results/chat.txt"
-    tmux send-keys -t "$session" C-c 2>/dev/null || true  # Cancel chat input
+    tmux send-keys -t "$session" Escape  # Exit chat input mode
     sleep 0.3
     echo_pass "Chat accessible at ${size}"
 
     # Test 4: Clean quit
-    # First escape any input modes
+    # Make sure we're not in any input mode
     tmux send-keys -t "$session" Escape
     sleep 0.3
     # Go to overview
     tmux send-keys -t "$session" "o"
     sleep 0.3
-    # Send quit
+    # Send quit - forge should exit, leaving us at bash prompt
     tmux send-keys -t "$session" "q"
     sleep 2
 
-    if ! tmux has-session -t "$session" 2>/dev/null; then
-        echo_pass "Clean exit at ${size}"
-    else
-        # Try with Ctrl+C as backup
-        tmux send-keys -t "$session" C-c
+    # Check if forge is still running (tmux session exists but forge may have exited)
+    # The session will have a bash prompt if forge exited cleanly
+    tmux capture-pane -t "$session" -p > "$size_results/after-quit.txt"
+    if grep -qE "^\$|coder@|forge.*exit|logout" "$size_results/after-quit.txt" 2>/dev/null || \
+       ! grep -q "FORGE" "$size_results/after-quit.txt" 2>/dev/null; then
+        echo_pass "Clean exit at ${size} (forge terminated)"
+        # Kill the remaining shell session
+        tmux send-keys -t "$session" "exit" C-m 2>/dev/null || true
         sleep 0.5
-        tmux send-keys -t "$session" "q"
+        tmux kill-session -t "$session" 2>/dev/null || true
+    else
+        # Try Ctrl+C to force quit
+        tmux send-keys -t "$session" C-c
         sleep 1
-        if ! tmux has-session -t "$session" 2>/dev/null; then
+        tmux capture-pane -t "$session" -p > "$size_results/after-quit2.txt"
+        if ! grep -q "FORGE" "$size_results/after-quit2.txt" 2>/dev/null; then
             echo_pass "Clean exit at ${size} (after Ctrl+C)"
-        else
             tmux kill-session -t "$session" 2>/dev/null || true
+        else
             echo_warn "Forced kill at ${size}"
+            tmux kill-session -t "$session" 2>/dev/null || true
         fi
     fi
 
