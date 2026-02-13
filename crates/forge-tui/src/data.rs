@@ -1098,35 +1098,28 @@ impl DataManager {
                                 .with_source(worker_id),
                         );
 
-                        // Create alerts based on failed health checks
-                        for failed_check in &health.failed_checks {
-                            let (alert_type, alert_msg) = match failed_check {
-                                HealthCheckType::PidExists => {
-                                    (AlertType::WorkerCrashed, health.primary_error.clone())
-                                }
-                                HealthCheckType::ActivityFresh => {
-                                    (AlertType::WorkerStale, health.primary_error.clone())
-                                }
-                                HealthCheckType::MemoryUsage => {
-                                    (AlertType::MemoryHigh, health.primary_error.clone())
-                                }
-                                HealthCheckType::TaskProgress => {
-                                    (AlertType::TaskStuck, health.primary_error.clone())
-                                }
-                                HealthCheckType::TmuxSession => {
-                                    (AlertType::WorkerCrashed, Some("Tmux session missing".to_string()))
-                                }
-                                HealthCheckType::ResponseHealth => {
-                                    (AlertType::WorkerUnresponsive, health.primary_error.clone())
-                                }
-                            };
+                        // Create one alert per worker based on the most critical failed check
+                        // Priority: PID > Activity > Task > Memory > Response
+                        let (alert_type, alert_msg) = if health.failed_checks.contains(&HealthCheckType::PidExists) {
+                            (AlertType::WorkerCrashed, health.primary_error.clone())
+                        } else if health.failed_checks.contains(&HealthCheckType::ActivityFresh) {
+                            (AlertType::WorkerStale, health.primary_error.clone())
+                        } else if health.failed_checks.contains(&HealthCheckType::TaskProgress) {
+                            (AlertType::TaskStuck, health.primary_error.clone())
+                        } else if health.failed_checks.contains(&HealthCheckType::MemoryUsage) {
+                            (AlertType::MemoryHigh, health.primary_error.clone())
+                        } else if health.failed_checks.contains(&HealthCheckType::ResponseHealth) {
+                            (AlertType::WorkerUnresponsive, health.primary_error.clone())
+                        } else {
+                            // Fallback - shouldn't happen but just in case
+                            (AlertType::WorkerCrashed, health.primary_error.clone())
+                        };
 
-                            self.alert_manager.raise(
-                                alert_type,
-                                worker_id.clone(),
-                                alert_msg,
-                            );
-                        }
+                        self.alert_manager.raise(
+                            alert_type,
+                            worker_id.clone(),
+                            alert_msg,
+                        );
 
                         // Add guidance for recovery
                         if !health.guidance.is_empty() {
@@ -1189,12 +1182,6 @@ impl DataManager {
                         );
                         // Resolve all alerts for this worker
                         self.alert_manager.resolve_all_for_worker(worker_id);
-                        // Raise a recovery info alert
-                        self.alert_manager.raise(
-                            AlertType::WorkerRecovered,
-                            worker_id.clone(),
-                            Some("All health checks now passing".to_string()),
-                        );
                     }
                 }
 
