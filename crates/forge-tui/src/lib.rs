@@ -36,6 +36,7 @@
 //! - `Esc` - Cancel/back
 
 pub mod activity_panel;
+pub mod alert;
 pub mod app;
 pub mod bead;
 pub mod config_watcher;
@@ -76,6 +77,9 @@ pub use log_watcher::{
 pub use activity_panel::{
     ActivityEntry, ActivityEventType, ActivityLogData, ActivityPanel, ActivitySummaryCompact,
     DEFAULT_ACTIVITY_CAPACITY,
+};
+pub use alert::{
+    AlertBadge, AlertManager, AlertSeverity, AlertType, HealthAlert,
 };
 pub use metrics_panel::{MetricsPanel, MetricsPanelData, MetricsSummaryCompact};
 pub use status::{StatusEvent, StatusWatcher, StatusWatcherConfig, WorkerStatusFile};
