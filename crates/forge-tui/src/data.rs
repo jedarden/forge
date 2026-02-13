@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::activity_panel::{ActivityEntry, ActivityEventType, ActivityLogData};
-use crate::alert::{AlertManager, AlertType, AlertBadge};
+use crate::alert::{AlertBadge, AlertManager, AlertType};
 use crate::bead::BeadManager;
 use crate::cost_panel::{BudgetConfig, CostPanelData};
 use crate::log_watcher::{LogWatcher, LogWatcherConfig, LogWatcherEvent, RealtimeMetrics};
@@ -22,7 +22,9 @@ use crate::subscription_panel::SubscriptionData;
 use forge_core::types::WorkerStatus;
 use forge_cost::{CostDatabase, CostQuery, SubscriptionTracker};
 use forge_worker::discovery::DiscoveryResult;
-use forge_worker::health::{HealthMonitor, HealthMonitorConfig, HealthLevel, WorkerHealthStatus, HealthCheckType};
+use forge_worker::health::{
+    HealthCheckType, HealthLevel, HealthMonitor, HealthMonitorConfig, WorkerHealthStatus,
+};
 
 /// Aggregated worker data for TUI display.
 #[derive(Debug, Default)]
@@ -167,10 +169,7 @@ impl WorkerData {
                         healthy, degraded, unhealthy
                     ));
                 } else if degraded > 0 {
-                    lines.push(format!(
-                        "Health: {} ● | {} ◐",
-                        healthy, degraded
-                    ));
+                    lines.push(format!("Health: {} ● | {} ◐", healthy, degraded));
                 } else {
                     lines.push(format!("Health: {} ● (all healthy)", healthy));
                 }
@@ -619,7 +618,10 @@ impl DataManager {
         let sub_start = Instant::now();
         let subscription_tracker = SubscriptionTracker::with_default_config();
         let subscription_data = Self::build_subscription_data(&subscription_tracker);
-        info!("⏱️ Subscription tracker initialized in {:?}", sub_start.elapsed());
+        info!(
+            "⏱️ Subscription tracker initialized in {:?}",
+            sub_start.elapsed()
+        );
 
         // Initialize real-time metrics from log parsing
         let realtime_metrics = RealtimeMetrics::new();
@@ -637,7 +639,10 @@ impl DataManager {
         let health_start = Instant::now();
         let health_monitor = match HealthMonitor::new(HealthMonitorConfig::default()) {
             Ok(m) => {
-                info!("⏱️ HealthMonitor initialized in {:?}", health_start.elapsed());
+                info!(
+                    "⏱️ HealthMonitor initialized in {:?}",
+                    health_start.elapsed()
+                );
                 Some(m)
             }
             Err(e) => {
@@ -791,20 +796,32 @@ impl DataManager {
 
     /// Build SubscriptionData from the tracker.
     fn build_subscription_data(tracker: &SubscriptionTracker) -> SubscriptionData {
-        use crate::subscription_panel::{ResetPeriod, SubscriptionAction, SubscriptionService, SubscriptionStatus};
+        use crate::subscription_panel::{
+            ResetPeriod, SubscriptionAction, SubscriptionService, SubscriptionStatus,
+        };
         use chrono::{Duration, Utc};
         use tracing::info;
 
-        info!("Building subscription data, tracker has {} subscriptions", tracker.len());
+        info!(
+            "Building subscription data, tracker has {} subscriptions",
+            tracker.len()
+        );
 
         let mut data = SubscriptionData::new();
 
         for summary in tracker.get_summaries() {
-            info!("Processing subscription: {} (usage: {}/{:?})", summary.name, summary.quota_used, summary.quota_limit);
+            info!(
+                "Processing subscription: {} (usage: {}/{:?})",
+                summary.name, summary.quota_used, summary.quota_limit
+            );
             // Map subscription name to service type
-            let service = if summary.name.to_lowercase().contains("anthropic") || summary.name.to_lowercase().contains("claude") {
+            let service = if summary.name.to_lowercase().contains("anthropic")
+                || summary.name.to_lowercase().contains("claude")
+            {
                 SubscriptionService::ClaudePro
-            } else if summary.name.to_lowercase().contains("openai") || summary.name.to_lowercase().contains("chatgpt") {
+            } else if summary.name.to_lowercase().contains("openai")
+                || summary.name.to_lowercase().contains("chatgpt")
+            {
                 SubscriptionService::ChatGPTPlus
             } else if summary.name.to_lowercase().contains("cursor") {
                 SubscriptionService::CursorPro
@@ -828,10 +845,7 @@ impl DataManager {
             } else {
                 ResetPeriod::Monthly
             };
-            status = status.with_reset(
-                Utc::now() + Duration::days(days_remaining),
-                reset_period,
-            );
+            status = status.with_reset(Utc::now() + Duration::days(days_remaining), reset_period);
 
             // Set active status
             status = status.with_active(true);
@@ -848,7 +862,11 @@ impl DataManager {
             let alert = tracker.get_alert(&summary.name);
             if alert.is_alert() {
                 // Mark as critical/high usage in the status
-                if matches!(alert, forge_cost::SubscriptionAlert::Critical | forge_cost::SubscriptionAlert::Depleted) {
+                if matches!(
+                    alert,
+                    forge_cost::SubscriptionAlert::Critical
+                        | forge_cost::SubscriptionAlert::Depleted
+                ) {
                     // Override action to show urgency
                     status.current_usage = status.limit.unwrap_or(100) - 1; // Show 99% used
                 }
@@ -891,31 +909,36 @@ impl DataManager {
                         None => {
                             // New worker discovered
                             self.activity_data.push(
-                                ActivityEntry::new(ActivityEventType::WorkerSpawn, "Worker spawned")
-                                    .with_source(worker_id),
+                                ActivityEntry::new(
+                                    ActivityEventType::WorkerSpawn,
+                                    "Worker spawned",
+                                )
+                                .with_source(worker_id),
                             );
                         }
                         Some(prev) if *prev != worker.status => {
                             // Status transition
-                            let message = format!(
-                                "Status changed: {:?} → {:?}",
-                                prev, worker.status
-                            );
+                            let message =
+                                format!("Status changed: {:?} → {:?}", prev, worker.status);
                             let event_type = match worker.status {
                                 WorkerStatus::Stopped => ActivityEventType::WorkerStop,
-                                WorkerStatus::Failed | WorkerStatus::Error => ActivityEventType::Error,
+                                WorkerStatus::Failed | WorkerStatus::Error => {
+                                    ActivityEventType::Error
+                                }
                                 _ => ActivityEventType::WorkerTransition,
                             };
                             self.activity_data.push(
-                                ActivityEntry::new(event_type, message)
-                                    .with_source(worker_id),
+                                ActivityEntry::new(event_type, message).with_source(worker_id),
                             );
 
                             // Add task info if available
                             if let Some(ref task) = worker.current_task {
                                 self.activity_data.push(
-                                    ActivityEntry::new(ActivityEventType::TaskPickup, format!("Working on {}", task))
-                                        .with_source(worker_id),
+                                    ActivityEntry::new(
+                                        ActivityEventType::TaskPickup,
+                                        format!("Working on {}", task),
+                                    )
+                                    .with_source(worker_id),
                                 );
                             }
                         }
@@ -1004,9 +1027,9 @@ impl DataManager {
         }
 
         // Periodically poll health monitoring (every 30 seconds)
-        let should_poll_health = self.last_health_poll.map_or(true, |t| {
-            t.elapsed().as_secs() >= HEALTH_POLL_INTERVAL_SECS
-        });
+        let should_poll_health = self
+            .last_health_poll
+            .map_or(true, |t| t.elapsed().as_secs() >= HEALTH_POLL_INTERVAL_SECS);
 
         if should_poll_health {
             self.poll_health_monitor();
@@ -1039,7 +1062,12 @@ impl DataManager {
     }
 
     /// Add an activity entry manually.
-    pub fn add_activity(&mut self, event_type: ActivityEventType, source: Option<&str>, message: impl Into<String>) {
+    pub fn add_activity(
+        &mut self,
+        event_type: ActivityEventType,
+        source: Option<&str>,
+        message: impl Into<String>,
+    ) {
         let mut entry = ActivityEntry::new(event_type, message);
         if let Some(s) = source {
             entry = entry.with_source(s);
@@ -1082,14 +1110,18 @@ impl DataManager {
                         let level = health.health_level();
                         let msg = match level {
                             forge_worker::health::HealthLevel::Degraded => {
-                                format!("Worker degraded: {} (score: {:.0}%)",
+                                format!(
+                                    "Worker degraded: {} (score: {:.0}%)",
                                     health.primary_error.as_deref().unwrap_or("unknown"),
-                                    health.health_score * 100.0)
+                                    health.health_score * 100.0
+                                )
                             }
                             forge_worker::health::HealthLevel::Unhealthy => {
-                                format!("Worker unhealthy: {} (score: {:.0}%)",
+                                format!(
+                                    "Worker unhealthy: {} (score: {:.0}%)",
                                     health.primary_error.as_deref().unwrap_or("unknown"),
-                                    health.health_score * 100.0)
+                                    health.health_score * 100.0
+                                )
                             }
                             forge_worker::health::HealthLevel::Healthy => {
                                 "Worker healthy".to_string()
@@ -1103,26 +1135,33 @@ impl DataManager {
 
                         // Create one alert per worker based on the most critical failed check
                         // Priority: PID > Activity > Task > Memory > Response
-                        let (alert_type, alert_msg) = if health.failed_checks.contains(&HealthCheckType::PidExists) {
-                            (AlertType::WorkerCrashed, health.primary_error.clone())
-                        } else if health.failed_checks.contains(&HealthCheckType::ActivityFresh) {
-                            (AlertType::WorkerStale, health.primary_error.clone())
-                        } else if health.failed_checks.contains(&HealthCheckType::TaskProgress) {
-                            (AlertType::TaskStuck, health.primary_error.clone())
-                        } else if health.failed_checks.contains(&HealthCheckType::MemoryUsage) {
-                            (AlertType::MemoryHigh, health.primary_error.clone())
-                        } else if health.failed_checks.contains(&HealthCheckType::ResponseHealth) {
-                            (AlertType::WorkerUnresponsive, health.primary_error.clone())
-                        } else {
-                            // Fallback - shouldn't happen but just in case
-                            (AlertType::WorkerCrashed, health.primary_error.clone())
-                        };
+                        let (alert_type, alert_msg) =
+                            if health.failed_checks.contains(&HealthCheckType::PidExists) {
+                                (AlertType::WorkerCrashed, health.primary_error.clone())
+                            } else if health
+                                .failed_checks
+                                .contains(&HealthCheckType::ActivityFresh)
+                            {
+                                (AlertType::WorkerStale, health.primary_error.clone())
+                            } else if health
+                                .failed_checks
+                                .contains(&HealthCheckType::TaskProgress)
+                            {
+                                (AlertType::TaskStuck, health.primary_error.clone())
+                            } else if health.failed_checks.contains(&HealthCheckType::MemoryUsage) {
+                                (AlertType::MemoryHigh, health.primary_error.clone())
+                            } else if health
+                                .failed_checks
+                                .contains(&HealthCheckType::ResponseHealth)
+                            {
+                                (AlertType::WorkerUnresponsive, health.primary_error.clone())
+                            } else {
+                                // Fallback - shouldn't happen but just in case
+                                (AlertType::WorkerCrashed, health.primary_error.clone())
+                            };
 
-                        self.alert_manager.raise(
-                            alert_type,
-                            worker_id.clone(),
-                            alert_msg,
-                        );
+                        self.alert_manager
+                            .raise(alert_type, worker_id.clone(), alert_msg);
 
                         // Add guidance for recovery
                         if !health.guidance.is_empty() {
@@ -1140,14 +1179,13 @@ impl DataManager {
 
                     // Check for auto-restart trigger
                     if health.should_auto_restart {
-                        let msg = format!("Auto-restart triggered after {} consecutive failures",
-                            health.consecutive_failures);
+                        let msg = format!(
+                            "Auto-restart triggered after {} consecutive failures",
+                            health.consecutive_failures
+                        );
                         self.activity_data.push(
-                            ActivityEntry::new(
-                                ActivityEventType::Warning,
-                                msg.clone(),
-                            )
-                            .with_source(worker_id),
+                            ActivityEntry::new(ActivityEventType::Warning, msg.clone())
+                                .with_source(worker_id),
                         );
                         self.alert_manager.raise(
                             AlertType::AutoRestartTriggered,
@@ -1158,14 +1196,13 @@ impl DataManager {
 
                     // Check for recovery exhaustion
                     if health.recovery_exhausted && !health.is_healthy {
-                        let msg = format!("Recovery exhausted ({} attempts) - manual intervention required",
-                            health.recovery_attempts);
+                        let msg = format!(
+                            "Recovery exhausted ({} attempts) - manual intervention required",
+                            health.recovery_attempts
+                        );
                         self.activity_data.push(
-                            ActivityEntry::new(
-                                ActivityEventType::Error,
-                                msg.clone(),
-                            )
-                            .with_source(worker_id),
+                            ActivityEntry::new(ActivityEventType::Error, msg.clone())
+                                .with_source(worker_id),
                         );
                         self.alert_manager.raise(
                             AlertType::RecoveryExhausted,
@@ -1189,14 +1226,21 @@ impl DataManager {
                 }
 
                 let unhealthy_count = health_status.values().filter(|h| !h.is_healthy).count();
-                let degraded_count = health_status.values().filter(|h| {
-                    matches!(h.health_level(), forge_worker::health::HealthLevel::Degraded)
-                }).count();
+                let degraded_count = health_status
+                    .values()
+                    .filter(|h| {
+                        matches!(
+                            h.health_level(),
+                            forge_worker::health::HealthLevel::Degraded
+                        )
+                    })
+                    .count();
 
                 if unhealthy_count > 0 || degraded_count > 0 {
                     tracing::info!(
                         "Health check: {} unhealthy, {} degraded workers detected",
-                        unhealthy_count, degraded_count
+                        unhealthy_count,
+                        degraded_count
                     );
                     self.dirty = true;
                 }
@@ -1206,9 +1250,10 @@ impl DataManager {
             }
             Err(e) => {
                 tracing::warn!("Health check failed: {}", e);
-                self.activity_data.push(
-                    ActivityEntry::new(ActivityEventType::Error, format!("Health check failed: {}", e)),
-                );
+                self.activity_data.push(ActivityEntry::new(
+                    ActivityEventType::Error,
+                    format!("Health check failed: {}", e),
+                ));
             }
         }
     }
@@ -1309,7 +1354,8 @@ impl DataManager {
             Ok(report) => {
                 self.cost_data.set_recommendations(report.recommendations);
                 self.cost_data.set_savings_achieved(report.savings_achieved);
-                self.cost_data.set_subscription_utilization(report.subscription_utilization);
+                self.cost_data
+                    .set_subscription_utilization(report.subscription_utilization);
             }
             Err(_) => {
                 // Optimization failure is non-critical
@@ -1493,10 +1539,7 @@ impl DataManager {
                         };
                         let msg = format!(
                             "{} API call - {} in, {} out ({})",
-                            call.model,
-                            call.input_tokens,
-                            call.output_tokens,
-                            cost_str
+                            call.model, call.input_tokens, call.output_tokens, cost_str
                         );
                         self.activity_data.push(
                             ActivityEntry::new(ActivityEventType::ApiCall, msg)
@@ -1536,7 +1579,11 @@ impl DataManager {
         if !calls_to_persist.is_empty() {
             if let Some(ref db) = self.cost_db {
                 if let Err(e) = db.insert_api_calls(&calls_to_persist) {
-                    tracing::warn!("Failed to persist {} API calls to database: {}", calls_to_persist.len(), e);
+                    tracing::warn!(
+                        "Failed to persist {} API calls to database: {}",
+                        calls_to_persist.len(),
+                        e
+                    );
                 } else {
                     tracing::debug!("Persisted {} API calls to database", calls_to_persist.len());
                 }
@@ -1546,7 +1593,8 @@ impl DataManager {
         // Propagate realtime metrics to cost_data and metrics_data for panel display
         if self.realtime_metrics.has_data() {
             self.cost_data.set_realtime(self.realtime_metrics.clone());
-            self.metrics_data.set_realtime(self.realtime_metrics.clone());
+            self.metrics_data
+                .set_realtime(self.realtime_metrics.clone());
         }
     }
 
