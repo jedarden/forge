@@ -3549,8 +3549,8 @@ mod tests {
         let buffer = render_app(&mut app, 100, 30);
 
         assert!(
-            buffer_contains(&buffer, "Performance Metrics"),
-            "Metrics view should render Performance Metrics panel"
+            buffer_contains(&buffer, "Performance Analytics"),
+            "Metrics view should render Performance Analytics panel"
         );
     }
 
@@ -3593,7 +3593,7 @@ mod tests {
         app.switch_view(View::Metrics);
         assert_eq!(app.focus_panel(), FocusPanel::MetricsCharts);
         let buffer = render_app(&mut app, 100, 30);
-        assert!(buffer_contains(&buffer, "Performance Metrics"));
+        assert!(buffer_contains(&buffer, "Performance Analytics"));
     }
 
     // ============================================================
