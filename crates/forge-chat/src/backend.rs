@@ -9,7 +9,7 @@ use tracing::{error, info};
 
 use crate::audit::{AuditEntry, AuditLogger};
 use crate::config::ChatConfig;
-use crate::context::{ContextProvider, ContextSource, DashboardContext, MockContextSource};
+use crate::context::{ContextProvider, ContextSource, DashboardContext, RealContextSource};
 use crate::error::{ChatError, Result};
 use crate::provider::{ChatProvider, ProviderTool, create_provider};
 use crate::rate_limit::RateLimiter;
@@ -137,9 +137,8 @@ impl ChatBackend {
         let audit_logger = AuditLogger::new(config.audit.clone()).await?;
         let tool_registry = ToolRegistry::with_builtin_tools();
 
-        // Create a mock context source for now
-        // In production, this would be a real context source
-        let context_source = MockContextSource::with_sample_data();
+        // Use RealContextSource for live dashboard data
+        let context_source = RealContextSource::new();
         let context_provider = Arc::new(ContextProvider::new(context_source));
 
         Ok(Self {
@@ -162,8 +161,8 @@ impl ChatBackend {
         let audit_logger = AuditLogger::new(config.audit.clone()).await?;
         let tool_registry = ToolRegistry::with_builtin_tools();
 
-        // Create a mock context source for now
-        let context_source = MockContextSource::with_sample_data();
+        // Use RealContextSource for live dashboard data
+        let context_source = RealContextSource::new();
         let context_provider = Arc::new(ContextProvider::new(context_source));
 
         Ok(Self {

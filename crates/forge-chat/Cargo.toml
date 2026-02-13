@@ -24,6 +24,7 @@ tokio = { workspace = true, features = ["sync", "time", "fs"] }
 # Serialization
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml.workspace = true
 
 # HTTP client for Claude API
 reqwest.workspace = true
