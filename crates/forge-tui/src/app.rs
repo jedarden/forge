@@ -140,6 +140,8 @@ pub struct App {
     chat_response_rx: Option<Receiver<(String, Result<ChatResponse, forge_chat::ChatError>)>>,
     /// Whether a chat request is pending
     chat_pending: bool,
+    /// Spinner animation frame index (0-3 for 4-frame spinner)
+    chat_spinner_frame: usize,
     /// Chat conversation history (last 10 exchanges)
     chat_history: Vec<ChatExchange>,
     /// Worker launcher for spawning workers
@@ -177,6 +179,73 @@ pub struct ChatExchange {
     pub assistant_response: String,
     pub timestamp: String,
     pub is_error: bool,
+    /// Tool calls made during this exchange
+    pub tool_calls: Vec<ToolCallInfo>,
+    /// Side effects from tool execution
+    pub side_effects: Vec<SideEffectInfo>,
+    /// Confirmation prompt if action requires approval
+    pub confirmation: Option<ConfirmationInfo>,
+    /// Response metadata (duration, cost, provider)
+    pub metadata: ResponseMetadata,
+}
+
+/// Information about a tool call for display.
+#[derive(Clone, Debug)]
+pub struct ToolCallInfo {
+    /// Tool name (e.g., "spawn_worker", "get_worker_status")
+    pub name: String,
+    /// Whether the tool execution succeeded
+    pub success: bool,
+    /// Human-readable result message
+    pub message: String,
+}
+
+/// Information about a side effect for display.
+#[derive(Clone, Debug)]
+pub struct SideEffectInfo {
+    /// Type of effect (e.g., "spawn", "kill", "assign")
+    pub effect_type: String,
+    /// Description of what happened
+    pub description: String,
+}
+
+/// Confirmation prompt information for display.
+#[derive(Clone, Debug)]
+pub struct ConfirmationInfo {
+    /// Title of the confirmation
+    pub title: String,
+    /// Description of what will happen
+    pub description: String,
+    /// Warning level (info, warning, danger)
+    pub level: ConfirmationLevel,
+    /// Estimated cost impact
+    pub cost_impact: Option<f64>,
+    /// Items that will be affected
+    pub affected_items: Vec<String>,
+    /// Whether this action is reversible
+    pub reversible: bool,
+}
+
+/// Warning level for confirmation prompts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConfirmationLevel {
+    /// Informational (no danger)
+    Info,
+    /// Warning (some risk)
+    Warning,
+    /// Danger (high risk, destructive)
+    Danger,
+}
+
+/// Response metadata for display.
+#[derive(Clone, Debug, Default)]
+pub struct ResponseMetadata {
+    /// Duration in milliseconds
+    pub duration_ms: u64,
+    /// Estimated cost in USD
+    pub cost_usd: Option<f64>,
+    /// Provider name
+    pub provider: String,
 }
 
 /// Result of an update operation.
@@ -297,6 +366,7 @@ impl App {
             chat_response_tx: None,
             chat_response_rx: None,
             chat_pending: false,
+            chat_spinner_frame: 0,
             chat_history: Vec::new(),
             worker_launcher,
             worker_runtime,
@@ -363,6 +433,7 @@ impl App {
             config_rx: None,
             forge_config: ForgeConfig::default(),
             data_poll_interval: Duration::from_millis(DEFAULT_DATA_POLL_INTERVAL_MS),
+            chat_spinner_frame: 0,
         }
     }
 
@@ -654,11 +725,70 @@ impl App {
                         "Response preview: {}",
                         response.text.chars().take(100).collect::<String>()
                     );
+
+                    // Extract tool call information (pair by index since tools execute in order)
+                    let tool_calls: Vec<ToolCallInfo> = response
+                        .tool_results
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, result)| {
+                            let name = response
+                                .tool_calls
+                                .get(idx)
+                                .map(|c| c.name.clone())
+                                .unwrap_or_else(|| "unknown".to_string());
+                            ToolCallInfo {
+                                name,
+                                success: result.success,
+                                message: result.message.clone(),
+                            }
+                        })
+                        .collect();
+
+                    // Extract side effects
+                    let side_effects: Vec<SideEffectInfo> = response
+                        .tool_results
+                        .iter()
+                        .flat_map(|result| {
+                            result.side_effects.iter().map(|effect| SideEffectInfo {
+                                effect_type: effect.effect_type.clone(),
+                                description: effect.description.clone(),
+                            })
+                        })
+                        .collect();
+
+                    // Extract confirmation info if present
+                    let confirmation = response.confirmation_required.as_ref().map(|c| {
+                        ConfirmationInfo {
+                            title: c.title.clone(),
+                            description: c.description.clone(),
+                            level: match c.level {
+                                forge_chat::tools::ConfirmationLevel::Info => ConfirmationLevel::Info,
+                                forge_chat::tools::ConfirmationLevel::Warning => ConfirmationLevel::Warning,
+                                forge_chat::tools::ConfirmationLevel::Danger => ConfirmationLevel::Danger,
+                            },
+                            cost_impact: c.cost_impact,
+                            affected_items: c.affected_items.clone(),
+                            reversible: c.reversible,
+                        }
+                    });
+
+                    // Extract metadata
+                    let metadata = ResponseMetadata {
+                        duration_ms: response.duration_ms,
+                        cost_usd: response.cost_usd,
+                        provider: response.provider.clone(),
+                    };
+
                     self.chat_history.push(ChatExchange {
                         user_query: query,
                         assistant_response: response.text,
                         timestamp,
                         is_error: false,
+                        tool_calls,
+                        side_effects,
+                        confirmation,
+                        metadata,
                     });
                     self.status_message = Some("✅ Response received".to_string());
                 }
@@ -669,6 +799,10 @@ impl App {
                         assistant_response: format!("Error: {}", e),
                         timestamp,
                         is_error: true,
+                        tool_calls: vec![],
+                        side_effects: vec![],
+                        confirmation: None,
+                        metadata: ResponseMetadata::default(),
                     });
                     self.status_message = Some(format!("❌ Chat error: {}", e));
                 }
@@ -1604,6 +1738,12 @@ impl App {
         while !self.should_quit {
             let frame_start = Instant::now();
 
+            // Advance spinner animation when chat is pending
+            if self.chat_pending {
+                self.chat_spinner_frame = (self.chat_spinner_frame + 1) % 4;
+                self.mark_dirty(); // Ensure UI updates for spinner animation
+            }
+
             // Poll for chat responses FIRST - this is non-blocking and must happen
             // frequently to ensure responsive chat UX. Don't let data polling block it.
             self.poll_chat_responses();
@@ -2194,6 +2334,9 @@ impl App {
             .constraints([Constraint::Min(5), Constraint::Length(3)])
             .split(area);
 
+        // Spinner animation frames (4-frame spinner)
+        const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸"];
+
         // Chat history
         let history_text = if self.chat_history.is_empty() {
             "Type commands or ask questions. Examples:\n\n\
@@ -2223,11 +2366,106 @@ impl App {
                 for line in exchange.assistant_response.lines() {
                     lines.push(format!("  {} {}", response_prefix, line));
                 }
+
+                // Show tool execution results
+                if !exchange.tool_calls.is_empty() {
+                    lines.push("  ── Tool Results ──".to_string());
+                    for tool in &exchange.tool_calls {
+                        let status_icon = if tool.success { "✓" } else { "✗" };
+                        let status_color = if tool.success {
+                            "success"
+                        } else {
+                            "failed"
+                        };
+                        lines.push(format!(
+                            "    {} {} [{}] {}",
+                            status_icon, tool.name, status_color, tool.message
+                        ));
+                    }
+                }
+
+                // Show side effects
+                if !exchange.side_effects.is_empty() {
+                    lines.push("  ── Side Effects ──".to_string());
+                    for effect in &exchange.side_effects {
+                        let effect_icon = match effect.effect_type.as_str() {
+                            "spawn" => "🚀",
+                            "kill" => "💀",
+                            "assign" => "📌",
+                            _ => "⚡",
+                        };
+                        lines.push(format!("    {} {}", effect_icon, effect.description));
+                    }
+                }
+
+                // Show confirmation prompt if present
+                if let Some(ref confirmation) = exchange.confirmation {
+                    lines.push("  ┌─ ⚠️  CONFIRMATION REQUIRED ─┐".to_string());
+                    lines.push(format!("  │ {}", confirmation.title));
+                    lines.push(format!("  │ {}", confirmation.description));
+
+                    // Warning level indicator
+                    let level_text = match confirmation.level {
+                        ConfirmationLevel::Info => "ℹ️ INFO",
+                        ConfirmationLevel::Warning => "⚠️ WARNING",
+                        ConfirmationLevel::Danger => "🚨 DANGER",
+                    };
+                    lines.push(format!("  │ Level: {}", level_text));
+
+                    // Cost impact
+                    if let Some(cost) = confirmation.cost_impact {
+                        lines.push(format!("  │ Cost Impact: ${:.4}", cost));
+                    }
+
+                    // Affected items
+                    if !confirmation.affected_items.is_empty() {
+                        lines.push("  │ Affected:".to_string());
+                        for item in &confirmation.affected_items {
+                            lines.push(format!("  │   • {}", item));
+                        }
+                    }
+
+                    // Reversibility
+                    let reversible_text = if confirmation.reversible {
+                        "Yes (can be undone)"
+                    } else {
+                        "No (permanent)"
+                    };
+                    lines.push(format!("  │ Reversible: {}", reversible_text));
+
+                    lines.push("  │ Type 'yes' to confirm or 'no' to cancel".to_string());
+                    lines.push("  └────────────────────────────┘".to_string());
+                }
+
+                // Show metadata (duration, cost, provider)
+                let meta = &exchange.metadata;
+                if meta.duration_ms > 0 || meta.cost_usd.is_some() || !meta.provider.is_empty() {
+                    let mut meta_parts = Vec::new();
+
+                    if meta.duration_ms > 0 {
+                        meta_parts.push(format!("{}ms", meta.duration_ms));
+                    }
+
+                    if let Some(cost) = meta.cost_usd {
+                        meta_parts.push(format!("${:.4}", cost));
+                    }
+
+                    if !meta.provider.is_empty() {
+                        meta_parts.push(meta.provider.clone());
+                    }
+
+                    if !meta_parts.is_empty() {
+                        lines.push(format!("  📊 [{}]", meta_parts.join(" | ")));
+                    }
+                }
+
                 lines.push("".to_string()); // Blank line between exchanges
             }
 
             if self.chat_pending {
-                lines.push("⏳ Processing...".to_string());
+                let spinner = SPINNER_FRAMES[self.chat_spinner_frame % SPINNER_FRAMES.len()];
+                lines.push(format!("{} Processing your request...", spinner));
+                lines.push("  Executing tools...".to_string());
             }
 
             lines.join("\n")
