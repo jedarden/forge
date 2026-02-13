@@ -1,6 +1,6 @@
 //! SQLite database layer for cost tracking.
 
-use crate::error::{CostError, Result};
+use crate::error::{is_database_locked_error, CostError, Result};
 use crate::models::{
     ApiCall, CostBreakdown, DailyCost, DailyStat, HourlyStat, ModelPerformance, Subscription,
     SubscriptionType, SubscriptionUsageRecord, WorkerEfficiency,
@@ -9,10 +9,20 @@ use chrono::{DateTime, NaiveDate, Utc};
 use rusqlite::{Connection, Transaction, params};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use tracing::{debug, info};
+use std::time::Duration;
+use tracing::{debug, info, warn};
 
 /// Current schema version for migrations.
 const SCHEMA_VERSION: i32 = 3;
+
+/// Maximum retries for database lock errors.
+const DB_LOCK_MAX_RETRIES: u32 = 5;
+
+/// Initial delay for database lock retry (in milliseconds).
+const DB_LOCK_INITIAL_DELAY_MS: u64 = 50;
+
+/// Maximum delay for database lock retry.
+const DB_LOCK_MAX_DELAY: Duration = Duration::from_secs(5);
 
 /// SQLite database for cost tracking.
 pub struct CostDatabase {
@@ -38,6 +48,60 @@ impl CostDatabase {
         };
         db.migrate()?;
         Ok(db)
+    }
+
+    /// Execute a database operation with automatic retry on lock errors.
+    ///
+    /// This helper wraps database operations that may fail due to concurrent
+    /// access, automatically retrying with exponential backoff.
+    fn with_retry<T, F>(&self, operation: &str, mut f: F) -> Result<T>
+    where
+        F: FnMut() -> Result<T>,
+    {
+        let mut attempt = 0;
+        let mut delay = Duration::from_millis(DB_LOCK_INITIAL_DELAY_MS);
+
+        loop {
+            attempt += 1;
+
+            match f() {
+                Ok(result) => {
+                    if attempt > 1 {
+                        info!(
+                            attempt,
+                            operation,
+                            "Database operation succeeded after retry"
+                        );
+                    }
+                    return Ok(result);
+                }
+                Err(ref e) if is_database_locked_error(e) && attempt <= DB_LOCK_MAX_RETRIES => {
+                    warn!(
+                        attempt,
+                        max_retries = DB_LOCK_MAX_RETRIES,
+                        delay_ms = delay.as_millis(),
+                        operation,
+                        "Database locked, retrying with backoff"
+                    );
+
+                    std::thread::sleep(delay);
+
+                    // Exponential backoff with cap
+                    delay = std::cmp::min(delay * 2, DB_LOCK_MAX_DELAY);
+                }
+                Err(e) => {
+                    if attempt > 1 {
+                        warn!(
+                            attempt,
+                            operation,
+                            error = %e,
+                            "Database operation failed after retries"
+                        );
+                    }
+                    return Err(e);
+                }
+            }
+        }
     }
 
     /// Run database migrations.

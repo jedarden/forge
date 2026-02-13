@@ -30,6 +30,7 @@
 
 pub mod error;
 pub mod logging;
+pub mod recovery;
 #[cfg(feature = "self-update")]
 pub mod self_update;
 pub mod status;
@@ -39,6 +40,10 @@ pub mod watcher;
 // Re-export main types for convenience
 pub use error::{ForgeError, Result};
 pub use logging::{LogGuard, init_logging};
+pub use recovery::{
+    friendly_error_message, retry_with_backoff, retry_with_backoff_async, RecoveryAction,
+    RetryConfig, RetryResult, Retryable,
+};
 pub use status::{StatusReader, WorkerStatusInfo};
 pub use watcher::{StatusEvent, StatusWatcher, WatcherConfig};
 

@@ -115,6 +115,17 @@ pub enum ForgeError {
         exit_code: Option<i32>,
     },
 
+    /// Worker crashed (process died unexpectedly)
+    #[error("Worker {worker_id} crashed: {reason}")]
+    WorkerCrash {
+        worker_id: String,
+        reason: String,
+        /// Last known task/bead the worker was working on
+        last_task: Option<String>,
+        /// Whether the crash is recoverable (can restart)
+        recoverable: bool,
+    },
+
     /// Worker health check failed
     #[error("Worker {worker_id} health check failed: {reason}")]
     WorkerHealth { worker_id: String, reason: String },
@@ -397,6 +408,7 @@ impl ForgeError {
             Self::WorkerNotFound { .. }
                 | Self::WorkerSpawn { .. }
                 | Self::WorkerExit { .. }
+                | Self::WorkerCrash { .. }
                 | Self::WorkerHealth { .. }
                 | Self::WorkerStatusUpdate { .. }
         )
@@ -417,9 +429,31 @@ impl ForgeError {
                 Some("Configure a chat backend in ~/.forge/config.yaml or run 'forge init'")
             }
             Self::WorkerHealth { .. } => Some("Check worker logs in ~/.forge/logs/ for details"),
+            Self::WorkerCrash { recoverable: true, .. } => {
+                Some("Worker crashed. Restart the worker or check logs for details.")
+            }
+            Self::WorkerCrash { recoverable: false, .. } => {
+                Some("Worker crashed unrecoverably. Check logs and report if persistent.")
+            }
+            Self::WorkerExit { .. } => Some("Worker exited unexpectedly. Check logs for details."),
             Self::ToolRateLimited { .. } => Some("Wait and try again"),
             Self::TerminalInit { .. } => Some("Try running in a different terminal"),
             _ => None,
+        }
+    }
+
+    /// Create a worker crash error with full context.
+    pub fn worker_crash(
+        worker_id: impl Into<String>,
+        reason: impl Into<String>,
+        last_task: Option<String>,
+        recoverable: bool,
+    ) -> Self {
+        Self::WorkerCrash {
+            worker_id: worker_id.into(),
+            reason: reason.into(),
+            last_task,
+            recoverable,
         }
     }
 }

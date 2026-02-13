@@ -19,7 +19,10 @@ use ratatui::{
 };
 
 use crate::log_watcher::RealtimeMetrics;
-use forge_cost::{CostBreakdown, DailyCost, ModelCost, OptimizationRecommendation, ProjectedCost};
+use forge_cost::{
+    CostBreakdown, DailyCost, ModelCost, OptimizationRecommendation, ProjectedCost,
+    WorkerCostBreakdown,
+};
 
 /// Budget alert severity levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,6 +167,12 @@ pub struct CostPanelData {
     pub subscription_utilization: f64,
     /// Real-time metrics from log parsing
     pub realtime: RealtimeMetrics,
+    /// Per-worker cost breakdown
+    pub worker_costs: Vec<WorkerCostBreakdown>,
+    /// Total cost for current session
+    pub session_total: f64,
+    /// Threshold for marking workers as expensive (USD)
+    pub expensive_threshold: f64,
     /// Last update timestamp
     pub last_update: Option<chrono::DateTime<Utc>>,
     /// Whether data is loading
@@ -241,6 +250,40 @@ impl CostPanelData {
     /// Set subscription utilization.
     pub fn set_subscription_utilization(&mut self, utilization: f64) {
         self.subscription_utilization = utilization;
+    }
+
+    /// Set worker cost breakdown.
+    pub fn set_worker_costs(&mut self, workers: Vec<WorkerCostBreakdown>) {
+        self.worker_costs = workers;
+    }
+
+    /// Set session total cost.
+    pub fn set_session_total(&mut self, total: f64) {
+        self.session_total = total;
+    }
+
+    /// Set expensive threshold.
+    pub fn set_expensive_threshold(&mut self, threshold: f64) {
+        self.expensive_threshold = threshold;
+        // Mark workers as expensive based on new threshold
+        for worker in &mut self.worker_costs {
+            worker.is_expensive = worker.total_cost_usd >= self.expensive_threshold;
+        }
+    }
+
+    /// Get total cost from all workers.
+    pub fn workers_total_cost(&self) -> f64 {
+        self.worker_costs.iter().map(|w| w.total_cost_usd).sum()
+    }
+
+    /// Get count of expensive workers.
+    pub fn expensive_worker_count(&self) -> usize {
+        self.worker_costs.iter().filter(|w| w.is_expensive).count()
+    }
+
+    /// Check if we have worker cost data.
+    pub fn has_worker_costs(&self) -> bool {
+        !self.worker_costs.is_empty()
     }
 
     /// Set real-time metrics from log parsing.
@@ -798,6 +841,124 @@ impl<'a> CostPanel<'a> {
         let paragraph = Paragraph::new(lines);
         paragraph.render(area, buf);
     }
+
+    /// Render worker cost breakdown.
+    fn render_worker_costs(&self, area: Rect, buf: &mut Buffer) {
+        if self.data.worker_costs.is_empty() {
+            let msg = Paragraph::new("No worker data").style(Style::default().fg(Color::Gray));
+            msg.render(area, buf);
+            return;
+        }
+
+        // Find max cost for scaling bars
+        let max_cost = self
+            .data
+            .worker_costs
+            .iter()
+            .map(|w| w.total_cost_usd)
+            .fold(0.0_f64, f64::max);
+
+        let mut lines = Vec::new();
+
+        // Session total
+        if self.data.session_total > 0.0 {
+            lines.push(Line::from(vec![
+                Span::styled("Session: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    format_usd(self.data.session_total),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
+            lines.push(Line::from(""));
+        }
+
+        // Header
+        lines.push(Line::from(vec![
+            Span::styled("Worker", Style::default().fg(Color::Gray)),
+            Span::raw("  "),
+            Span::styled("#", Style::default().fg(Color::Gray)),
+            Span::raw(" "),
+            Span::styled("Cost", Style::default().fg(Color::Gray)),
+            Span::raw("    "),
+            Span::styled("Task", Style::default().fg(Color::Gray)),
+        ]));
+
+        // Show top workers (limit to fit area)
+        let worker_limit = (area.height.saturating_sub(4) as usize).min(8);
+        for worker in self.data.worker_costs.iter().take(worker_limit) {
+            // Truncate worker ID
+            let worker_id = if worker.worker_id.len() > 12 {
+                format!("{}…", &worker.worker_id[..11])
+            } else {
+                worker.worker_id.clone()
+            };
+
+            // Color based on expense
+            let cost_color = if worker.is_expensive {
+                Color::LightRed
+            } else if worker.total_cost_usd > max_cost * 0.5 {
+                Color::Yellow
+            } else {
+                Color::Green
+            };
+
+            // Expense indicator
+            let indicator = if worker.is_expensive { "⚠ " } else { "  " };
+
+            // Task info
+            let task = worker
+                .bead_id
+                .as_ref()
+                .map(|t| {
+                    if t.len() > 10 {
+                        format!("{}…", &t[..9])
+                    } else {
+                        t.clone()
+                    }
+                })
+                .unwrap_or_else(|| "-".to_string());
+
+            lines.push(Line::from(vec![
+                Span::styled(indicator, Style::default().fg(Color::LightRed)),
+                Span::styled(
+                    format!("{:<12}", worker_id),
+                    Style::default().fg(Color::White),
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    format!("{:>2}", worker.call_count.min(99)),
+                    Style::default().fg(Color::Gray),
+                ),
+                Span::raw(" "),
+                Span::styled(format_usd(worker.total_cost_usd), Style::default().fg(cost_color)),
+                Span::raw("  "),
+                Span::styled(task, Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+
+        // Summary line
+        let expensive_count = self.data.expensive_worker_count();
+        if expensive_count > 0 {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("⚠ {} expensive", expensive_count),
+                    Style::default().fg(Color::LightRed),
+                ),
+                Span::raw(" (≥"),
+                Span::styled(
+                    format_usd(self.data.expensive_threshold),
+                    Style::default().fg(Color::Gray),
+                ),
+                Span::raw(")"),
+            ]));
+        }
+
+        let paragraph = Paragraph::new(lines);
+        paragraph.render(area, buf);
+    }
 }
 
 impl Widget for CostPanel<'_> {
@@ -853,12 +1014,14 @@ impl Widget for CostPanel<'_> {
             return;
         }
 
-        // Layout: Summary | Table | Trend | Recommendations
+        // Layout: Summary | Worker Costs | Model Table | Trend | Recommendations
         let rec_height = if self.data.has_recommendations() { 5 } else { 0 };
+        let worker_height = if self.data.has_worker_costs() { 8 } else { 0 };
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(11),     // Summary (increased for week line)
+                Constraint::Length(worker_height), // Worker costs
                 Constraint::Min(5),         // Model table
                 Constraint::Length(4),      // Trend sparkline
                 Constraint::Length(rec_height), // Recommendations
@@ -866,10 +1029,13 @@ impl Widget for CostPanel<'_> {
             .split(inner);
 
         self.render_summary(layout[0], buf);
-        self.render_model_table(layout[1], buf);
-        self.render_trend(layout[2], buf);
+        if worker_height > 0 {
+            self.render_worker_costs(layout[1], buf);
+        }
+        self.render_model_table(layout[2], buf);
+        self.render_trend(layout[3], buf);
         if rec_height > 0 {
-            self.render_recommendations(layout[3], buf);
+            self.render_recommendations(layout[4], buf);
         }
     }
 }

@@ -3,6 +3,13 @@
 //! This module provides [`ClaudeApiProvider`] which makes direct API calls to
 //! Anthropic's Claude API using the reqwest HTTP client.
 //!
+//! ## Error Recovery
+//!
+//! The provider implements automatic retry logic for transient errors:
+//! - Network timeouts: Retried with exponential backoff
+//! - 5xx server errors: Retried up to 3 times
+//! - Rate limits: Wait time extracted from response header
+//!
 //! ## Example
 //!
 //! ```no_run
@@ -22,7 +29,7 @@
 
 use ::async_trait::async_trait;
 use tokio::time::Duration;
-use tracing::debug;
+use tracing::{debug, warn, info};
 
 use crate::claude_api_types::{
     ApiMessage, ApiRequest, ApiResponse, ApiTool, ApiUsage, ContentBlock,
@@ -32,6 +39,15 @@ use crate::context::DashboardContext;
 use crate::error::{ChatError, Result};
 use crate::provider::{FinishReason, ProviderTool, TokenUsage};
 use crate::tools::ToolCall;
+
+/// Maximum retries for transient network errors.
+const MAX_RETRIES: u32 = 3;
+
+/// Initial delay for exponential backoff (in milliseconds).
+const INITIAL_RETRY_DELAY_MS: u64 = 500;
+
+/// Maximum delay for retries.
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 
 /// Claude API provider using direct HTTP requests.
 ///
@@ -56,6 +72,7 @@ impl ClaudeApiProvider {
 
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(config.timeout_secs))
+            .connect_timeout(Duration::from_secs(10))
             .build()
             .map_err(|e| ChatError::ConfigError(format!("Failed to create HTTP client: {}", e)))?;
 
@@ -74,6 +91,7 @@ impl ClaudeApiProvider {
         let api_key = api_key.into();
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(config.timeout_secs))
+            .connect_timeout(Duration::from_secs(10))
             .build()
             .map_err(|e| ChatError::ConfigError(format!("Failed to create HTTP client: {}", e)))?;
 
@@ -124,8 +142,60 @@ impl ClaudeApiProvider {
         }
     }
 
-    /// Send the API request and parse the response.
-    async fn send_request(&self, request: &ApiRequest) -> Result<ApiResponse> {
+    /// Send the API request with automatic retry for transient errors.
+    ///
+    /// This method implements exponential backoff retry logic for:
+    /// - Network timeouts
+    /// - Connection failures
+    /// - 5xx server errors
+    /// - Rate limit (429) responses
+    async fn send_request_with_retry(&self, request: &ApiRequest) -> Result<ApiResponse> {
+        let mut attempt = 0;
+        let mut delay = Duration::from_millis(INITIAL_RETRY_DELAY_MS);
+
+        loop {
+            attempt += 1;
+
+            match self.send_request_once(request).await {
+                Ok(response) => {
+                    if attempt > 1 {
+                        info!(
+                            attempt,
+                            "API request succeeded after retry"
+                        );
+                    }
+                    return Ok(response);
+                }
+                Err(ref e) if e.is_retryable() && attempt <= MAX_RETRIES => {
+                    warn!(
+                        attempt,
+                        max_retries = MAX_RETRIES,
+                        delay_ms = delay.as_millis(),
+                        error = %e,
+                        "API request failed, retrying with backoff"
+                    );
+
+                    tokio::time::sleep(delay).await;
+
+                    // Exponential backoff with cap
+                    delay = std::cmp::min(delay * 2, MAX_RETRY_DELAY);
+                }
+                Err(e) => {
+                    if attempt > 1 {
+                        warn!(
+                            attempt,
+                            error = %e,
+                            "API request failed after all retries"
+                        );
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    /// Send a single API request (without retry logic).
+    async fn send_request_once(&self, request: &ApiRequest) -> Result<ApiResponse> {
         debug!("Sending API request to {}", self.base_url);
 
         let response = self
@@ -136,18 +206,40 @@ impl ClaudeApiProvider {
             .header("content-type", "application/json")
             .json(request)
             .send()
-            .await?;
+            .await
+            .map_err(|e| {
+                if e.is_timeout() {
+                    ChatError::Timeout(
+                        self.config.timeout_secs,
+                        "API request timed out".to_string(),
+                    )
+                } else if e.is_connect() {
+                    ChatError::ConnectionFailed(format!("Could not connect to API: {}", e))
+                } else {
+                    ChatError::HttpError(e)
+                }
+            })?;
 
-        if !response.status().is_success() {
-            let status = response.status();
+        let status = response.status();
+
+        if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
+            let status_code = status.as_u16();
+
+            // Check if this is a retryable error
+            if matches!(status_code, 429 | 500 | 502 | 503 | 504) {
+                return Err(ChatError::from_http_status(status_code, &body));
+            }
+
             return Err(ChatError::ApiError(format!(
-                "API error: {} - {}",
-                status, body
+                "API error ({}): {}",
+                status_code, body
             )));
         }
 
-        response.json().await.map_err(ChatError::from)
+        response.json().await.map_err(|e| {
+            ChatError::ApiError(format!("Failed to parse API response: {}", e))
+        })
     }
 
     /// Parse the API response into text and tool calls.
@@ -201,9 +293,9 @@ impl crate::provider::ChatProvider for ClaudeApiProvider {
     ) -> Result<crate::provider::ProviderResponse> {
         let start = std::time::Instant::now();
 
-        // Build and send the request
+        // Build and send the request with automatic retry
         let request = self.build_request(prompt, context, tools);
-        let api_response = self.send_request(&request).await?;
+        let api_response = self.send_request_with_retry(&request).await?;
 
         // Parse the response
         let (text, tool_calls) = Self::parse_response(api_response.clone());

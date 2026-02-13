@@ -10,6 +10,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget},
 };
+use std::collections::HashSet;
 
 use crate::data::WorkerData;
 use forge_worker::health::{HealthLevel, WorkerHealthStatus};
@@ -18,20 +19,39 @@ use forge_worker::health::{HealthLevel, WorkerHealthStatus};
 pub struct WorkerPanel<'a> {
     data: &'a WorkerData,
     focused: bool,
+    /// Set of paused worker IDs
+    paused_workers: &'a HashSet<String>,
+    /// Currently selected worker index
+    selected_index: usize,
 }
 
 impl<'a> WorkerPanel<'a> {
     /// Create a new worker panel.
     pub fn new(data: &'a WorkerData) -> Self {
+        static EMPTY_SET: std::sync::OnceLock<HashSet<String>> = std::sync::OnceLock::new();
         Self {
             data,
             focused: false,
+            paused_workers: EMPTY_SET.get_or_init(HashSet::new),
+            selected_index: 0,
         }
     }
 
     /// Set focus state.
     pub fn focused(mut self, focused: bool) -> Self {
         self.focused = focused;
+        self
+    }
+
+    /// Set the paused workers set.
+    pub fn paused_workers(mut self, paused: &'a HashSet<String>) -> Self {
+        self.paused_workers = paused;
+        self
+    }
+
+    /// Set the selected worker index.
+    pub fn selected(mut self, index: usize) -> Self {
+        self.selected_index = index;
         self
     }
 
@@ -116,15 +136,15 @@ impl<'a> WorkerPanel<'a> {
             lines.push(Line::raw(""));
         }
 
-        // Table header
+        // Table header (with selection column)
         lines.push(Line::from(vec![
-            Span::styled("┌───┬─────────────────┬──────────┬──────────┬─────────────┐",
+            Span::styled("┌───┬───┬─────────────────┬──────────┬──────────┬─────────────┐",
                 Style::default().fg(Color::DarkGray)),
         ]));
         lines.push(Line::from(vec![
+            Span::styled("│S│", Style::default().fg(Color::DarkGray)),
+            Span::styled(" H ", Style::default().fg(Color::DarkGray)),
             Span::styled("│ ", Style::default().fg(Color::DarkGray)),
-            Span::styled("H", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
             Span::styled("Worker ID", Style::default().fg(Color::White)),
             Span::styled("       │ ", Style::default().fg(Color::DarkGray)),
             Span::styled("Model", Style::default().fg(Color::White)),
@@ -135,7 +155,7 @@ impl<'a> WorkerPanel<'a> {
             Span::styled("        │", Style::default().fg(Color::DarkGray)),
         ]));
         lines.push(Line::from(vec![
-            Span::styled("├───┼─────────────────┼──────────┼──────────┼─────────────┤",
+            Span::styled("├───┼───┼─────────────────┼──────────┼──────────┼─────────────┤",
                 Style::default().fg(Color::DarkGray)),
         ]));
 
@@ -144,13 +164,42 @@ impl<'a> WorkerPanel<'a> {
         workers.sort_by(|a, b| a.worker_id.cmp(&b.worker_id));
 
         // Show up to 10 workers
-        for worker in workers.iter().take(10) {
+        for (idx, worker) in workers.iter().enumerate().take(10) {
             let health = self.data.get_health(&worker.worker_id);
             let health_spans = Self::health_indicator_spans(health);
 
+            // Check if this worker is paused
+            let is_paused = self.paused_workers.contains(&worker.worker_id);
+
+            // Check if this row is selected
+            let is_selected = idx == self.selected_index;
+
+            // Determine row style based on state
+            let row_style = if is_selected && self.focused {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else if is_paused {
+                Style::default().fg(Color::Magenta)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            // Selection/pause indicator
+            let sel_indicator = if is_selected && self.focused {
+                "▶"
+            } else if is_paused {
+                "⏸"
+            } else {
+                " "
+            };
+
             let worker_id = truncate_string(&worker.worker_id, 15);
             let model = format_model_name_short(&worker.model);
-            let status = format_status(&worker.status);
+            // Show "Paused" status for paused workers, otherwise show actual status
+            let status = if is_paused {
+                "Paused".to_string()
+            } else {
+                format_status(&worker.status)
+            };
             let task = worker
                 .current_task
                 .as_deref()
@@ -158,13 +207,14 @@ impl<'a> WorkerPanel<'a> {
                 .unwrap_or_else(|| "-".to_string());
 
             let mut row_spans = vec![
-                Span::styled("│ ", Style::default().fg(Color::DarkGray)),
+                Span::styled(sel_indicator, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(" ", Style::default().fg(Color::DarkGray)),
             ];
             row_spans.extend(health_spans);
             row_spans.extend(vec![
                 Span::styled(format!(" │ {:<15} │ {:<8} │ {:<8} │ {:<11} │",
                     worker_id, model, status, task),
-                    Style::default().fg(Color::White)),
+                    row_style),
             ]);
 
             lines.push(Line::from(row_spans));
@@ -172,7 +222,7 @@ impl<'a> WorkerPanel<'a> {
 
         // Table footer
         lines.push(Line::from(vec![
-            Span::styled("└───┴─────────────────┴──────────┴──────────┴─────────────┘",
+            Span::styled("└───┴───┴─────────────────┴──────────┴──────────┴─────────────┘",
                 Style::default().fg(Color::DarkGray)),
         ]));
 
@@ -186,7 +236,7 @@ impl<'a> WorkerPanel<'a> {
 
         // Hotkey hints
         lines.push(Line::from(Span::styled(
-            "\n[G] Spawn GLM  [S] Spawn Sonnet  [O] Spawn Opus  [K] Kill",
+            "\n[j/k] Navigate  [G] Spawn GLM  [S] Spawn Sonnet  [O] Spawn Opus  [K] Kill",
             Style::default().fg(Color::DarkGray),
         )));
         lines.push(Line::from(Span::styled(

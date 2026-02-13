@@ -156,9 +156,10 @@ mod tests {
             (View::Overview, "Worker Pool"),
             (View::Workers, "Worker Pool Management"),
             (View::Tasks, "Task Queue"),
-            (View::Costs, "Cost Analytics"),
-            (View::Metrics, "Performance Metrics"),
-            (View::Logs, "Activity Log"),
+            (View::Costs, "Cost"),
+            (View::Metrics, "Metrics"),
+            (View::Logs, "Activity"),
+            (View::Alerts, "Alerts"),
             (View::Chat, "Chat"),
         ];
 
@@ -349,6 +350,8 @@ mod tests {
             View::Costs,
             View::Metrics,
             View::Logs,
+            View::Subscriptions,
+            View::Alerts,
             View::Chat,
             View::Overview, // Wraps around
         ];
@@ -2795,7 +2798,8 @@ mod tests {
             (KeyCode::Char('c'), View::Costs),
             (KeyCode::Char('m'), View::Metrics),
             (KeyCode::Char('l'), View::Logs),
-            (KeyCode::Char('a'), View::Logs), // 'a' for Activity/Logs
+            (KeyCode::Char('L'), View::Logs),   // 'L' for Logs
+            (KeyCode::Char('a'), View::Alerts), // 'a' for Alerts
         ];
 
         for (keycode, expected_view) in view_keys {
@@ -3389,13 +3393,16 @@ mod tests {
         assert_eq!(View::Tasks.next(), View::Costs);
         assert_eq!(View::Costs.next(), View::Metrics);
         assert_eq!(View::Metrics.next(), View::Logs);
-        assert_eq!(View::Logs.next(), View::Chat);
+        assert_eq!(View::Logs.next(), View::Subscriptions);
+        assert_eq!(View::Subscriptions.next(), View::Alerts);
+        assert_eq!(View::Alerts.next(), View::Chat);
         assert_eq!(View::Chat.next(), View::Overview); // Wrap around
 
         // Backward cycling
         assert_eq!(View::Overview.prev(), View::Chat);
         assert_eq!(View::Workers.prev(), View::Overview);
-        assert_eq!(View::Chat.prev(), View::Logs);
+        assert_eq!(View::Chat.prev(), View::Alerts);
+        assert_eq!(View::Alerts.prev(), View::Subscriptions);
     }
 
     #[test]

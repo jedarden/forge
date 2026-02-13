@@ -119,6 +119,103 @@ pub struct CostBreakdown {
     pub total_cost_usd: f64,
 }
 
+/// Cost breakdown by worker for a time period.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkerCostBreakdown {
+    /// Worker identifier
+    pub worker_id: String,
+
+    /// Session identifier (if available)
+    pub session_id: Option<String>,
+
+    /// Associated bead/task ID (if any)
+    pub bead_id: Option<String>,
+
+    /// Primary model used by this worker
+    pub model: String,
+
+    /// Number of API calls
+    pub call_count: i64,
+
+    /// Total input tokens
+    pub input_tokens: i64,
+
+    /// Total output tokens
+    pub output_tokens: i64,
+
+    /// Total cache creation tokens
+    pub cache_creation_tokens: i64,
+
+    /// Total cache read tokens
+    pub cache_read_tokens: i64,
+
+    /// Total cost in USD
+    pub total_cost_usd: f64,
+
+    /// Average cost per call
+    pub avg_cost_per_call: f64,
+
+    /// Whether this worker is considered expensive (above threshold)
+    pub is_expensive: bool,
+}
+
+impl WorkerCostBreakdown {
+    /// Create a new worker cost breakdown.
+    pub fn new(worker_id: impl Into<String>) -> Self {
+        Self {
+            worker_id: worker_id.into(),
+            session_id: None,
+            bead_id: None,
+            model: String::new(),
+            call_count: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_creation_tokens: 0,
+            cache_read_tokens: 0,
+            total_cost_usd: 0.0,
+            avg_cost_per_call: 0.0,
+            is_expensive: false,
+        }
+    }
+
+    /// Set session ID.
+    pub fn with_session(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
+        self
+    }
+
+    /// Set bead/task ID.
+    pub fn with_bead(mut self, bead_id: impl Into<String>) -> Self {
+        self.bead_id = Some(bead_id.into());
+        self
+    }
+
+    /// Set model.
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        self.model = model.into();
+        self
+    }
+
+    /// Calculate derived metrics.
+    pub fn calculate_derived(&mut self) {
+        self.avg_cost_per_call = if self.call_count > 0 {
+            self.total_cost_usd / self.call_count as f64
+        } else {
+            0.0
+        };
+    }
+
+    /// Mark as expensive if above threshold.
+    pub fn mark_expensive(&mut self, threshold: f64) {
+        self.is_expensive = self.total_cost_usd >= threshold;
+    }
+
+    /// Total tokens (input + output + cache).
+    pub fn total_tokens(&self) -> i64 {
+        self.input_tokens + self.output_tokens + self.cache_creation_tokens + self.cache_read_tokens
+    }
+}
+
 /// Daily cost aggregation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DailyCost {

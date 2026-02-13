@@ -59,7 +59,7 @@ pub use error::{CostError, Result};
 pub use models::{
     ApiCall, CostBreakdown, DailyCost, DailyStat, HourlyStat, ModelCost, ModelPerformance,
     PerformanceSummary, ProjectedCost, QuotaStatus, Subscription, SubscriptionSummary,
-    SubscriptionType, SubscriptionUsageRecord, WorkerEfficiency,
+    SubscriptionType, SubscriptionUsageRecord, WorkerCostBreakdown, WorkerEfficiency,
 };
 pub use optimizer::{
     CostOptimizer, ModelEfficiency, ModelRecommendation, OptimizationRecommendation,

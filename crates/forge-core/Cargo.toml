@@ -25,6 +25,9 @@ serde_json.workspace = true
 # Time
 chrono.workspace = true
 
+# Random number generation (for jitter)
+rand.workspace = true
+
 # Async runtime (for LogGuard Drop and async watching)
 tokio.workspace = true
 
