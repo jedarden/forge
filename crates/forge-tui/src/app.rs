@@ -185,6 +185,10 @@ pub struct App {
     show_task_detail: bool,
     /// Currently selected task index in the flattened task list
     selected_task_index: usize,
+    /// Currently selected alert index in the alerts list
+    selected_alert_index: usize,
+    /// Whether to show the alert detail overlay
+    show_alert_detail: bool,
     /// Configuration watcher for hot-reload
     config_watcher: Option<ConfigWatcher>,
     /// Receiver for config change events
@@ -199,6 +203,10 @@ pub struct App {
     pending_action: Option<PendingAction>,
     /// Pending chat exchange data while streaming
     pending_chat_exchange: Option<PendingChatExchange>,
+    /// Set of paused worker IDs
+    paused_workers: std::collections::HashSet<String>,
+    /// Currently selected worker index in Workers view
+    selected_worker_index: usize,
 }
 
 /// Temporary storage for chat exchange data during streaming display.
@@ -495,12 +503,16 @@ impl App {
             pending_chat_exchange: None,
             show_task_detail: false,
             selected_task_index: 0,
+            selected_alert_index: 0,
+            show_alert_detail: false,
             config_watcher,
             config_rx,
             forge_config,
             data_poll_interval,
             show_confirmation: false,
             pending_action: None,
+            paused_workers: std::collections::HashSet::new(),
+            selected_worker_index: 0,
         }
     }
 
@@ -555,6 +567,8 @@ impl App {
             pending_chat_exchange: None,
             show_task_detail: false,
             selected_task_index: 0,
+            selected_alert_index: 0,
+            show_alert_detail: false,
             config_watcher: None, // Don't initialize in test mode
             config_rx: None,
             forge_config: ForgeConfig::default(),
@@ -564,6 +578,8 @@ impl App {
             pending_action: None,
             task_search_query: String::new(),
             task_search_mode: false,
+            paused_workers: std::collections::HashSet::new(),
+            selected_worker_index: 0,
         }
     }
 
@@ -785,11 +801,14 @@ impl App {
                 View::Metrics => FocusPanel::MetricsCharts,
                 View::Logs => FocusPanel::ActivityLog,
                 View::Subscriptions => FocusPanel::Subscriptions,
+                View::Alerts => FocusPanel::None,
                 View::Chat => FocusPanel::ChatInput,
             };
 
             // Update input handler for chat mode
             self.input_handler.set_chat_mode(view == View::Chat);
+            // Update input handler with current view for view-specific key handling
+            self.input_handler.set_current_view(view);
 
             self.status_message = Some(format!(
                 "{} (Press {} to return here)",
@@ -1316,6 +1335,11 @@ impl App {
                 // In Logs view, scroll the activity log
                 if self.current_view == View::Logs {
                     self.data_manager.activity_log_mut().scroll_up(1);
+                } else if self.current_view == View::Alerts {
+                    // In Alerts view, navigate up through alerts
+                    if self.selected_alert_index > 0 {
+                        self.selected_alert_index -= 1;
+                    }
                 } else if self.scroll_offset > 0 {
                     self.scroll_offset -= 1;
                 }
@@ -1325,6 +1349,12 @@ impl App {
                 // In Logs view, scroll the activity log
                 if self.current_view == View::Logs {
                     self.data_manager.activity_log_mut().scroll_down(1);
+                } else if self.current_view == View::Alerts {
+                    // In Alerts view, navigate down through alerts
+                    let alert_count = self.data_manager.alert_manager.active_count();
+                    if self.selected_alert_index < alert_count.saturating_sub(1) {
+                        self.selected_alert_index += 1;
+                    }
                 } else {
                     self.scroll_offset += 1;
                 }
@@ -1432,6 +1462,9 @@ impl App {
                     // Show task detail overlay
                     self.show_task_detail = true;
                     self.mark_dirty();
+                } else if self.current_view == View::Alerts {
+                    // Acknowledge the selected alert
+                    self.acknowledge_selected_alert();
                 }
             }
             AppEvent::Toggle | AppEvent::FocusNext | AppEvent::FocusPrev => {
@@ -1476,6 +1509,24 @@ impl App {
             }
             AppEvent::Update => {
                 self.trigger_update();
+            }
+            AppEvent::PauseWorker => {
+                self.pause_selected_worker();
+            }
+            AppEvent::PauseAllWorkers => {
+                self.pause_all_workers();
+            }
+            AppEvent::ResumeWorker => {
+                self.resume_selected_worker();
+            }
+            AppEvent::ResumeAllWorkers => {
+                self.resume_all_workers();
+            }
+            AppEvent::AcknowledgeAlert => {
+                self.acknowledge_selected_alert();
+            }
+            AppEvent::AcknowledgeAllAlerts => {
+                self.acknowledge_all_alerts();
             }
             AppEvent::None => {}
         }
@@ -1709,6 +1760,137 @@ impl App {
             }
         }
 
+        self.mark_dirty();
+    }
+
+    /// Pause the currently selected worker in the workers list.
+    fn pause_selected_worker(&mut self) {
+        // Get sorted list of worker IDs
+        let mut workers: Vec<_> = self.data_manager.worker_data.workers.keys().collect();
+        workers.sort();
+
+        if workers.is_empty() {
+            self.status_message = Some("No workers to pause".to_string());
+            self.mark_dirty();
+            return;
+        }
+
+        // Ensure selection is within bounds
+        if self.selected_worker_index >= workers.len() {
+            self.selected_worker_index = 0;
+        }
+
+        let worker_id = workers[self.selected_worker_index].clone();
+
+        // Check if already paused
+        if self.paused_workers.contains(&worker_id) {
+            self.status_message = Some(format!("Worker {} is already paused", worker_id));
+            self.mark_dirty();
+            return;
+        }
+
+        // Add to paused set
+        self.paused_workers.insert(worker_id.clone());
+        self.status_message = Some(format!("Paused worker: {}", worker_id));
+        self.mark_dirty();
+    }
+
+    /// Pause all workers.
+    fn pause_all_workers(&mut self) {
+        let workers = &self.data_manager.worker_data.workers;
+
+        if workers.is_empty() {
+            self.status_message = Some("No workers to pause".to_string());
+            self.mark_dirty();
+            return;
+        }
+
+        let mut paused_count = 0;
+        for worker_id in workers.keys() {
+            if !self.paused_workers.contains(worker_id) {
+                self.paused_workers.insert(worker_id.clone());
+                paused_count += 1;
+            }
+        }
+
+        self.status_message = Some(format!("Paused {} workers", paused_count));
+        self.mark_dirty();
+    }
+
+    /// Resume the currently selected worker in the workers list.
+    fn resume_selected_worker(&mut self) {
+        // Get sorted list of worker IDs
+        let mut workers: Vec<_> = self.data_manager.worker_data.workers.keys().collect();
+        workers.sort();
+
+        if workers.is_empty() {
+            self.status_message = Some("No workers to resume".to_string());
+            self.mark_dirty();
+            return;
+        }
+
+        // Ensure selection is within bounds
+        if self.selected_worker_index >= workers.len() {
+            self.selected_worker_index = 0;
+        }
+
+        let worker_id = workers[self.selected_worker_index].clone();
+
+        // Check if actually paused
+        if !self.paused_workers.contains(&worker_id) {
+            self.status_message = Some(format!("Worker {} is not paused", worker_id));
+            self.mark_dirty();
+            return;
+        }
+
+        // Remove from paused set
+        self.paused_workers.remove(&worker_id);
+        self.status_message = Some(format!("Resumed worker: {}", worker_id));
+        self.mark_dirty();
+    }
+
+    /// Resume all paused workers.
+    fn resume_all_workers(&mut self) {
+        if self.paused_workers.is_empty() {
+            self.status_message = Some("No paused workers to resume".to_string());
+            self.mark_dirty();
+            return;
+        }
+
+        let resumed_count = self.paused_workers.len();
+        self.paused_workers.clear();
+        self.status_message = Some(format!("Resumed {} workers", resumed_count));
+        self.mark_dirty();
+    }
+
+    /// Check if a worker is paused.
+    pub fn is_worker_paused(&self, worker_id: &str) -> bool {
+        self.paused_workers.contains(worker_id)
+    }
+
+    /// Acknowledge the currently selected alert in the alerts list.
+    fn acknowledge_selected_alert(&mut self) {
+        let alerts = self.data_manager.alert_manager.alerts_by_severity();
+        if let Some(alert) = alerts.get(self.selected_alert_index) {
+            let alert_id = alert.id;
+            let worker_id = alert.worker_id.clone();
+            self.data_manager.alert_manager.acknowledge(alert_id);
+            self.status_message = Some(format!("Acknowledged alert for {}", worker_id));
+            self.mark_dirty();
+        } else {
+            self.status_message = Some("No alert selected".to_string());
+            self.mark_dirty();
+        }
+    }
+
+    /// Acknowledge all alerts.
+    fn acknowledge_all_alerts(&mut self) {
+        let count = self.data_manager.acknowledge_all_alerts();
+        if count > 0 {
+            self.status_message = Some(format!("Acknowledged {} alert(s)", count));
+        } else {
+            self.status_message = Some("No alerts to acknowledge".to_string());
+        }
         self.mark_dirty();
     }
 
@@ -2221,6 +2403,7 @@ impl App {
             View::Metrics => self.draw_metrics(frame, area),
             View::Logs => self.draw_logs(frame, area),
             View::Subscriptions => self.draw_subscriptions(frame, area),
+            View::Alerts => self.draw_alerts(frame, area),
             View::Chat => self.draw_chat(frame, area),
         }
     }
@@ -2244,6 +2427,8 @@ impl App {
             Span::raw("Logs "),
             Span::styled("[u]", hotkey_style),
             Span::raw("Subs "),
+            Span::styled("[a]", hotkey_style),
+            Span::raw("Alerts "),
             Span::styled("[:]", hotkey_style),
             Span::raw("Chat "),
             Span::styled("[?]", hotkey_style),
@@ -2602,6 +2787,298 @@ impl App {
             .focused(self.focus_panel == FocusPanel::Subscriptions);
 
         frame.render_widget(subscription_panel, area);
+    }
+
+    /// Draw the Alerts view.
+    fn draw_alerts(&self, frame: &mut Frame, area: Rect) {
+        use crate::alert::AlertSeverity;
+
+        let theme = self.theme_manager.current();
+
+        // Split into two columns: alert list (left) and alert detail (right)
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
+
+        // Get alerts sorted by severity
+        let alerts = self.data_manager.alert_manager.alerts_by_severity();
+
+        // Left panel: Alert list
+        let mut list_lines: Vec<Line> = Vec::new();
+
+        if alerts.is_empty() {
+            list_lines.push(Line::styled(
+                "No active alerts",
+                Style::default().fg(theme.colors.text_dim),
+            ));
+            list_lines.push(Line::raw(""));
+            list_lines.push(Line::styled(
+                "Worker health alerts will appear here when:",
+                Style::default().fg(theme.colors.text_dim),
+            ));
+            list_lines.push(Line::styled(
+                "  - A worker process crashes",
+                Style::default().fg(theme.colors.text_dim),
+            ));
+            list_lines.push(Line::styled(
+                "  - A worker becomes unresponsive",
+                Style::default().fg(theme.colors.text_dim),
+            ));
+            list_lines.push(Line::styled(
+                "  - A task gets stuck",
+                Style::default().fg(theme.colors.text_dim),
+            ));
+            list_lines.push(Line::styled(
+                "  - Memory usage exceeds threshold",
+                Style::default().fg(theme.colors.text_dim),
+            ));
+        } else {
+            // Header
+            let badge = self.data_manager.alert_badge();
+            let header = format!(
+                "Active Alerts: {} critical | {} warning | {} total",
+                badge.critical,
+                badge.warning,
+                badge.total
+            );
+            list_lines.push(Line::styled(
+                header,
+                Style::default()
+                    .fg(theme.colors.text)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            list_lines.push(Line::raw(""));
+
+            for (idx, alert) in alerts.iter().enumerate() {
+                let is_selected = idx == self.selected_alert_index;
+
+                // Color based on severity
+                let color = match alert.severity {
+                    AlertSeverity::Critical => theme.colors.status_error,
+                    AlertSeverity::Warning => theme.colors.status_warning,
+                    AlertSeverity::Info => theme.colors.text_dim,
+                };
+
+                // Acknowledgment marker
+                let ack_marker = if alert.acknowledged { "Y" } else { " " };
+
+                // Occurrence count
+                let count_str = if alert.occurrence_count > 1 {
+                    format!(" (x{})", alert.occurrence_count)
+                } else {
+                    String::new()
+                };
+
+                // Selection indicator
+                let selector = if is_selected { ">" } else { " " };
+
+                // Time since alert
+                let time_ago = {
+                    let now = chrono::Utc::now();
+                    let duration = now.signed_duration_since(alert.created_at);
+                    if duration.num_minutes() < 1 {
+                        "just now".to_string()
+                    } else if duration.num_hours() < 1 {
+                        format!("{}m ago", duration.num_minutes())
+                    } else if duration.num_days() < 1 {
+                        format!("{}h ago", duration.num_hours())
+                    } else {
+                        format!("{}d ago", duration.num_days())
+                    }
+                };
+
+                let line_text = format!(
+                    "{}{} {} [{:>8}] {}{}",
+                    selector,
+                    ack_marker,
+                    alert.severity.icon(),
+                    alert.worker_id,
+                    alert.title,
+                    count_str
+                );
+
+                let style = if is_selected {
+                    Style::default().fg(color).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(color)
+                };
+
+                list_lines.push(Line::styled(line_text, style));
+                list_lines.push(Line::styled(
+                    format!("       {} - {}", time_ago, alert.message),
+                    Style::default().fg(theme.colors.text_dim),
+                ));
+            }
+        }
+
+        let list_block = Block::default()
+            .title(" Alerts ")
+            .title_style(Style::default().fg(theme.colors.header))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme.colors.border_dim));
+
+        let list_paragraph = Paragraph::new(list_lines)
+            .block(list_block)
+            .wrap(Wrap { trim: false });
+
+        frame.render_widget(list_paragraph, chunks[0]);
+
+        // Right panel: Alert detail
+        let mut detail_lines: Vec<Line> = Vec::new();
+
+        if let Some(alert) = alerts.get(self.selected_alert_index) {
+            detail_lines.push(Line::styled(
+                format!("{} Alert Details", alert.severity.icon()),
+                Style::default()
+                    .fg(theme.colors.header)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            detail_lines.push(Line::raw(""));
+
+            detail_lines.push(Line::styled(
+                "Worker:",
+                Style::default().fg(theme.colors.text_dim),
+            ));
+            detail_lines.push(Line::styled(
+                format!("  {}", alert.worker_id),
+                Style::default().fg(theme.colors.text),
+            ));
+            detail_lines.push(Line::raw(""));
+
+            detail_lines.push(Line::styled(
+                "Type:",
+                Style::default().fg(theme.colors.text_dim),
+            ));
+            detail_lines.push(Line::styled(
+                format!("  {}", alert.title),
+                Style::default().fg(theme.colors.text),
+            ));
+            detail_lines.push(Line::raw(""));
+
+            detail_lines.push(Line::styled(
+                "Severity:",
+                Style::default().fg(theme.colors.text_dim),
+            ));
+            let severity_color = match alert.severity {
+                AlertSeverity::Critical => theme.colors.status_error,
+                AlertSeverity::Warning => theme.colors.status_warning,
+                AlertSeverity::Info => theme.colors.text_dim,
+            };
+            detail_lines.push(Line::styled(
+                format!("  {:?}", alert.severity),
+                Style::default().fg(severity_color),
+            ));
+            detail_lines.push(Line::raw(""));
+
+            detail_lines.push(Line::styled(
+                "Message:",
+                Style::default().fg(theme.colors.text_dim),
+            ));
+            for line in alert.message.lines() {
+                detail_lines.push(Line::styled(
+                    format!("  {}", line),
+                    Style::default().fg(theme.colors.text),
+                ));
+            }
+            detail_lines.push(Line::raw(""));
+
+            detail_lines.push(Line::styled(
+                "First Seen:",
+                Style::default().fg(theme.colors.text_dim),
+            ));
+            detail_lines.push(Line::styled(
+                format!("  {}", alert.created_at.format("%Y-%m-%d %H:%M:%S UTC")),
+                Style::default().fg(theme.colors.text),
+            ));
+            detail_lines.push(Line::raw(""));
+
+            detail_lines.push(Line::styled(
+                "Last Updated:",
+                Style::default().fg(theme.colors.text_dim),
+            ));
+            detail_lines.push(Line::styled(
+                format!("  {}", alert.updated_at.format("%Y-%m-%d %H:%M:%S UTC")),
+                Style::default().fg(theme.colors.text),
+            ));
+            detail_lines.push(Line::raw(""));
+
+            detail_lines.push(Line::styled(
+                "Occurrences:",
+                Style::default().fg(theme.colors.text_dim),
+            ));
+            detail_lines.push(Line::styled(
+                format!("  {}", alert.occurrence_count),
+                Style::default().fg(theme.colors.text),
+            ));
+            detail_lines.push(Line::raw(""));
+
+            detail_lines.push(Line::styled(
+                "Status:",
+                Style::default().fg(theme.colors.text_dim),
+            ));
+            let status_text = if alert.acknowledged {
+                "Acknowledged"
+            } else if alert.is_active {
+                "Active"
+            } else {
+                "Resolved"
+            };
+            let status_color = if alert.acknowledged {
+                theme.colors.text_dim
+            } else if alert.is_active {
+                theme.colors.status_warning
+            } else {
+                theme.colors.status_healthy
+            };
+            detail_lines.push(Line::styled(
+                format!("  {}", status_text),
+                Style::default().fg(status_color),
+            ));
+            detail_lines.push(Line::raw(""));
+
+            // Actions
+            detail_lines.push(Line::styled(
+                "-".repeat(30),
+                Style::default().fg(theme.colors.border_dim),
+            ));
+            detail_lines.push(Line::styled(
+                "Actions:",
+                Style::default()
+                    .fg(theme.colors.hotkey)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            detail_lines.push(Line::raw(""));
+            detail_lines.push(Line::styled(
+                "  [Enter] Acknowledge this alert",
+                Style::default().fg(theme.colors.text_dim),
+            ));
+            detail_lines.push(Line::styled(
+                "  [A] Acknowledge all alerts",
+                Style::default().fg(theme.colors.text_dim),
+            ));
+            detail_lines.push(Line::styled(
+                "  [Up/Down] Navigate alerts",
+                Style::default().fg(theme.colors.text_dim),
+            ));
+        } else {
+            detail_lines.push(Line::styled(
+                "Select an alert to view details",
+                Style::default().fg(theme.colors.text_dim),
+            ));
+        }
+
+        let detail_block = Block::default()
+            .title(" Details ")
+            .title_style(Style::default().fg(theme.colors.header))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme.colors.border_dim));
+
+        let detail_paragraph = Paragraph::new(detail_lines)
+            .block(detail_block)
+            .wrap(Wrap { trim: false });
+
+        frame.render_widget(detail_paragraph, chunks[1]);
     }
 
     /// Draw the Chat view.

@@ -1318,6 +1318,27 @@ impl DataManager {
 
         // Set default budget config (can be customized later)
         self.cost_data.set_budget(BudgetConfig::default());
+
+        // Get worker cost breakdown (top 10 workers)
+        match query.get_today_worker_costs(10) {
+            Ok(mut workers) => {
+                // Calculate session total and mark expensive workers
+                let session_total: f64 = workers.iter().map(|w| w.total_cost_usd).sum();
+
+                // Set expensive threshold to 10% of session total or $1, whichever is higher
+                let threshold = (session_total * 0.1).max(1.0);
+                for worker in &mut workers {
+                    worker.is_expensive = worker.total_cost_usd >= threshold;
+                }
+
+                self.cost_data.set_worker_costs(workers);
+                self.cost_data.set_session_total(session_total);
+                self.cost_data.set_expensive_threshold(threshold);
+            }
+            Err(_) => {
+                // Worker cost failure is non-critical
+            }
+        }
     }
 
     /// Poll tmux for worker sessions.
