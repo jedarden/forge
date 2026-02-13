@@ -74,6 +74,10 @@ pub struct ThemeColors {
     pub text_dim: Color,
     /// Unfocused borders
     pub border_dim: Color,
+    /// Bright focus indicator for panel borders/titles
+    pub focus_highlight: Color,
+    /// Dimmed text for unfocused panels
+    pub unfocused_text: Color,
     /// Status: healthy/success
     pub status_healthy: Color,
     /// Status: warning
@@ -112,6 +116,8 @@ impl Theme {
                 text: Color::White,
                 text_dim: Color::Gray,
                 border_dim: Color::DarkGray,
+                focus_highlight: Color::LightCyan,
+                unfocused_text: Color::DarkGray,
                 status_healthy: Color::Green,
                 status_warning: Color::Yellow,
                 status_error: Color::Red,
@@ -134,6 +140,8 @@ impl Theme {
                 text: Color::White,
                 text_dim: Color::DarkGray,
                 border_dim: Color::Black,
+                focus_highlight: Color::Blue,
+                unfocused_text: Color::DarkGray,
                 status_healthy: Color::LightGreen,
                 status_warning: Color::LightYellow,
                 status_error: Color::LightRed,
@@ -156,6 +164,8 @@ impl Theme {
                 text: Color::Black,
                 text_dim: Color::DarkGray,
                 border_dim: Color::Gray,
+                focus_highlight: Color::Blue,
+                unfocused_text: Color::Gray,
                 status_healthy: Color::Green,
                 status_warning: Color::Yellow,
                 status_error: Color::Red,
@@ -178,6 +188,8 @@ impl Theme {
                 text: Color::White,
                 text_dim: Color::LightMagenta,
                 border_dim: Color::DarkGray,
+                focus_highlight: Color::LightMagenta,
+                unfocused_text: Color::DarkGray,
                 status_healthy: Color::Green,
                 status_warning: Color::Yellow,
                 status_error: Color::Red,
