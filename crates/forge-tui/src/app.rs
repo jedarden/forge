@@ -151,6 +151,14 @@ pub struct App {
     chat_pending: bool,
     /// Spinner animation frame index (0-3 for 4-frame spinner)
     chat_spinner_frame: usize,
+    /// Partial response being streamed (for visual streaming effect)
+    streaming_response: String,
+    /// Current streaming position (character index)
+    streaming_position: usize,
+    /// Whether streaming is active
+    streaming_active: bool,
+    /// Complete response received but not yet displayed
+    pending_complete_response: Option<String>,
     /// Chat conversation history (last 10 exchanges)
     chat_history: Vec<ChatExchange>,
     /// Chat history vertical scroll offset (lines scrolled from bottom)
@@ -185,6 +193,20 @@ pub struct App {
     show_confirmation: bool,
     /// The pending action awaiting confirmation
     pending_action: Option<PendingAction>,
+    /// Pending chat exchange data while streaming
+    pending_chat_exchange: Option<PendingChatExchange>,
+}
+
+/// Temporary storage for chat exchange data during streaming display.
+#[derive(Clone, Debug)]
+struct PendingChatExchange {
+    query: String,
+    response_text: String,
+    timestamp: String,
+    tool_calls: Vec<ToolCallInfo>,
+    side_effects: Vec<SideEffectInfo>,
+    confirmation: Option<ConfirmationInfo>,
+    metadata: ResponseMetadata,
 }
 
 /// A single chat exchange (user query + assistant response).
@@ -426,6 +448,10 @@ impl App {
             chat_response_rx: None,
             chat_pending: false,
             chat_spinner_frame: 0,
+            streaming_response: String::new(),
+            streaming_position: 0,
+            streaming_active: false,
+            pending_complete_response: None,
             chat_history: Vec::new(),
             chat_scroll_offset: 0,
             worker_launcher,
@@ -435,6 +461,7 @@ impl App {
             kill_dialog_selected: 0,
             kill_dialog_error: None,
             priority_filter: None,
+            pending_chat_exchange: None,
             show_task_detail: false,
             selected_task_index: 0,
             config_watcher,
@@ -478,6 +505,10 @@ impl App {
             chat_response_tx: None,
             chat_response_rx: None,
             chat_pending: false,
+            streaming_response: String::new(),
+            streaming_position: 0,
+            streaming_active: false,
+            pending_complete_response: None,
             chat_history: Vec::new(),
             chat_scroll_offset: 0,
             worker_launcher: WorkerLauncher::new(),
@@ -490,6 +521,7 @@ impl App {
             kill_dialog_selected: 0,
             kill_dialog_error: None,
             priority_filter: None,
+            pending_chat_exchange: None,
             show_task_detail: false,
             selected_task_index: 0,
             config_watcher: None, // Don't initialize in test mode
@@ -845,18 +877,25 @@ impl App {
                         provider: response.provider.clone(),
                     };
 
-                    self.chat_history.push(ChatExchange {
-                        user_query: query,
-                        assistant_response: response.text,
+                    // Start streaming the response instead of adding immediately
+                    // Store the complete response data for streaming display
+                    self.pending_complete_response = Some(response.text.clone());
+                    self.streaming_response = String::new();
+                    self.streaming_position = 0;
+                    self.streaming_active = true;
+
+                    // Store the pending ChatExchange data for when streaming completes
+                    // We'll create the exchange in update_streaming when streaming finishes
+                    self.pending_chat_exchange = Some(PendingChatExchange {
+                        query,
+                        response_text: response.text,
                         timestamp,
-                        is_error: false,
                         tool_calls,
                         side_effects,
                         confirmation,
                         metadata,
-                        error_guidance: None,
                     });
-                    self.status_message = Some("✅ Response received".to_string());
+                    self.status_message = Some("✅ Streaming response...".to_string());
                 }
                 Err(e) => {
                     info!("❌ Error response: {}", e);
@@ -891,6 +930,89 @@ impl App {
             self.mark_dirty();
             info!("🔄 UI marked dirty for redraw");
         }
+    }
+
+    /// Update streaming display by advancing character position.
+    ///
+    /// This creates a visual streaming effect by revealing the response
+    /// character by character at a configurable speed.
+    fn update_streaming(&mut self) {
+        if !self.streaming_active {
+            return;
+        }
+
+        // Get the complete response text
+        let complete_text = match &self.pending_complete_response {
+            Some(text) => text.clone(),
+            None => {
+                // No text to stream, stop streaming
+                self.streaming_active = false;
+                return;
+            }
+        };
+
+        // How many characters to reveal per frame (streaming speed)
+        // Adjust this to change streaming speed - higher = faster
+        const CHARS_PER_FRAME: usize = 3;
+
+        let total_chars = complete_text.chars().count();
+
+        if self.streaming_position >= total_chars {
+            // Streaming complete - finalize the exchange
+            self.finalize_streaming();
+            return;
+        }
+
+        // Advance position
+        let new_position = (self.streaming_position + CHARS_PER_FRAME).min(total_chars);
+
+        // Update streaming_response with characters up to new position
+        self.streaming_response = complete_text
+            .chars()
+            .take(new_position)
+            .collect();
+
+        self.streaming_position = new_position;
+        self.mark_dirty();
+
+        // Check if streaming is complete
+        if self.streaming_position >= total_chars {
+            self.finalize_streaming();
+        }
+    }
+
+    /// Finalize streaming by adding the completed exchange to history.
+    fn finalize_streaming(&mut self) {
+        self.streaming_active = false;
+
+        // Get the pending exchange data
+        if let Some(pending) = self.pending_chat_exchange.take() {
+            self.chat_history.push(ChatExchange {
+                user_query: pending.query,
+                assistant_response: pending.response_text,
+                timestamp: pending.timestamp,
+                is_error: false,
+                tool_calls: pending.tool_calls,
+                side_effects: pending.side_effects,
+                confirmation: pending.confirmation,
+                metadata: pending.metadata,
+                error_guidance: None,
+            });
+
+            // Keep only last 10 exchanges
+            if self.chat_history.len() > 10 {
+                self.chat_history.remove(0);
+            }
+
+            self.status_message = Some("✅ Response complete".to_string());
+        }
+
+        // Clear streaming state
+        self.streaming_response.clear();
+        self.streaming_position = 0;
+        self.pending_complete_response = None;
+        self.chat_pending = false;
+        self.mark_dirty();
     }
 
     /// Poll for config changes and apply hot-reload.
@@ -1820,6 +1942,9 @@ impl App {
             // frequently to ensure responsive chat UX. Don't let data polling block it.
             self.poll_chat_responses();
 
+            // Update streaming display if active
+            self.update_streaming();
+
             // Poll for config hot-reload changes
             self.poll_config_changes();
 
@@ -1838,6 +1963,9 @@ impl App {
             // Poll for chat responses again after data polling in case a response
             // arrived while we were doing the (potentially slow) data poll
             self.poll_chat_responses();
+
+            // Update streaming display if active
+            self.update_streaming();
 
             // Poll for update completion
             self.poll_update_result();
@@ -2604,7 +2732,21 @@ impl App {
                 lines.push(Line::raw("")); // Blank line between exchanges
             }
 
-            if self.chat_pending {
+            // Show streaming response or processing indicator
+            if self.streaming_active && !self.streaming_response.is_empty() {
+                // Show streaming response with a typing indicator
+                let cursor = "▌"; // Block cursor for streaming effect
+                for line in self.streaming_response.lines() {
+                    lines.push(Line::styled(
+                        format!("  Assistant: {}{}", line, cursor),
+                        Style::default().fg(theme.colors.text),
+                    ));
+                }
+                // If response ends mid-line, show cursor at end
+                if !self.streaming_response.ends_with('\n') && !self.streaming_response.is_empty() {
+                    // Cursor already shown above
+                }
+            } else if self.chat_pending {
                 let spinner = SPINNER_FRAMES[self.chat_spinner_frame % SPINNER_FRAMES.len()];
                 lines.push(Line::styled(
                     format!("{} Processing your request...", spinner),

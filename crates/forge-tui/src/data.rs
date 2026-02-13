@@ -5,12 +5,14 @@
 //! forge-core's StatusWatcher to provide real-time updates, forge-worker's
 //! tmux discovery for additional session information, the BeadManager
 //! for task queue data from monitored workspaces, forge-cost for cost analytics,
-//! LogWatcher for real-time log parsing, and HealthMonitor for worker health tracking.
+//! LogWatcher for real-time log parsing, HealthMonitor for worker health tracking,
+//! and AlertManager for worker health alerts.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::activity_panel::{ActivityEntry, ActivityEventType, ActivityLogData};
+use crate::alert::{AlertManager, AlertType, AlertBadge};
 use crate::bead::BeadManager;
 use crate::cost_panel::{BudgetConfig, CostPanelData};
 use crate::log_watcher::{LogWatcher, LogWatcherConfig, LogWatcherEvent, RealtimeMetrics};
@@ -20,7 +22,7 @@ use crate::subscription_panel::SubscriptionData;
 use forge_core::types::WorkerStatus;
 use forge_cost::{CostDatabase, CostQuery, SubscriptionTracker};
 use forge_worker::discovery::DiscoveryResult;
-use forge_worker::health::{HealthMonitor, HealthMonitorConfig, HealthLevel, WorkerHealthStatus};
+use forge_worker::health::{HealthMonitor, HealthMonitorConfig, HealthLevel, WorkerHealthStatus, HealthCheckType};
 
 /// Aggregated worker data for TUI display.
 #[derive(Debug, Default)]
@@ -493,7 +495,7 @@ const SUBSCRIPTION_POLL_INTERVAL_SECS: u64 = 60;
 /// Interval for health monitoring (30 seconds).
 const HEALTH_POLL_INTERVAL_SECS: u64 = 30;
 
-/// Data manager that handles the StatusWatcher, BeadManager, CostDatabase, LogWatcher, HealthMonitor, and provides formatted data.
+/// Data manager that handles the StatusWatcher, BeadManager, CostDatabase, LogWatcher, HealthMonitor, AlertManager, and provides formatted data.
 pub struct DataManager {
     /// StatusWatcher for real-time updates
     watcher: Option<StatusWatcher>,
@@ -515,6 +517,8 @@ pub struct DataManager {
     pub realtime_metrics: RealtimeMetrics,
     /// Health monitor for worker health checks
     health_monitor: Option<HealthMonitor>,
+    /// Alert manager for worker health alerts
+    pub alert_manager: AlertManager,
     /// Activity log data for real-time streaming display
     pub activity_data: ActivityLogData,
     /// Error message if watcher failed to initialize
@@ -639,6 +643,9 @@ impl DataManager {
             }
         };
 
+        // Initialize alert manager for worker health alerts
+        let alert_manager = AlertManager::new(100);
+
         // Initialize activity log data
         let activity_data = ActivityLogData::with_default_capacity();
 
@@ -653,6 +660,7 @@ impl DataManager {
             metrics_data,
             realtime_metrics,
             health_monitor,
+            alert_manager,
             activity_data,
             init_error,
             last_tmux_poll: None,
@@ -739,6 +747,9 @@ impl DataManager {
         // Initialize health monitor
         let health_monitor = HealthMonitor::new(HealthMonitorConfig::default()).ok();
 
+        // Initialize alert manager for worker health alerts
+        let alert_manager = AlertManager::new(100);
+
         // Initialize activity log data
         let activity_data = ActivityLogData::with_default_capacity();
 
@@ -756,6 +767,7 @@ impl DataManager {
             metrics_data,
             realtime_metrics,
             health_monitor,
+            alert_manager,
             activity_data,
             init_error,
             last_tmux_poll: None,
