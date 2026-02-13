@@ -326,6 +326,31 @@ fn get_error_guidance(error_message: &str) -> Option<String> {
         return Some("Ensure you have sufficient system resources and the worker binary is available.".to_string());
     }
 
+    // Context gathering errors
+    if error_lower.contains("context") && error_lower.contains("failed") {
+        return Some("The dashboard context could not be loaded. Try restarting the application.".to_string());
+    }
+
+    // Permission/access errors
+    if error_lower.contains("permission") || error_lower.contains("access denied") || error_lower.contains("forbidden") {
+        return Some("You don't have permission for this action. Check your configuration and credentials.".to_string());
+    }
+
+    // Resource not found errors (general)
+    if error_lower.contains("not found") || error_lower.contains("does not exist") {
+        return Some("The requested resource was not found. Verify the name and try again.".to_string());
+    }
+
+    // JSON parsing errors
+    if error_lower.contains("json") || error_lower.contains("parse") || error_lower.contains("deserialize") {
+        return Some("There was a problem processing the response. The server may have returned unexpected data.".to_string());
+    }
+
+    // IO errors
+    if error_lower.contains("io error") || error_lower.contains("file") && error_lower.contains("error") {
+        return Some("A file system error occurred. Check file permissions and available disk space.".to_string());
+    }
+
     None
 }
 
@@ -814,88 +839,112 @@ impl App {
 
             match result {
                 Ok(response) => {
-                    info!(
-                        "✅ Success! Response text length: {} chars",
-                        response.text.len()
-                    );
-                    info!(
-                        "Response preview: {}",
-                        response.text.chars().take(100).collect::<String>()
-                    );
+                    // Check if ChatResponse indicates an error (ChatResponse::error() returns Ok with success=false)
+                    if !response.success {
+                        info!("❌ ChatResponse error: {:?}", response.error);
+                        let error_msg = response.error.clone().unwrap_or_else(|| "Unknown error".to_string());
+                        let guidance = get_error_guidance(&error_msg);
 
-                    // Extract tool call information (pair by index since tools execute in order)
-                    let tool_calls: Vec<ToolCallInfo> = response
-                        .tool_results
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, result)| {
-                            let name = response
-                                .tool_calls
-                                .get(idx)
-                                .map(|c| c.name.clone())
-                                .unwrap_or_else(|| "unknown".to_string());
-                            ToolCallInfo {
-                                name,
-                                success: result.success,
-                                message: result.message.clone(),
-                            }
-                        })
-                        .collect();
-
-                    // Extract side effects
-                    let side_effects: Vec<SideEffectInfo> = response
-                        .tool_results
-                        .iter()
-                        .flat_map(|result| {
-                            result.side_effects.iter().map(|effect| SideEffectInfo {
-                                effect_type: effect.effect_type.clone(),
-                                description: effect.description.clone(),
-                            })
-                        })
-                        .collect();
-
-                    // Extract confirmation info if present
-                    let confirmation = response.confirmation_required.as_ref().map(|c| {
-                        ConfirmationInfo {
-                            title: c.title.clone(),
-                            description: c.description.clone(),
-                            level: match c.level {
-                                forge_chat::tools::ConfirmationLevel::Info => ConfirmationLevel::Info,
-                                forge_chat::tools::ConfirmationLevel::Warning => ConfirmationLevel::Warning,
-                                forge_chat::tools::ConfirmationLevel::Danger => ConfirmationLevel::Danger,
+                        self.chat_history.push(ChatExchange {
+                            user_query: query,
+                            assistant_response: response.text.clone(),
+                            timestamp,
+                            is_error: true,
+                            tool_calls: vec![],
+                            side_effects: vec![],
+                            confirmation: None,
+                            metadata: ResponseMetadata {
+                                duration_ms: response.duration_ms,
+                                cost_usd: response.cost_usd,
+                                provider: response.provider.clone(),
                             },
-                            cost_impact: c.cost_impact,
-                            affected_items: c.affected_items.clone(),
-                            reversible: c.reversible,
-                        }
-                    });
+                            error_guidance: guidance,
+                        });
+                        self.status_message = Some(format!("❌ Chat error: {}", error_msg));
+                    } else {
+                        info!(
+                            "✅ Success! Response text length: {} chars",
+                            response.text.len()
+                        );
+                        info!(
+                            "Response preview: {}",
+                            response.text.chars().take(100).collect::<String>()
+                        );
 
-                    // Extract metadata
-                    let metadata = ResponseMetadata {
-                        duration_ms: response.duration_ms,
-                        cost_usd: response.cost_usd,
-                        provider: response.provider.clone(),
-                    };
+                        // Extract tool call information (pair by index since tools execute in order)
+                        let tool_calls: Vec<ToolCallInfo> = response
+                            .tool_results
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, result)| {
+                                let name = response
+                                    .tool_calls
+                                    .get(idx)
+                                    .map(|c| c.name.clone())
+                                    .unwrap_or_else(|| "unknown".to_string());
+                                ToolCallInfo {
+                                    name,
+                                    success: result.success,
+                                    message: result.message.clone(),
+                                }
+                            })
+                            .collect();
 
-                    // Start streaming the response instead of adding immediately
-                    // Store the complete response data for streaming display
-                    self.pending_complete_response = Some(response.text.clone());
-                    self.streaming_response = String::new();
-                    self.streaming_position = 0;
-                    self.streaming_active = true;
+                        // Extract side effects
+                        let side_effects: Vec<SideEffectInfo> = response
+                            .tool_results
+                            .iter()
+                            .flat_map(|result| {
+                                result.side_effects.iter().map(|effect| SideEffectInfo {
+                                    effect_type: effect.effect_type.clone(),
+                                    description: effect.description.clone(),
+                                })
+                            })
+                            .collect();
 
-                    // Store the pending ChatExchange data for when streaming completes
-                    // We'll create the exchange in update_streaming when streaming finishes
-                    self.pending_chat_exchange = Some(PendingChatExchange {
-                        query,
-                        response_text: response.text,
-                        timestamp,
-                        tool_calls,
-                        side_effects,
-                        confirmation,
-                        metadata,
-                    });
-                    self.status_message = Some("✅ Streaming response...".to_string());
+                        // Extract confirmation info if present
+                        let confirmation = response.confirmation_required.as_ref().map(|c| {
+                            ConfirmationInfo {
+                                title: c.title.clone(),
+                                description: c.description.clone(),
+                                level: match c.level {
+                                    forge_chat::tools::ConfirmationLevel::Info => ConfirmationLevel::Info,
+                                    forge_chat::tools::ConfirmationLevel::Warning => ConfirmationLevel::Warning,
+                                    forge_chat::tools::ConfirmationLevel::Danger => ConfirmationLevel::Danger,
+                                },
+                                cost_impact: c.cost_impact,
+                                affected_items: c.affected_items.clone(),
+                                reversible: c.reversible,
+                            }
+                        });
+
+                        // Extract metadata
+                        let metadata = ResponseMetadata {
+                            duration_ms: response.duration_ms,
+                            cost_usd: response.cost_usd,
+                            provider: response.provider.clone(),
+                        };
+
+                        // Start streaming the response instead of adding immediately
+                        // Store the complete response data for streaming display
+                        self.pending_complete_response = Some(response.text.clone());
+                        self.streaming_response = String::new();
+                        self.streaming_position = 0;
+                        self.streaming_active = true;
+
+                        // Store the pending ChatExchange data for when streaming completes
+                        // We'll create the exchange in update_streaming when streaming finishes
+                        self.pending_chat_exchange = Some(PendingChatExchange {
+                            query,
+                            response_text: response.text,
+                            timestamp,
+                            tool_calls,
+                            side_effects,
+                            confirmation,
+                            metadata,
+                        });
+                        self.status_message = Some("✅ Streaming response...".to_string());
+                    }
                 }
                 Err(e) => {
                     info!("❌ Error response: {}", e);
@@ -2078,6 +2127,19 @@ impl App {
         // Terminal dimensions display
         let dimensions = format!("{}×{}", frame.area().width, frame.area().height);
 
+        // Get alert badge for display
+        let alert_badge = self.data_manager.alert_badge();
+        let alert_text = if alert_badge.should_display() {
+            format!(" {} ", alert_badge.format_compact())
+        } else {
+            String::new()
+        };
+        let alert_color = if alert_badge.critical > 0 {
+            theme.colors.status_error
+        } else {
+            theme.colors.status_warning
+        };
+
         // Determine system status from real data
         let (status_text, status_color) = if let Some(err) = self.data_manager.init_error() {
             (
@@ -2103,14 +2165,14 @@ impl App {
             }
         };
 
-        // Calculate spacing to right-align timestamp, dimensions, and status
-        let right_content_len = now.len() + 2 + dimensions.len() + 2 + status_text.len();
+        // Calculate spacing to right-align timestamp, dimensions, alert badge, and status
+        let right_content_len = now.len() + 2 + dimensions.len() + 2 + alert_text.len() + status_text.len();
         let spacing = area
             .width
             .saturating_sub(title_len as u16 + right_content_len as u16 + 2)
             as usize;
 
-        let header = Paragraph::new(Line::from(vec![
+        let mut header_spans = vec![
             Span::styled(
                 title,
                 Style::default()
@@ -2122,8 +2184,16 @@ impl App {
             Span::raw("  "),
             Span::styled(dimensions, Style::default().fg(theme.colors.text_dim)),
             Span::raw("  "),
-            Span::styled(status_text, Style::default().fg(status_color)),
-        ]))
+        ];
+
+        // Add alert badge if there are alerts
+        if alert_badge.should_display() {
+            header_spans.push(Span::styled(&alert_text, Style::default().fg(alert_color).add_modifier(Modifier::BOLD)));
+        }
+
+        header_spans.push(Span::styled(status_text, Style::default().fg(status_color)));
+
+        let header = Paragraph::new(Line::from(header_spans))
         .block(
             Block::default()
                 .borders(Borders::ALL)

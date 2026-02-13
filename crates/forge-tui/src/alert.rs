@@ -18,7 +18,6 @@
 //! - Sound notification (future)
 
 use chrono::{DateTime, Utc};
-use itertools::Itertools;
 use std::collections::HashMap;
 
 /// Alert severity level.
@@ -505,11 +504,15 @@ impl AlertManager {
 
     /// Prune oldest resolved alerts.
     fn prune_oldest_resolved(&mut self) {
-        let to_remove: Vec<u64> = self
+        let mut resolved: Vec<_> = self
             .alerts
             .iter()
             .filter(|(_, a)| !a.is_active)
-            .sorted_by(|a, b| a.1.created_at.cmp(&b.1.created_at))
+            .collect();
+        resolved.sort_by_key(|(_, a)| a.created_at);
+
+        let to_remove: Vec<u64> = resolved
+            .into_iter()
             .take(self.alerts.len().saturating_sub(self.max_active))
             .map(|(id, _)| *id)
             .collect();

@@ -1066,7 +1066,7 @@ impl DataManager {
                 // Track previous health for comparison
                 let prev_health = self.worker_data.health_status.clone();
 
-                // Check if any worker became unhealthy and add activity entries
+                // Check if any worker became unhealthy and add activity entries and alerts
                 for (worker_id, health) in &health_status {
                     let prev_was_healthy = prev_health
                         .get(worker_id)
@@ -1094,9 +1094,39 @@ impl DataManager {
                         };
 
                         self.activity_data.push(
-                            ActivityEntry::new(ActivityEventType::Warning, msg)
+                            ActivityEntry::new(ActivityEventType::Warning, msg.clone())
                                 .with_source(worker_id),
                         );
+
+                        // Create alerts based on failed health checks
+                        for failed_check in &health.failed_checks {
+                            let (alert_type, alert_msg) = match failed_check {
+                                HealthCheckType::PidExists => {
+                                    (AlertType::WorkerCrashed, health.primary_error.clone())
+                                }
+                                HealthCheckType::ActivityFresh => {
+                                    (AlertType::WorkerStale, health.primary_error.clone())
+                                }
+                                HealthCheckType::MemoryUsage => {
+                                    (AlertType::MemoryHigh, health.primary_error.clone())
+                                }
+                                HealthCheckType::TaskProgress => {
+                                    (AlertType::TaskStuck, health.primary_error.clone())
+                                }
+                                HealthCheckType::TmuxSession => {
+                                    (AlertType::WorkerCrashed, Some("Tmux session missing".to_string()))
+                                }
+                                HealthCheckType::ResponseHealth => {
+                                    (AlertType::WorkerUnresponsive, health.primary_error.clone())
+                                }
+                            };
+
+                            self.alert_manager.raise(
+                                alert_type,
+                                worker_id.clone(),
+                                alert_msg,
+                            );
+                        }
 
                         // Add guidance for recovery
                         if !health.guidance.is_empty() {
@@ -1114,29 +1144,41 @@ impl DataManager {
 
                     // Check for auto-restart trigger
                     if health.should_auto_restart {
+                        let msg = format!("Auto-restart triggered after {} consecutive failures",
+                            health.consecutive_failures);
                         self.activity_data.push(
                             ActivityEntry::new(
                                 ActivityEventType::Warning,
-                                format!("Auto-restart triggered after {} consecutive failures",
-                                    health.consecutive_failures),
+                                msg.clone(),
                             )
                             .with_source(worker_id),
+                        );
+                        self.alert_manager.raise(
+                            AlertType::AutoRestartTriggered,
+                            worker_id.clone(),
+                            Some(msg),
                         );
                     }
 
                     // Check for recovery exhaustion
                     if health.recovery_exhausted && !health.is_healthy {
+                        let msg = format!("Recovery exhausted ({} attempts) - manual intervention required",
+                            health.recovery_attempts);
                         self.activity_data.push(
                             ActivityEntry::new(
                                 ActivityEventType::Error,
-                                format!("Recovery exhausted ({} attempts) - manual intervention required",
-                                    health.recovery_attempts),
+                                msg.clone(),
                             )
                             .with_source(worker_id),
                         );
+                        self.alert_manager.raise(
+                            AlertType::RecoveryExhausted,
+                            worker_id.clone(),
+                            Some(msg),
+                        );
                     }
 
-                    // Log when worker recovers
+                    // Log when worker recovers - clear alerts
                     if health.is_healthy && !prev_was_healthy {
                         self.activity_data.push(
                             ActivityEntry::new(
@@ -1144,6 +1186,14 @@ impl DataManager {
                                 "Worker recovered - all health checks passing".to_string(),
                             )
                             .with_source(worker_id),
+                        );
+                        // Resolve all alerts for this worker
+                        self.alert_manager.resolve_all_for_worker(worker_id);
+                        // Raise a recovery info alert
+                        self.alert_manager.raise(
+                            AlertType::WorkerRecovered,
+                            worker_id.clone(),
+                            Some("All health checks now passing".to_string()),
                         );
                     }
                 }
@@ -1484,6 +1534,30 @@ impl DataManager {
     /// Get worker counts.
     pub fn worker_counts(&self) -> &WorkerCounts {
         &self.worker_data.counts
+    }
+
+    /// Get the alert badge summary for display.
+    pub fn alert_badge(&self) -> AlertBadge {
+        self.alert_manager.badge_summary()
+    }
+
+    /// Check if there are any active alerts.
+    pub fn has_alerts(&self) -> bool {
+        self.alert_manager.has_alerts()
+    }
+
+    /// Check if there are any unacknowledged alerts.
+    pub fn has_unacknowledged_alerts(&self) -> bool {
+        self.alert_manager.has_unacknowledged()
+    }
+
+    /// Acknowledge all alerts.
+    pub fn acknowledge_all_alerts(&mut self) -> usize {
+        let count = self.alert_manager.acknowledge_all();
+        if count > 0 {
+            self.dirty = true;
+        }
+        count
     }
 }
 
