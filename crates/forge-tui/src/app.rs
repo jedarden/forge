@@ -562,6 +562,8 @@ impl App {
             chat_spinner_frame: 0,
             show_confirmation: false,
             pending_action: None,
+            task_search_query: String::new(),
+            task_search_mode: false,
         }
     }
 
