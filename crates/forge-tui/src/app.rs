@@ -65,12 +65,17 @@ use ratatui::{
 use crate::config_watcher::{ConfigEvent, ConfigWatcher, ForgeConfig};
 use crate::cost_panel::CostPanel;
 use crate::data::DataManager;
+use crate::error_recovery::{
+    ErrorCategory, ErrorRecoveryManager, ErrorSeverity, SharedErrorRecoveryManager,
+    chat_backend_guidance, db_locked_guidance, invalid_config_guidance, network_timeout_guidance,
+    worker_crash_guidance,
+};
 use crate::event::{AppEvent, InputHandler};
 use crate::metrics_panel::MetricsPanel;
 use crate::theme::ThemeManager;
 use crate::view::{FocusPanel, LayoutMode, View};
 use crate::widget::QuickActionsPanel;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 /// Result type for app operations.
 pub type AppResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -207,6 +212,10 @@ pub struct App {
     paused_workers: std::collections::HashSet<String>,
     /// Currently selected worker index in Workers view
     selected_worker_index: usize,
+    /// Error recovery manager for graceful error handling
+    error_recovery: SharedErrorRecoveryManager,
+    /// Whether to show the error notification overlay
+    show_error_overlay: bool,
 }
 
 /// Temporary storage for chat exchange data during streaming display.
@@ -513,6 +522,8 @@ impl App {
             pending_action: None,
             paused_workers: std::collections::HashSet::new(),
             selected_worker_index: 0,
+            error_recovery: SharedErrorRecoveryManager::new(),
+            show_error_overlay: false,
         }
     }
 
@@ -580,6 +591,8 @@ impl App {
             task_search_mode: false,
             paused_workers: std::collections::HashSet::new(),
             selected_worker_index: 0,
+            error_recovery: SharedErrorRecoveryManager::new(),
+            show_error_overlay: false,
         }
     }
 
@@ -2178,6 +2191,188 @@ impl App {
         }
     }
 
+    // ========================================================================
+    // Error Recovery Methods
+    // ========================================================================
+
+    /// Record an error and show a notification without crashing.
+    ///
+    /// This method handles various error types gracefully:
+    /// - Database locked: Shows warning, retries are automatic in the DB layer
+    /// - Network errors: Shows notification, app continues
+    /// - Config errors: Falls back to defaults
+    /// - Worker crashes: Logs the crash, continues monitoring other workers
+    pub fn record_error(
+        &mut self,
+        category: ErrorCategory,
+        severity: ErrorSeverity,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        guidance: Vec<String>,
+    ) {
+        let title = title.into();
+        let message = message.into();
+
+        // Record the error
+        let error_id = self.error_recovery.record_error(
+            category,
+            severity,
+            title.clone(),
+            message.clone(),
+            guidance,
+        );
+
+        // Mark component as degraded for errors
+        if severity == ErrorSeverity::Error || severity == ErrorSeverity::Fatal {
+            let component = match category {
+                ErrorCategory::Database => "database",
+                ErrorCategory::Chat => "chat",
+                ErrorCategory::Network => "network",
+                ErrorCategory::Config => "config",
+                ErrorCategory::Worker => "workers",
+                ErrorCategory::FileSystem => "filesystem",
+                ErrorCategory::Terminal => "terminal",
+                ErrorCategory::Internal => "internal",
+            };
+            self.error_recovery.mark_degraded(component, error_id);
+        }
+
+        // Show error overlay for non-info errors
+        if severity != ErrorSeverity::Info {
+            self.show_error_overlay = true;
+            self.mark_dirty();
+        }
+
+        // For fatal errors, set status message prominently
+        if severity == ErrorSeverity::Fatal {
+            self.status_message = Some(format!("FATAL: {}", message));
+        }
+    }
+
+    /// Handle a database error with retry awareness.
+    ///
+    /// This doesn't retry (retry is handled in the DB layer with backoff),
+    /// but shows appropriate notification to the user.
+    pub fn handle_database_error(&mut self, error: &str, is_retryable: bool) {
+        if is_retryable {
+            // Database lock - show warning but note that retries are automatic
+            self.record_error(
+                ErrorCategory::Database,
+                ErrorSeverity::Warning,
+                "Database Busy",
+                error,
+                vec![
+                    "FORGE will automatically retry the operation.".to_string(),
+                    "This usually resolves within a few seconds.".to_string(),
+                ],
+            );
+        } else {
+            // Non-retryable database error
+            self.record_error(
+                ErrorCategory::Database,
+                ErrorSeverity::Error,
+                "Database Error",
+                error,
+                db_locked_guidance(),
+            );
+        }
+    }
+
+    /// Handle a configuration error with fallback to defaults.
+    pub fn handle_config_error(&mut self, error: &str, config_path: &str) {
+        // Config errors always fall back to defaults - not fatal
+        self.record_error(
+            ErrorCategory::Config,
+            ErrorSeverity::Warning,
+            "Configuration Error",
+            error,
+            invalid_config_guidance(config_path),
+        );
+
+        // Mark config as degraded (using defaults)
+        // The error recovery system tracks this
+        warn!("Using default configuration due to error: {}", error);
+    }
+
+    /// Handle a network/timeout error with notification.
+    pub fn handle_network_error(&mut self, error: &str, is_timeout: bool) {
+        let title = if is_timeout { "Network Timeout" } else { "Network Error" };
+
+        self.record_error(
+            ErrorCategory::Network,
+            ErrorSeverity::Warning, // Not fatal - network issues are often transient
+            title,
+            error,
+            network_timeout_guidance(),
+        );
+    }
+
+    /// Handle a worker crash with logging and optional restart guidance.
+    pub fn handle_worker_crash(&mut self, worker_id: &str, reason: &str, last_task: Option<&str>) {
+        let mut guidance = worker_crash_guidance(worker_id);
+
+        if let Some(task) = last_task {
+            guidance.push(format!("Last task: {}", task));
+        }
+
+        self.record_error(
+            ErrorCategory::Worker,
+            ErrorSeverity::Error,
+            format!("Worker Crash: {}", worker_id),
+            reason,
+            guidance,
+        );
+
+        error!("Worker {} crashed: {}", worker_id, reason);
+    }
+
+    /// Handle a chat backend error with graceful degradation.
+    pub fn handle_chat_error(&mut self, error: &str) {
+        // Chat errors mean chat is unavailable but app continues
+        self.record_error(
+            ErrorCategory::Chat,
+            ErrorSeverity::Warning,
+            "Chat Unavailable",
+            error,
+            chat_backend_guidance(),
+        );
+
+        // Mark chat as degraded
+        if let Some(last_error) = self.error_recovery.recent_errors(1).first() {
+            self.error_recovery.mark_degraded("chat", last_error.id);
+        }
+    }
+
+    /// Acknowledge the current error (user has seen it).
+    pub fn acknowledge_error(&mut self) {
+        let errors = self.error_recovery.unacknowledged_errors();
+        if let Some(last_error) = errors.last() {
+            self.error_recovery.acknowledge(last_error.id);
+        }
+
+        // Hide overlay if no more unacknowledged errors
+        if self.error_recovery.unacknowledged_errors().is_empty() {
+            self.show_error_overlay = false;
+        }
+
+        self.mark_dirty();
+    }
+
+    /// Check if any component is in degraded mode.
+    pub fn has_degraded_components(&self) -> bool {
+        !self.error_recovery.degraded_components().is_empty()
+    }
+
+    /// Get summary of degraded components for display.
+    pub fn degraded_summary(&self) -> Option<String> {
+        let degraded = self.error_recovery.degraded_components();
+        if degraded.is_empty() {
+            None
+        } else {
+            Some(format!("Degraded: {}", degraded.join(", ")))
+        }
+    }
+
     /// Run the main application loop.
     pub fn run(&mut self) -> AppResult<()> {
         // Setup terminal
@@ -2343,6 +2538,11 @@ impl App {
         // Draw update in progress overlay (higher priority than status message)
         if self.update_in_progress {
             self.draw_update_progress_overlay(frame, area);
+        }
+
+        // Draw error overlay if active (highest priority)
+        if self.show_error_overlay {
+            self.draw_error_overlay(frame, area);
         }
     }
 
@@ -2776,7 +2976,9 @@ impl App {
 
         // Use the WorkerPanel widget with color-coded health indicators
         let worker_panel = WorkerPanel::new(&self.data_manager.worker_data)
-            .focused(self.focus_panel == FocusPanel::WorkerPool);
+            .focused(self.focus_panel == FocusPanel::WorkerPool)
+            .paused_workers(&self.paused_workers)
+            .selected(self.selected_worker_index);
 
         frame.render_widget(worker_panel, area);
     }
@@ -3953,6 +4155,146 @@ Press any key to close this help.";
                     )),
             )
             .alignment(ratatui::layout::Alignment::Left);
+
+        frame.render_widget(overlay, overlay_area);
+    }
+
+    /// Draw the error notification overlay when errors have occurred.
+    ///
+    /// This overlay shows recent errors and their guidance, allowing users
+    /// to acknowledge them and continue working.
+    fn draw_error_overlay(&self, frame: &mut Frame, area: Rect) {
+        let theme = self.theme_manager.current();
+
+        // Get unacknowledged errors to display
+        let errors = self.error_recovery.unacknowledged_errors();
+        if errors.is_empty() {
+            return;
+        }
+
+        // Calculate overlay dimensions based on content
+        let overlay_width = 70.min(area.width.saturating_sub(4));
+        let max_height = 20.min(area.height.saturating_sub(4));
+        let overlay_x = (area.width.saturating_sub(overlay_width)) / 2;
+        let overlay_y = (area.height.saturating_sub(max_height)) / 2;
+
+        let overlay_area = Rect::new(overlay_x, overlay_y, overlay_width, max_height);
+
+        // Clear background
+        frame.render_widget(Clear, overlay_area);
+
+        // Build error display
+        let mut lines = Vec::new();
+
+        // Show most recent error (most important)
+        if let Some(last_error) = errors.last() {
+            // Severity indicator and title
+            let (severity_color, severity_text) = match last_error.severity {
+                ErrorSeverity::Info => (Color::Blue, "INFO"),
+                ErrorSeverity::Warning => (Color::Yellow, "WARNING"),
+                ErrorSeverity::Error => (Color::Red, "ERROR"),
+                ErrorSeverity::Fatal => (Color::Magenta, "FATAL"),
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("[{}] ", severity_text),
+                    Style::default().fg(severity_color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    &last_error.title,
+                    Style::default().fg(theme.colors.text).add_modifier(Modifier::BOLD),
+                ),
+            ]));
+
+            lines.push(Line::from(Span::styled(
+                "─".repeat(overlay_width as usize - 2),
+                Style::default().fg(theme.colors.border_dim),
+            )));
+
+            // Category
+            lines.push(Line::from(vec![
+                Span::styled("Category: ", Style::default().fg(theme.colors.text_dim)),
+                Span::styled(
+                    last_error.category.to_string(),
+                    Style::default().fg(theme.colors.text),
+                ),
+            ]));
+
+            // Error message (wrapped)
+            lines.push(Line::raw(""));
+            for line in last_error.message.lines().take(3) {
+                let truncated = if line.len() > (overlay_width as usize - 4) {
+                    format!("{}...", &line[..(overlay_width as usize - 7)])
+                } else {
+                    line.to_string()
+                };
+                lines.push(Line::from(Span::styled(
+                    truncated,
+                    Style::default().fg(theme.colors.text),
+                )));
+            }
+
+            // Guidance
+            if !last_error.guidance.is_empty() {
+                lines.push(Line::raw(""));
+                lines.push(Line::from(Span::styled(
+                    "Suggestions:",
+                    Style::default().fg(theme.colors.text_dim).add_modifier(Modifier::UNDERLINED),
+                )));
+                for guidance in last_error.guidance.iter().take(3) {
+                    lines.push(Line::from(vec![
+                        Span::styled("  • ", Style::default().fg(theme.colors.text_dim)),
+                        Span::styled(guidance, Style::default().fg(theme.colors.text)),
+                    ]));
+                }
+            }
+
+            // Show count of additional errors
+            if errors.len() > 1 {
+                lines.push(Line::raw(""));
+                lines.push(Line::from(Span::styled(
+                    format!("+ {} more error(s)", errors.len() - 1),
+                    Style::default().fg(theme.colors.text_dim),
+                )));
+            }
+
+            // Degraded components notice
+            let degraded = self.error_recovery.degraded_components();
+            if !degraded.is_empty() {
+                lines.push(Line::raw(""));
+                lines.push(Line::from(vec![
+                    Span::styled("Degraded: ", Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        degraded.join(", "),
+                        Style::default().fg(theme.colors.text),
+                    ),
+                ]));
+            }
+        }
+
+        // Footer with dismiss instruction
+        lines.push(Line::raw(""));
+        lines.push(Line::from(Span::styled(
+            "Press Enter or Esc to dismiss",
+            Style::default().fg(theme.colors.text_dim).add_modifier(Modifier::ITALIC),
+        )));
+
+        let overlay = Paragraph::new(lines)
+            .style(Style::default().fg(theme.colors.text))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Red))
+                    .title(Span::styled(
+                        " Error Notification ",
+                        Style::default()
+                            .fg(Color::Red)
+                            .add_modifier(Modifier::BOLD),
+                    ))
+                    .style(Style::default().bg(Color::Black)),
+            )
+            .wrap(Wrap { trim: false });
 
         frame.render_widget(overlay, overlay_area);
     }
