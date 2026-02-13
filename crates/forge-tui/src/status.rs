@@ -509,6 +509,7 @@ impl StatusWatcher {
                 WorkerStatus::Stopped => counts.stopped += 1,
                 WorkerStatus::Error => counts.error += 1,
                 WorkerStatus::Starting => counts.starting += 1,
+                WorkerStatus::Paused => counts.paused += 1,
             }
         }
         counts.total = self.workers.len();
@@ -543,6 +544,8 @@ pub struct WorkerCounts {
     pub error: usize,
     /// Number of workers starting up
     pub starting: usize,
+    /// Number of paused workers
+    pub paused: usize,
 }
 
 impl WorkerCounts {
