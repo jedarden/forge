@@ -250,6 +250,7 @@ fn format_status(status: &forge_core::types::WorkerStatus) -> String {
         forge_core::types::WorkerStatus::Failed => "Failed".to_string(),
         forge_core::types::WorkerStatus::Stopped => "Stopped".to_string(),
         forge_core::types::WorkerStatus::Error => "Error".to_string(),
+        forge_core::types::WorkerStatus::Paused => "Paused".to_string(),
     }
 }
 

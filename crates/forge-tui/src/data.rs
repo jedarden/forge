@@ -383,6 +383,7 @@ impl WorkerData {
                     WorkerStatus::Failed => "❌",
                     WorkerStatus::Stopped => "⏹",
                     WorkerStatus::Error => "⚠",
+                    WorkerStatus::Paused => "⏸",
                 };
 
                 let message = match worker.status {
@@ -398,6 +399,7 @@ impl WorkerData {
                     WorkerStatus::Failed => format!("{} failed", worker.worker_id),
                     WorkerStatus::Stopped => format!("{} stopped", worker.worker_id),
                     WorkerStatus::Error => format!("{} error", worker.worker_id),
+                    WorkerStatus::Paused => format!("{} paused", worker.worker_id),
                 };
 
                 lines.push(format!("{} {} {}", time_str, icon, message));
@@ -463,6 +465,7 @@ fn format_status(status: &WorkerStatus) -> String {
         WorkerStatus::Failed => "Failed".to_string(),
         WorkerStatus::Stopped => "Stopped".to_string(),
         WorkerStatus::Error => "Error".to_string(),
+        WorkerStatus::Paused => "Paused".to_string(),
     }
 }
 
