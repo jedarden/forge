@@ -222,6 +222,9 @@ impl LogParser {
 
         let session_id = value.get("session_id").and_then(|v| v.as_str());
 
+        // Extract bead_id (task ID) if present in the log event
+        let bead_id = value.get("bead_id").and_then(|v| v.as_str());
+
         // Try to extract cost directly (Claude Code provides this)
         let cost_usd = value.get("total_cost_usd").and_then(|v| v.as_f64());
 
@@ -279,6 +282,10 @@ impl LogParser {
             call = call.with_session(sid);
         }
 
+        if let Some(bid) = bead_id {
+            call = call.with_bead(bid);
+        }
+
         call.event_type = "result".to_string();
 
         Ok(Some(call))
@@ -297,6 +304,10 @@ impl LogParser {
         };
 
         let session_id = value.get("session_id").and_then(|v| v.as_str());
+
+        // Extract bead_id (task ID) if present in the log event
+        let bead_id = value.get("bead_id").and_then(|v| v.as_str());
+
         let model = message
             .get("model")
             .and_then(|v| v.as_str())
@@ -334,6 +345,10 @@ impl LogParser {
 
         if let Some(sid) = session_id {
             call = call.with_session(sid);
+        }
+
+        if let Some(bid) = bead_id {
+            call = call.with_bead(bid);
         }
 
         call.event_type = "assistant".to_string();
@@ -583,5 +598,31 @@ mod tests {
         // Sonnet pricing: $3/$15 per million
         let cost = parser.calculate_cost("claude-sonnet", 1_000_000, 1_000_000, 0, 0);
         assert!((cost - 18.0).abs() < 0.01); // 3 + 15
+    }
+
+    #[test]
+    fn test_parse_result_with_bead_id() {
+        let parser = LogParser::new();
+        let line = r#"{"type":"result","subtype":"success","total_cost_usd":0.05,"usage":{"input_tokens":100,"output_tokens":50},"session_id":"sess-123","bead_id":"fg-3nck"}"#;
+
+        let call = parser.parse_line(line, "test-worker").unwrap().unwrap();
+
+        assert_eq!(call.worker_id, "test-worker");
+        assert_eq!(call.session_id, Some("sess-123".to_string()));
+        assert_eq!(call.bead_id, Some("fg-3nck".to_string()));
+        assert!((call.cost_usd - 0.05).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_parse_assistant_with_bead_id() {
+        let parser = LogParser::new();
+        let line = r#"{"type":"assistant","message":{"model":"claude-sonnet","usage":{"input_tokens":100,"output_tokens":50}},"session_id":"sess-456","bead_id":"fg-abc"}"#;
+
+        let call = parser.parse_line(line, "test-worker").unwrap().unwrap();
+
+        assert_eq!(call.worker_id, "test-worker");
+        assert_eq!(call.session_id, Some("sess-456".to_string()));
+        assert_eq!(call.bead_id, Some("fg-abc".to_string()));
+        assert_eq!(call.event_type, "assistant");
     }
 }

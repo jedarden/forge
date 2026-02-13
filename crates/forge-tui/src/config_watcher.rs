@@ -85,68 +85,158 @@ pub struct ForgeConfig {
 
 impl ForgeConfig {
     /// Load configuration from the default path (~/.forge/config.yaml).
+    ///
+    /// Returns default configuration if the file doesn't exist or is invalid.
+    /// Invalid configs are logged as warnings but don't prevent startup.
     pub fn load() -> Option<Self> {
         let path = config_path()?;
         Self::load_from(&path)
     }
 
-    /// Load configuration from a specific path.
+    /// Load configuration from a specific path with graceful fallback.
+    ///
+    /// This method attempts to load and parse the config file. If the file
+    /// doesn't exist, is unreadable, or contains invalid YAML, it returns
+    /// the default configuration rather than failing.
+    ///
+    /// Errors are logged but don't prevent the application from starting.
     pub fn load_from(path: &PathBuf) -> Option<Self> {
         if !path.exists() {
-            debug!("Config file does not exist: {:?}", path);
+            debug!("Config file does not exist: {:?} - using defaults", path);
             return None;
         }
 
-        let content = std::fs::read_to_string(path).ok()?;
-        Self::parse(&content)
+        // Try to read the file
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => {
+                warn!(
+                    path = ?path,
+                    error = %e,
+                    "Failed to read config file - using defaults"
+                );
+                return None;
+            }
+        };
+
+        // Try to parse with fallback to partial parsing
+        Self::parse_with_fallback(&content)
     }
 
     /// Parse configuration from YAML string.
+    ///
+    /// Returns None if parsing fails completely.
     pub fn parse(content: &str) -> Option<Self> {
+        Self::parse_with_fallback(content)
+    }
+
+    /// Parse configuration with fallback for partial/invalid configs.
+    ///
+    /// This method:
+    /// 1. Tries to parse the full config
+    /// 2. Falls back to partial parsing if sections are invalid
+    /// 3. Returns default for completely invalid YAML
+    fn parse_with_fallback(content: &str) -> Option<Self> {
         // First try to parse as full YAML
         match serde_yaml::from_str::<ForgeConfig>(content) {
             Ok(config) => {
+                // Validate and warn about issues, but still return the config
+                if let Err(e) = config.validate() {
+                    warn!(
+                        error = %e,
+                        "Config validation warning - some settings may be ignored"
+                    );
+                }
                 debug!("Successfully parsed forge config");
                 Some(config)
             }
             Err(e) => {
-                warn!("Failed to parse config YAML: {}", e);
-                None
+                warn!(
+                    error = %e,
+                    "Failed to parse config YAML - attempting partial parse"
+                );
+
+                // Try to parse individual sections as a fallback
+                Self::parse_partial(content)
             }
         }
+    }
+
+    /// Attempt to parse individual sections of a malformed config.
+    ///
+    /// This allows partial configs to work even if one section has errors.
+    fn parse_partial(content: &str) -> Option<Self> {
+        // Try to parse as generic YAML first
+        let yaml: serde_yaml::Value = match serde_yaml::from_str(content) {
+            Ok(y) => y,
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "Config is not valid YAML - using defaults"
+                );
+                return None;
+            }
+        };
+
+        // Try to extract individual sections
+        let dashboard = yaml
+            .get("dashboard")
+            .and_then(|v| serde_yaml::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        let theme = yaml
+            .get("theme")
+            .and_then(|v| serde_yaml::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        let cost_tracking = yaml
+            .get("cost_tracking")
+            .and_then(|v| serde_yaml::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        info!("Loaded partial config - some sections may use defaults");
+
+        Some(Self {
+            dashboard,
+            theme,
+            cost_tracking,
+        })
     }
 
     /// Validate the configuration.
     ///
     /// Returns Ok(()) if valid, Err with message if invalid.
+    /// Warnings are logged but don't cause validation failure.
     pub fn validate(&self) -> Result<(), String> {
+        let mut warnings = Vec::new();
+
         // Validate refresh interval (must be >= 100ms)
         if self.dashboard.refresh_interval_ms < 100 {
-            return Err(format!(
-                "refresh_interval_ms must be >= 100, got {}",
+            warnings.push(format!(
+                "refresh_interval_ms {} is too low, using minimum of 100ms",
                 self.dashboard.refresh_interval_ms
             ));
         }
 
         // Validate max_fps (must be 1-120)
         if self.dashboard.max_fps == 0 || self.dashboard.max_fps > 120 {
-            return Err(format!(
-                "max_fps must be between 1 and 120, got {}",
+            warnings.push(format!(
+                "max_fps {} is invalid, must be between 1 and 120",
                 self.dashboard.max_fps
             ));
         }
 
         // Validate budget thresholds (must be 0-100)
         if self.cost_tracking.budget_warning_threshold > 100 {
-            return Err(format!(
-                "budget_warning_threshold must be <= 100, got {}",
+            warnings.push(format!(
+                "budget_warning_threshold {} exceeds 100%",
                 self.cost_tracking.budget_warning_threshold
             ));
         }
 
         if self.cost_tracking.budget_critical_threshold > 100 {
-            return Err(format!(
-                "budget_critical_threshold must be <= 100, got {}",
+            warnings.push(format!(
+                "budget_critical_threshold {} exceeds 100%",
                 self.cost_tracking.budget_critical_threshold
             ));
         }
@@ -155,14 +245,75 @@ impl ForgeConfig {
         if let Some(ref theme_name) = self.theme.name {
             let valid_themes = ["default", "dark", "light", "cyberpunk"];
             if !valid_themes.contains(&theme_name.to_lowercase().as_str()) {
-                return Err(format!(
-                    "Invalid theme '{}', must be one of: {:?}",
+                warnings.push(format!(
+                    "Invalid theme '{}', valid themes: {:?}",
                     theme_name, valid_themes
                 ));
             }
         }
 
-        Ok(())
+        if warnings.is_empty() {
+            Ok(())
+        } else {
+            // Return the first warning as the error message
+            Err(warnings.join("; "))
+        }
+    }
+
+    /// Sanitize the configuration by fixing invalid values.
+    ///
+    /// Returns a new config with all invalid values replaced by defaults.
+    pub fn sanitized(&self) -> Self {
+        let mut config = self.clone();
+
+        // Sanitize refresh interval
+        if config.dashboard.refresh_interval_ms < 100 {
+            warn!(
+                original = config.dashboard.refresh_interval_ms,
+                "Sanitizing refresh_interval_ms to minimum 100ms"
+            );
+            config.dashboard.refresh_interval_ms = 100;
+        }
+
+        // Sanitize max_fps
+        if config.dashboard.max_fps == 0 || config.dashboard.max_fps > 120 {
+            warn!(
+                original = config.dashboard.max_fps,
+                "Sanitizing max_fps to default 60"
+            );
+            config.dashboard.max_fps = 60;
+        }
+
+        // Sanitize budget thresholds
+        if config.cost_tracking.budget_warning_threshold > 100 {
+            warn!(
+                original = config.cost_tracking.budget_warning_threshold,
+                "Sanitizing budget_warning_threshold to 100"
+            );
+            config.cost_tracking.budget_warning_threshold = 100;
+        }
+
+        if config.cost_tracking.budget_critical_threshold > 100 {
+            warn!(
+                original = config.cost_tracking.budget_critical_threshold,
+                "Sanitizing budget_critical_threshold to 100"
+            );
+            config.cost_tracking.budget_critical_threshold = 100;
+        }
+
+        // Sanitize theme name
+        if let Some(ref theme_name) = config.theme.name {
+            let valid_themes = ["default", "dark", "light", "cyberpunk"];
+            if !valid_themes.contains(&theme_name.to_lowercase().as_str()) {
+                warn!(
+                    original = theme_name,
+                    "Sanitizing invalid theme name to default"
+                );
+                config.theme.name = None;
+            }
+        }
+
+        config
     }
 }
 

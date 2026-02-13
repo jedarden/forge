@@ -4,7 +4,7 @@ use crate::db::CostDatabase;
 use crate::error::{CostError, Result};
 use crate::models::{
     CostBreakdown, DailyCost, ModelCost, MonthlyCost, ProjectedCost, Subscription,
-    SubscriptionSummary,
+    SubscriptionSummary, WorkerCostBreakdown,
 };
 use chrono::{Datelike, NaiveDate, Utc};
 use rusqlite::params;
@@ -390,6 +390,282 @@ impl<'a> CostQuery<'a> {
             .collect();
 
         Ok(workers)
+    }
+
+    /// Get cost breakdown by worker for a time period.
+    ///
+    /// Returns detailed cost information for each worker, including session
+    /// and task associations.
+    pub fn get_worker_costs(
+        &self,
+        start_date: Option<NaiveDate>,
+        end_date: Option<NaiveDate>,
+        limit: usize,
+    ) -> Result<Vec<WorkerCostBreakdown>> {
+        let conn = self.db.connection();
+        let conn = conn
+            .lock()
+            .map_err(|e| CostError::Query(format!("failed to acquire lock: {}", e)))?;
+
+        let start = start_date
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or("1970-01-01".to_string());
+        let end = end_date
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or("2100-12-31".to_string());
+
+        let mut stmt = conn.prepare(
+            "SELECT
+                worker_id,
+                session_id,
+                bead_id,
+                model,
+                COUNT(*) as call_count,
+                SUM(input_tokens) as input_tokens,
+                SUM(output_tokens) as output_tokens,
+                SUM(cache_creation_tokens) as cache_creation_tokens,
+                SUM(cache_read_tokens) as cache_read_tokens,
+                SUM(cost_usd) as total_cost_usd
+             FROM api_calls
+             WHERE DATE(timestamp) BETWEEN ?1 AND ?2
+             GROUP BY worker_id
+             ORDER BY total_cost_usd DESC
+             LIMIT ?3",
+        )?;
+
+        let workers: Vec<WorkerCostBreakdown> = stmt
+            .query_map(params![start, end, limit as i64], |row| {
+                let worker_id: String = row.get(0)?;
+                let session_id: Option<String> = row.get(1)?;
+                let bead_id: Option<String> = row.get(2)?;
+                let model: String = row.get(3)?;
+                let call_count: i64 = row.get(4)?;
+                let input_tokens: i64 = row.get(5)?;
+                let output_tokens: i64 = row.get(6)?;
+                let cache_creation_tokens: i64 = row.get(7)?;
+                let cache_read_tokens: i64 = row.get(8)?;
+                let total_cost_usd: f64 = row.get(9)?;
+
+                Ok(WorkerCostBreakdown {
+                    worker_id,
+                    session_id,
+                    bead_id,
+                    model,
+                    call_count,
+                    input_tokens,
+                    output_tokens,
+                    cache_creation_tokens,
+                    cache_read_tokens,
+                    total_cost_usd,
+                    avg_cost_per_call: if call_count > 0 {
+                        total_cost_usd / call_count as f64
+                    } else {
+                        0.0
+                    },
+                    is_expensive: false, // Will be set by caller
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(workers)
+    }
+
+    /// Get cost breakdown by worker for today.
+    pub fn get_today_worker_costs(&self, limit: usize) -> Result<Vec<WorkerCostBreakdown>> {
+        let today = Utc::now().date_naive();
+        self.get_worker_costs(Some(today), Some(today), limit)
+    }
+
+    /// Get cost breakdown by worker for current session.
+    ///
+    /// A "session" is defined by the session_id in the api_calls table.
+    /// If no session_id is available, returns costs for the current day.
+    pub fn get_session_worker_costs(
+        &self,
+        session_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<WorkerCostBreakdown>> {
+        let conn = self.db.connection();
+        let conn = conn
+            .lock()
+            .map_err(|e| CostError::Query(format!("failed to acquire lock: {}", e)))?;
+
+        let workers: Vec<WorkerCostBreakdown> = if let Some(sid) = session_id {
+            // Query by specific session ID
+            let mut stmt = conn.prepare(
+                "SELECT
+                    worker_id,
+                    session_id,
+                    bead_id,
+                    model,
+                    COUNT(*) as call_count,
+                    SUM(input_tokens) as input_tokens,
+                    SUM(output_tokens) as output_tokens,
+                    SUM(cache_creation_tokens) as cache_creation_tokens,
+                    SUM(cache_read_tokens) as cache_read_tokens,
+                    SUM(cost_usd) as total_cost_usd
+                 FROM api_calls
+                 WHERE session_id = ?1
+                 GROUP BY worker_id
+                 ORDER BY total_cost_usd DESC
+                 LIMIT ?2",
+            )?;
+
+            stmt.query_map(params![sid, limit as i64], |row| {
+                let worker_id: String = row.get(0)?;
+                let session_id: Option<String> = row.get(1)?;
+                let bead_id: Option<String> = row.get(2)?;
+                let model: String = row.get(3)?;
+                let call_count: i64 = row.get(4)?;
+                let input_tokens: i64 = row.get(5)?;
+                let output_tokens: i64 = row.get(6)?;
+                let cache_creation_tokens: i64 = row.get(7)?;
+                let cache_read_tokens: i64 = row.get(8)?;
+                let total_cost_usd: f64 = row.get(9)?;
+
+                Ok(WorkerCostBreakdown {
+                    worker_id,
+                    session_id,
+                    bead_id,
+                    model,
+                    call_count,
+                    input_tokens,
+                    output_tokens,
+                    cache_creation_tokens,
+                    cache_read_tokens,
+                    total_cost_usd,
+                    avg_cost_per_call: if call_count > 0 {
+                        total_cost_usd / call_count as f64
+                    } else {
+                        0.0
+                    },
+                    is_expensive: false,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect()
+        } else {
+            // Fall back to today's costs
+            self.get_today_worker_costs(limit)?
+        };
+
+        Ok(workers)
+    }
+
+    /// Get costs grouped by worker and task (bead_id).
+    ///
+    /// This shows how much each worker spent on each task.
+    pub fn get_worker_task_costs(
+        &self,
+        start_date: Option<NaiveDate>,
+        end_date: Option<NaiveDate>,
+        limit: usize,
+    ) -> Result<Vec<WorkerCostBreakdown>> {
+        let conn = self.db.connection();
+        let conn = conn
+            .lock()
+            .map_err(|e| CostError::Query(format!("failed to acquire lock: {}", e)))?;
+
+        let start = start_date
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or("1970-01-01".to_string());
+        let end = end_date
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or("2100-12-31".to_string());
+
+        let mut stmt = conn.prepare(
+            "SELECT
+                worker_id,
+                session_id,
+                bead_id,
+                model,
+                COUNT(*) as call_count,
+                SUM(input_tokens) as input_tokens,
+                SUM(output_tokens) as output_tokens,
+                SUM(cache_creation_tokens) as cache_creation_tokens,
+                SUM(cache_read_tokens) as cache_read_tokens,
+                SUM(cost_usd) as total_cost_usd
+             FROM api_calls
+             WHERE DATE(timestamp) BETWEEN ?1 AND ?2
+               AND bead_id IS NOT NULL
+             GROUP BY worker_id, bead_id
+             ORDER BY total_cost_usd DESC
+             LIMIT ?3",
+        )?;
+
+        let workers: Vec<WorkerCostBreakdown> = stmt
+            .query_map(params![start, end, limit as i64], |row| {
+                let worker_id: String = row.get(0)?;
+                let session_id: Option<String> = row.get(1)?;
+                let bead_id: Option<String> = row.get(2)?;
+                let model: String = row.get(3)?;
+                let call_count: i64 = row.get(4)?;
+                let input_tokens: i64 = row.get(5)?;
+                let output_tokens: i64 = row.get(6)?;
+                let cache_creation_tokens: i64 = row.get(7)?;
+                let cache_read_tokens: i64 = row.get(8)?;
+                let total_cost_usd: f64 = row.get(9)?;
+
+                Ok(WorkerCostBreakdown {
+                    worker_id,
+                    session_id,
+                    bead_id,
+                    model,
+                    call_count,
+                    input_tokens,
+                    output_tokens,
+                    cache_creation_tokens,
+                    cache_read_tokens,
+                    total_cost_usd,
+                    avg_cost_per_call: if call_count > 0 {
+                        total_cost_usd / call_count as f64
+                    } else {
+                        0.0
+                    },
+                    is_expensive: false,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(workers)
+    }
+
+    /// Get total cost for a specific worker.
+    pub fn get_worker_total_cost(&self, worker_id: &str) -> Result<f64> {
+        let conn = self.db.connection();
+        let conn = conn
+            .lock()
+            .map_err(|e| CostError::Query(format!("failed to acquire lock: {}", e)))?;
+
+        let total: f64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(cost_usd), 0) FROM api_calls WHERE worker_id = ?1",
+                params![worker_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
+
+        Ok(total)
+    }
+
+    /// Get total cost for a specific session.
+    pub fn get_session_total_cost(&self, session_id: &str) -> Result<f64> {
+        let conn = self.db.connection();
+        let conn = conn
+            .lock()
+            .map_err(|e| CostError::Query(format!("failed to acquire lock: {}", e)))?;
+
+        let total: f64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(cost_usd), 0) FROM api_calls WHERE session_id = ?1",
+                params![session_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
+
+        Ok(total)
     }
 
     /// Get days in a month.
