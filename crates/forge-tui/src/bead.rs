@@ -756,6 +756,12 @@ impl BeadManager {
         data
     }
 
+    /// Get the total count of actionable beads (ready + in_progress + blocked), filtered by priority.
+    pub fn task_count_filtered(&self, priority_filter: Option<u8>) -> usize {
+        let data = self.get_filtered_aggregated_data(priority_filter);
+        data.ready.len() + data.in_progress.len() + data.blocked.len()
+    }
+
     /// Check if any data is loaded.
     pub fn is_loaded(&self) -> bool {
         self.cache.values().any(|c| c.last_update.is_some())
