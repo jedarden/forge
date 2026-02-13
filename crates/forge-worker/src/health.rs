@@ -546,7 +546,7 @@ impl HealthMonitor {
     /// This is a placeholder that always passes - actual implementation requires
     /// workers to set up a signal handler and update a response file.
     fn check_response_health(&self, worker: &WorkerStatusInfo) -> HealthCheckResult {
-        let Some(pid) = worker.pid else {
+        let Some(_pid) = worker.pid else {
             return HealthCheckResult::skipped(HealthCheckType::ResponseHealth);
         };
 

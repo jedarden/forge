@@ -38,6 +38,7 @@
 pub mod activity_panel;
 pub mod app;
 pub mod bead;
+pub mod config_watcher;
 pub mod cost_panel;
 pub mod data;
 pub mod event;
@@ -51,7 +52,9 @@ pub mod subscription_panel;
 pub mod theme;
 pub mod view;
 pub mod widget;
+pub mod worker_panel;
 
+pub use config_watcher::{ConfigEvent, ConfigWatcher, ForgeConfig};
 pub use widget::{
     HotkeyHints, ProgressBar, ProgressColorMode, ProgressFillStyle, QuickAction, QuickActionType,
     QuickActionsPanel, SparklineDirection, SparklineWidget, StatusIndicator, render_sparkline,
@@ -82,3 +85,4 @@ pub use subscription_panel::{
 };
 pub use theme::{Theme, ThemeColors, ThemeManager, ThemeName};
 pub use view::{FocusPanel, LayoutMode, View};
+pub use worker_panel::{WorkerPanel, format_health_summary_narrow};
