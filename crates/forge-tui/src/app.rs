@@ -177,6 +177,10 @@ pub struct App {
     kill_dialog_error: Option<String>,
     /// Priority filter for Tasks view (None = no filter, Some(0-4) = filter to that priority)
     priority_filter: Option<u8>,
+    /// Search query for Tasks view (empty string = no search)
+    task_search_query: String,
+    /// Whether search mode is active in Tasks view
+    task_search_mode: bool,
     /// Whether to show the task detail overlay
     show_task_detail: bool,
     /// Currently selected task index in the flattened task list
@@ -486,6 +490,8 @@ impl App {
             kill_dialog_selected: 0,
             kill_dialog_error: None,
             priority_filter: None,
+            task_search_query: String::new(),
+            task_search_mode: false,
             pending_chat_exchange: None,
             show_task_detail: false,
             selected_task_index: 0,
