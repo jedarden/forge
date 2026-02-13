@@ -59,7 +59,7 @@ pub use claude_api::ClaudeApiProvider;
 pub use config::{
     ChatConfig, ClaudeApiConfig, ClaudeCliConfig, MockConfig, ProviderConfig, ProviderType,
 };
-pub use context::{ContextProvider, DashboardContext};
+pub use context::{ContextProvider, DashboardContext, MockContextSource, RealContextSource};
 pub use error::{ChatError, Result};
 pub use provider::{
     ChatProvider, ClaudeCliProvider, FinishReason, MockProvider, ProviderResponse, ProviderTool,
