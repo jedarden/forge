@@ -23,6 +23,8 @@ pub enum View {
     Metrics,
     /// Activity log viewer
     Logs,
+    /// Subscription tracking and utilization
+    Subscriptions,
     /// Conversational chat interface (activated with `:`)
     Chat,
 }
@@ -37,6 +39,7 @@ impl View {
             View::Costs => 'c',
             View::Metrics => 'm',
             View::Logs => 'l',
+            View::Subscriptions => 'u',
             View::Chat => ':',
         }
     }
@@ -50,6 +53,7 @@ impl View {
             View::Costs => "Costs",
             View::Metrics => "Metrics",
             View::Logs => "Logs",
+            View::Subscriptions => "Subscriptions",
             View::Chat => "Chat",
         }
     }
@@ -60,13 +64,14 @@ impl View {
     }
 
     /// All views in display order (for Tab cycling).
-    pub const ALL: [View; 7] = [
+    pub const ALL: [View; 8] = [
         View::Overview,
         View::Workers,
         View::Tasks,
         View::Costs,
         View::Metrics,
         View::Logs,
+        View::Subscriptions,
         View::Chat,
     ];
 
@@ -95,6 +100,7 @@ impl View {
             'c' => Some(View::Costs),
             'm' => Some(View::Metrics),
             'l' => Some(View::Logs),
+            'u' => Some(View::Subscriptions),
             ':' => Some(View::Chat),
             _ => None,
         }
@@ -197,6 +203,7 @@ mod tests {
         assert_eq!(View::Costs.hotkey(), 'c');
         assert_eq!(View::Metrics.hotkey(), 'm');
         assert_eq!(View::Logs.hotkey(), 'l');
+        assert_eq!(View::Subscriptions.hotkey(), 'u');
         assert_eq!(View::Chat.hotkey(), ':');
     }
 
@@ -204,6 +211,7 @@ mod tests {
     fn test_view_from_hotkey() {
         assert_eq!(View::from_hotkey('o'), Some(View::Overview));
         assert_eq!(View::from_hotkey('W'), Some(View::Workers)); // case insensitive
+        assert_eq!(View::from_hotkey('u'), Some(View::Subscriptions));
         assert_eq!(View::from_hotkey(':'), Some(View::Chat));
         assert_eq!(View::from_hotkey('x'), None);
     }

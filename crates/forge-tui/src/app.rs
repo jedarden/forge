@@ -545,6 +545,7 @@ impl App {
                 View::Costs => FocusPanel::CostBreakdown,
                 View::Metrics => FocusPanel::MetricsCharts,
                 View::Logs => FocusPanel::ActivityLog,
+                View::Subscriptions => FocusPanel::Subscriptions,
                 View::Chat => FocusPanel::ChatInput,
             };
 
@@ -1606,6 +1607,7 @@ impl App {
             View::Costs => self.draw_costs(frame, area),
             View::Metrics => self.draw_metrics(frame, area),
             View::Logs => self.draw_logs(frame, area),
+            View::Subscriptions => self.draw_subscriptions(frame, area),
             View::Chat => self.draw_chat(frame, area),
         }
     }
@@ -1627,6 +1629,8 @@ impl App {
             Span::raw("Metrics "),
             Span::styled("[l]", hotkey_style),
             Span::raw("Logs "),
+            Span::styled("[u]", hotkey_style),
+            Span::raw("Subs "),
             Span::styled("[:]", hotkey_style),
             Span::raw("Chat "),
             Span::styled("[?]", hotkey_style),
@@ -1970,6 +1974,17 @@ impl App {
             .focused(self.focus_panel == FocusPanel::ActivityLog);
 
         frame.render_widget(activity_panel, area);
+    }
+
+    /// Draw the Subscriptions view.
+    fn draw_subscriptions(&self, frame: &mut Frame, area: Rect) {
+        use crate::subscription_panel::SubscriptionPanel;
+
+        // Use the SubscriptionPanel widget for rich subscription visualization
+        let subscription_panel = SubscriptionPanel::new(&self.data_manager.subscription_data)
+            .focused(self.focus_panel == FocusPanel::Subscriptions);
+
+        frame.render_widget(subscription_panel, area);
     }
 
     /// Draw the Chat view.
