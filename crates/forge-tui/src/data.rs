@@ -1469,6 +1469,9 @@ impl DataManager {
 
     /// Poll log watcher for real-time API usage updates.
     fn poll_log_watcher(&mut self) {
+        // Collect calls to persist to database
+        let mut calls_to_persist: Vec<forge_cost::ApiCall> = Vec::new();
+
         // Process events from log watcher channel
         if let Some(ref rx) = self.log_rx {
             while let Ok(event) = rx.try_recv() {
@@ -1476,6 +1479,9 @@ impl DataManager {
                     LogWatcherEvent::ApiCallParsed { call } => {
                         // Update real-time metrics
                         self.realtime_metrics.record_call(&call);
+
+                        // Collect for database persistence
+                        calls_to_persist.push(call.clone());
 
                         // Add activity entry for API call
                         let cost_str = if call.cost_usd >= 1.0 {
@@ -1520,7 +1526,19 @@ impl DataManager {
             for event in events {
                 if let LogWatcherEvent::ApiCallParsed { call } = event {
                     self.realtime_metrics.record_call(&call);
+                    calls_to_persist.push(call);
                     self.dirty = true;
+                }
+            }
+        }
+
+        // Persist collected API calls to the database for historical tracking
+        if !calls_to_persist.is_empty() {
+            if let Some(ref db) = self.cost_db {
+                if let Err(e) = db.insert_api_calls(&calls_to_persist) {
+                    tracing::warn!("Failed to persist {} API calls to database: {}", calls_to_persist.len(), e);
+                } else {
+                    tracing::debug!("Persisted {} API calls to database", calls_to_persist.len());
                 }
             }
         }

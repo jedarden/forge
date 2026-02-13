@@ -580,25 +580,32 @@ impl<'a> SubscriptionPanel<'a> {
 
 impl Widget for SubscriptionPanel<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // Border style based on focus
+        // Focus indicator icon: "◆" for focused, "◇" for unfocused
+        let focus_icon = if self.focused { "◆" } else { "◇" };
+
+        // Border style: bright cyan for focused, dim for unfocused
         let border_style = if self.focused {
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(Color::LightCyan)
         } else {
             Style::default().fg(Color::DarkGray)
         };
 
+        // Title style: bold + bright for focused, dim for unfocused
         let title_style = if self.focused {
             Style::default()
-                .fg(Color::Cyan)
+                .fg(Color::LightCyan)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::White)
+            Style::default().fg(Color::DarkGray)
         };
 
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(border_style)
-            .title(Span::styled(" Subscription Status ", title_style));
+            .title(Span::styled(
+                format!(" {} Subscription Status ", focus_icon),
+                title_style,
+            ));
 
         let inner = block.inner(area);
         block.render(area, buf);

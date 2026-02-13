@@ -353,6 +353,21 @@ impl SharedErrorRecoveryManager {
             .ok()
             .and_then(|mgr| mgr.latest_fatal().cloned())
     }
+
+    /// Acknowledge an error (user has seen it).
+    pub fn acknowledge(&self, error_id: usize) {
+        if let Ok(mut mgr) = self.inner.lock() {
+            mgr.acknowledge(error_id);
+        }
+    }
+
+    /// Get all current degraded components.
+    pub fn degraded_components(&self) -> Vec<String> {
+        self.inner
+            .lock()
+            .map(|mgr| mgr.degraded_components().to_vec())
+            .unwrap_or_default()
+    }
 }
 
 // ============================================================================

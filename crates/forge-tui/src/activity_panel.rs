@@ -390,32 +390,37 @@ impl<'a> ActivityPanel<'a> {
 
 impl Widget for ActivityPanel<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // Border style based on focus
+        // Focus indicator icon: "◆" for focused, "◇" for unfocused
+        let focus_icon = if self.focused { "◆" } else { "◇" };
+
+        // Border style: bright cyan for focused, dim for unfocused
         let border_style = if self.focused {
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(Color::LightCyan)
         } else {
             Style::default().fg(Color::DarkGray)
         };
 
+        // Title style: bold + bright for focused, dim for unfocused
         let title_style = if self.focused {
             Style::default()
-                .fg(Color::Cyan)
+                .fg(Color::LightCyan)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::White)
+            Style::default().fg(Color::DarkGray)
         };
 
-        // Build title with status indicators
+        // Build title with status indicators and focus icon
         let title = if self.data.is_auto_scroll_paused() {
             format!(
-                " Activity Log [paused - {}/{}] ",
+                " {} Activity Log [paused - {}/{}] ",
+                focus_icon,
                 self.data.scroll_offset(),
                 self.data.len()
             )
         } else if self.data.has_entries() {
-            format!(" Activity Log [{}] ", self.data.len())
+            format!(" {} Activity Log [{}] ", focus_icon, self.data.len())
         } else {
-            " Activity Log ".to_string()
+            format!(" {} Activity Log ", focus_icon)
         };
 
         let block = Block::default()
