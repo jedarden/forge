@@ -250,18 +250,23 @@ impl<'a> WorkerPanel<'a> {
 
 impl Widget for WorkerPanel<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        // Focus indicator icon: "◆" for focused, "◇" for unfocused
+        let focus_icon = if self.focused { "◆" } else { "◇" };
+
+        // Border style: bright cyan for focused, dim for unfocused
         let border_style = if self.focused {
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(Color::LightCyan)
         } else {
             Style::default().fg(Color::DarkGray)
         };
 
+        // Title style: bold + bright for focused, dim for unfocused
         let title_style = if self.focused {
             Style::default()
-                .fg(Color::Cyan)
+                .fg(Color::LightCyan)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::White)
+            Style::default().fg(Color::DarkGray)
         };
 
         let lines = self.build_lines();
@@ -269,7 +274,10 @@ impl Widget for WorkerPanel<'_> {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(border_style)
-                .title(Span::styled(" Worker Pool Management ", title_style)),
+                .title(Span::styled(
+                    format!(" {} Worker Pool Management ", focus_icon),
+                    title_style,
+                )),
         );
 
         paragraph.render(area, buf);

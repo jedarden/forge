@@ -237,18 +237,30 @@ impl<'a> Default for QuickActionsPanel<'a> {
 
 impl<'a> Widget for QuickActionsPanel<'a> {
     fn render(self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+        // Focus indicator icon: "◆" for focused, "◇" for unfocused
+        let focus_icon = if self.focused { "◆" } else { "◇" };
+
+        // Border style: bright cyan for focused, dim for unfocused
         let border_style = if self.focused {
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(Color::LightCyan)
         } else {
             Style::default().fg(Color::DarkGray)
         };
 
+        // Title style: bold + bright for focused, dim for unfocused
         let title_style = if self.focused {
             Style::default()
-                .fg(Color::Cyan)
+                .fg(Color::LightCyan)
                 .add_modifier(Modifier::BOLD)
         } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        // Content style: normal for focused, dim for unfocused
+        let content_style = if self.focused {
             Style::default().fg(Color::White)
+        } else {
+            Style::default().fg(Color::DarkGray)
         };
 
         // Build legend line
@@ -278,12 +290,15 @@ impl<'a> Widget for QuickActionsPanel<'a> {
         lines.push(Line::from(legend));
 
         let paragraph = Paragraph::new(lines)
-            .style(Style::default().fg(Color::White))
+            .style(content_style)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(border_style)
-                    .title(Span::styled(" Quick Actions ", title_style)),
+                    .title(Span::styled(
+                        format!(" {} Quick Actions ", focus_icon),
+                        title_style,
+                    )),
             );
 
         paragraph.render(area, buf);
@@ -875,27 +890,42 @@ impl<'a> FocusablePanel<'a> {
 
 impl Widget for FocusablePanel<'_> {
     fn render(self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+        // Focus indicator icon: "◆" for focused, "◇" for unfocused
+        let focus_icon = if self.focused { "◆" } else { "◇" };
+
+        // Border style: bright for focused, dim for unfocused
         let border_style = if self.focused {
-            Style::default().fg(self.focus_color)
+            Style::default().fg(Color::LightCyan)
         } else {
             Style::default().fg(self.border_color)
         };
 
+        // Title style: bold + bright for focused, dim for unfocused
         let title_style = if self.focused {
             Style::default()
-                .fg(self.focus_color)
+                .fg(Color::LightCyan)
                 .add_modifier(Modifier::BOLD)
         } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        // Content style: normal for focused, dim for unfocused
+        let content_style = if self.focused {
             Style::default().fg(Color::White)
+        } else {
+            Style::default().fg(Color::DarkGray)
         };
 
         let paragraph = Paragraph::new(self.content)
-            .style(Style::default().fg(Color::White))
+            .style(content_style)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(border_style)
-                    .title(Span::styled(format!(" {} ", self.title), title_style)),
+                    .title(Span::styled(
+                        format!(" {} {} ", focus_icon, self.title),
+                        title_style,
+                    )),
             );
 
         paragraph.render(area, buf);

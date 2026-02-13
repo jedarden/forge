@@ -43,7 +43,7 @@
 //! - Response polling adds <1ms per frame
 //! - Chat history limited to 10 exchanges (~1KB memory)
 
-use std::io;
+use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -66,7 +66,7 @@ use crate::config_watcher::{ConfigEvent, ConfigWatcher, ForgeConfig};
 use crate::cost_panel::CostPanel;
 use crate::data::DataManager;
 use crate::error_recovery::{
-    ErrorCategory, ErrorRecoveryManager, ErrorSeverity, SharedErrorRecoveryManager,
+    ErrorCategory, ErrorSeverity, SharedErrorRecoveryManager,
     chat_backend_guidance, db_locked_guidance, invalid_config_guidance, network_timeout_guidance,
     worker_crash_guidance,
 };
@@ -231,7 +231,7 @@ struct PendingChatExchange {
 }
 
 /// A single chat exchange (user query + assistant response).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ChatExchange {
     pub user_query: String,
     pub assistant_response: String,
@@ -250,7 +250,7 @@ pub struct ChatExchange {
 }
 
 /// Information about a tool call for display.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ToolCallInfo {
     /// Tool name (e.g., "spawn_worker", "get_worker_status")
     pub name: String,
@@ -261,7 +261,7 @@ pub struct ToolCallInfo {
 }
 
 /// Information about a side effect for display.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SideEffectInfo {
     /// Type of effect (e.g., "spawn", "kill", "assign")
     pub effect_type: String,
@@ -270,7 +270,7 @@ pub struct SideEffectInfo {
 }
 
 /// Confirmation prompt information for display.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ConfirmationInfo {
     /// Title of the confirmation
     pub title: String,
@@ -287,7 +287,7 @@ pub struct ConfirmationInfo {
 }
 
 /// Warning level for confirmation prompts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ConfirmationLevel {
     /// Informational (no danger)
     Info,
@@ -298,7 +298,7 @@ pub enum ConfirmationLevel {
 }
 
 /// Response metadata for display.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct ResponseMetadata {
     /// Duration in milliseconds
     pub duration_ms: u64,
@@ -373,6 +373,208 @@ fn get_error_guidance(error_message: &str) -> Option<String> {
     }
 
     None
+}
+
+// ============================================================================
+// Chat History Persistence
+// ============================================================================
+
+/// Default path for chat history file
+fn chat_history_path() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("forge")
+        .join("chat-history.jsonl")
+}
+
+/// Save chat history to JSONL file.
+///
+/// Each exchange is written as a single JSON line, making the format
+/// append-friendly and robust to corruption (each line is independent).
+pub fn save_chat_history(history: &[ChatExchange], path: &PathBuf) -> io::Result<()> {
+    // Ensure parent directory exists
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Write all exchanges as JSONL (one JSON object per line)
+    let mut file = std::fs::File::create(path)?;
+    for exchange in history {
+        let json = serde_json::to_string(exchange)?;
+        writeln!(file, "{}", json)?;
+    }
+
+    Ok(())
+}
+
+/// Load chat history from JSONL file.
+///
+/// Returns an empty vector if the file doesn't exist.
+/// Skips malformed lines but logs warnings.
+pub fn load_chat_history(path: &PathBuf) -> Vec<ChatExchange> {
+    if !path.exists() {
+        return Vec::new();
+    }
+
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) => {
+            warn!("Failed to open chat history file: {}", e);
+            return Vec::new();
+        }
+    };
+
+    let reader = std::io::BufReader::new(file);
+    let mut history = Vec::new();
+
+    for (line_num, line_result) in reader.lines().enumerate() {
+        match line_result {
+            Ok(line) => {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                match serde_json::from_str::<ChatExchange>(&line) {
+                    Ok(exchange) => history.push(exchange),
+                    Err(e) => {
+                        warn!(
+                            "Failed to parse chat history line {}: {} - skipping",
+                            line_num + 1,
+                            e
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to read chat history line {}: {}", line_num + 1, e);
+            }
+        }
+    }
+
+    // Limit to last 10 exchanges (same as in-memory limit)
+    if history.len() > 10 {
+        history = history.split_off(history.len() - 10);
+    }
+
+    info!("Loaded {} chat exchanges from {:?}", history.len(), path);
+    history
+}
+
+/// Append a single exchange to the chat history file.
+///
+/// This is more efficient than rewriting the entire file when adding
+/// a new exchange. Also handles pruning to keep only the last 10.
+pub fn append_chat_exchange(exchange: &ChatExchange, path: &PathBuf) -> io::Result<()> {
+    // Ensure parent directory exists
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Open file in append mode (create if doesn't exist)
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+
+    // Write the new exchange
+    let json = serde_json::to_string(exchange)?;
+    writeln!(file, "{}", json)?;
+
+    // Check if we need to prune (keep only last 10)
+    // We do this by reading the file, keeping last 10 lines, and rewriting
+    prune_chat_history(path, 10)?;
+
+    Ok(())
+}
+
+/// Prune chat history file to keep only the last N exchanges.
+fn prune_chat_history(path: &PathBuf, keep_last: usize) -> io::Result<()> {
+    let file = std::fs::File::open(path)?;
+    let reader = std::io::BufReader::new(file);
+    let lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+
+    if lines.len() <= keep_last {
+        return Ok(()); // No pruning needed
+    }
+
+    // Keep only the last N lines
+    let kept_lines: Vec<&String> = lines.iter().rev().take(keep_last).rev().collect();
+
+    // Rewrite the file with pruned content
+    let mut file = std::fs::File::create(path)?;
+    for line in kept_lines {
+        writeln!(file, "{}", line)?;
+    }
+
+    Ok(())
+}
+
+/// Export chat history to a human-readable markdown file.
+pub fn export_chat_history_md(history: &[ChatExchange], export_path: &PathBuf) -> io::Result<()> {
+    let mut file = std::fs::File::create(export_path)?;
+
+    writeln!(file, "# FORGE Chat History Export")?;
+    writeln!(file, "")?;
+    writeln!(file, "Exported: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"))?;
+    writeln!(file, "")?;
+    writeln!(file, "---")?;
+    writeln!(file, "")?;
+
+    for exchange in history {
+        writeln!(file, "## User ({})", exchange.timestamp)?;
+        writeln!(file, "")?;
+        writeln!(file, "{}", exchange.user_query)?;
+        writeln!(file, "")?;
+
+        let response_label = if exchange.is_error { "Error" } else { "Assistant" };
+        writeln!(file, "## {} ({})", response_label, exchange.timestamp)?;
+        writeln!(file, "")?;
+        writeln!(file, "{}", exchange.assistant_response)?;
+        writeln!(file, "")?;
+
+        if !exchange.tool_calls.is_empty() {
+            writeln!(file, "### Tool Calls")?;
+            writeln!(file, "")?;
+            for tool in &exchange.tool_calls {
+                let status = if tool.success { "✓" } else { "✗" };
+                writeln!(file, "- {} {} - {}", status, tool.name, tool.message)?;
+            }
+            writeln!(file, "")?;
+        }
+
+        if !exchange.side_effects.is_empty() {
+            writeln!(file, "### Side Effects")?;
+            writeln!(file, "")?;
+            for effect in &exchange.side_effects {
+                writeln!(file, "- **{}**: {}", effect.effect_type, effect.description)?;
+            }
+            writeln!(file, "")?;
+        }
+
+        if let Some(ref guidance) = exchange.error_guidance {
+            writeln!(file, "### Guidance")?;
+            writeln!(file, "")?;
+            writeln!(file, "{}", guidance)?;
+            writeln!(file, "")?;
+        }
+
+        // Metadata
+        writeln!(
+            file,
+            "*Provider: {} | Duration: {}ms{}*",
+            exchange.metadata.provider,
+            exchange.metadata.duration_ms,
+            exchange
+                .metadata
+                .cost_usd
+                .map(|c| format!(" | Cost: ${:.4}", c))
+                .unwrap_or_default()
+        )?;
+        writeln!(file, "")?;
+        writeln!(file, "---")?;
+        writeln!(file, "")?;
+    }
+
+    Ok(())
 }
 
 /// Result of an update operation.
@@ -1262,7 +1464,19 @@ impl App {
     pub fn handle_key_event(&mut self, key: KeyEvent) {
         use crossterm::event::KeyCode;
 
-        // Handle help overlay first
+        // Handle error overlay first (highest priority)
+        if self.show_error_overlay {
+            use crossterm::event::KeyCode::{Esc, Enter};
+            match key.code {
+                Esc | Enter | KeyCode::Char('q') | KeyCode::Char('Q') => {
+                    self.acknowledge_error();
+                    return;
+                }
+                _ => return, // Ignore other keys while error overlay is shown
+            }
+        }
+
+        // Handle help overlay
         if self.show_help {
             self.show_help = false;
             self.mark_dirty();
@@ -3604,27 +3818,43 @@ impl App {
     /// Draw a panel with optional highlight.
     fn draw_panel(&self, frame: &mut Frame, area: Rect, title: &str, content: &str, focused: bool) {
         let theme = self.theme_manager.current();
+
+        // Focus indicator: "◆" for focused, "◇" for unfocused
+        let focus_icon = if focused { "◆" } else { "◇" };
+
+        // Border style: bright for focused, dim for unfocused
         let border_style = if focused {
-            Style::default().fg(theme.colors.header)
+            Style::default().fg(theme.colors.focus_highlight)
         } else {
             Style::default().fg(theme.colors.border_dim)
         };
 
+        // Title style: bold + bright for focused, dim for unfocused
         let title_style = if focused {
             Style::default()
-                .fg(theme.colors.header)
+                .fg(theme.colors.focus_highlight)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(theme.colors.text)
+            Style::default().fg(theme.colors.unfocused_text)
         };
 
+        // Content style: normal for focused, dim for unfocused
+        let content_style = if focused {
+            Style::default().fg(theme.colors.text)
+        } else {
+            Style::default().fg(theme.colors.unfocused_text)
+        };
+
+        // Title with focus indicator icon
+        let title_text = format!(" {} {} ", focus_icon, title);
+
         let panel = Paragraph::new(content)
-            .style(Style::default().fg(theme.colors.text))
+            .style(content_style)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(border_style)
-                    .title(Span::styled(format!(" {} ", title), title_style)),
+                    .title(Span::styled(title_text, title_style)),
             )
             .wrap(Wrap { trim: false });
 
