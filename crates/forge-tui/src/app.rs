@@ -58,7 +58,7 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
@@ -84,6 +84,15 @@ const DEFAULT_DATA_POLL_INTERVAL_MS: u64 = 100;
 
 /// Header timestamp cache duration (update every second).
 const TIMESTAMP_CACHE_DURATION: Duration = Duration::from_secs(1);
+
+/// A pending action that requires user confirmation before execution.
+#[derive(Clone, Debug)]
+pub enum PendingAction {
+    /// Spawn a new worker with the specified executor
+    SpawnWorker(crate::event::WorkerExecutor),
+    /// Kill a specific worker by suffix
+    KillWorker { suffix: String, worker_type: String },
+}
 
 /// Main application state.
 pub struct App {
@@ -144,6 +153,8 @@ pub struct App {
     chat_spinner_frame: usize,
     /// Chat conversation history (last 10 exchanges)
     chat_history: Vec<ChatExchange>,
+    /// Chat history vertical scroll offset (lines scrolled from bottom)
+    chat_scroll_offset: u16,
     /// Worker launcher for spawning workers
     worker_launcher: WorkerLauncher,
     /// Tokio runtime for async worker spawning
@@ -170,6 +181,10 @@ pub struct App {
     forge_config: ForgeConfig,
     /// Configurable data poll interval (from forge_config.dashboard.refresh_interval_ms)
     data_poll_interval: Duration,
+    /// Whether to show the confirmation dialog
+    show_confirmation: bool,
+    /// The pending action awaiting confirmation
+    pending_action: Option<PendingAction>,
 }
 
 /// A single chat exchange (user query + assistant response).
@@ -187,6 +202,8 @@ pub struct ChatExchange {
     pub confirmation: Option<ConfirmationInfo>,
     /// Response metadata (duration, cost, provider)
     pub metadata: ResponseMetadata,
+    /// Actionable guidance for errors (how to fix)
+    pub error_guidance: Option<String>,
 }
 
 /// Information about a tool call for display.
@@ -246,6 +263,48 @@ pub struct ResponseMetadata {
     pub cost_usd: Option<f64>,
     /// Provider name
     pub provider: String,
+}
+
+/// Generate actionable guidance for common errors.
+fn get_error_guidance(error_message: &str) -> Option<String> {
+    let error_lower = error_message.to_lowercase();
+
+    // Config not found errors
+    if error_lower.contains("config") && (error_lower.contains("not found") || error_lower.contains("missing")) {
+        return Some("Run 'forge init' to create a configuration file, or check that ~/.forge/config.yaml exists.".to_string());
+    }
+
+    // API/authentication errors
+    if error_lower.contains("api key") || error_lower.contains("authentication") || error_lower.contains("unauthorized") {
+        return Some("Check your API key in ~/.forge/config.yaml. Ensure the key is valid and not expired.".to_string());
+    }
+
+    // Rate limit errors
+    if error_lower.contains("rate limit") || error_lower.contains("too many requests") {
+        return Some("Wait a moment before sending more commands. Rate limits reset automatically.".to_string());
+    }
+
+    // Network/connection errors
+    if error_lower.contains("connection") || error_lower.contains("network") || error_lower.contains("timeout") {
+        return Some("Check your internet connection. The API server may be temporarily unavailable.".to_string());
+    }
+
+    // Provider errors
+    if error_lower.contains("provider") && error_lower.contains("not found") {
+        return Some("Check that the provider is installed and available in your PATH. Run 'forge --help' for setup instructions.".to_string());
+    }
+
+    // Tool execution errors
+    if error_lower.contains("tool") && error_lower.contains("failed") {
+        return Some("The requested operation could not be completed. Check the tool output above for details.".to_string());
+    }
+
+    // Worker errors
+    if error_lower.contains("worker") && (error_lower.contains("spawn") || error_lower.contains("launch")) {
+        return Some("Ensure you have sufficient system resources and the worker binary is available.".to_string());
+    }
+
+    None
 }
 
 /// Result of an update operation.
@@ -368,6 +427,7 @@ impl App {
             chat_pending: false,
             chat_spinner_frame: 0,
             chat_history: Vec::new(),
+            chat_scroll_offset: 0,
             worker_launcher,
             worker_runtime,
             show_kill_dialog: false,
@@ -381,6 +441,8 @@ impl App {
             config_rx,
             forge_config,
             data_poll_interval,
+            show_confirmation: false,
+            pending_action: None,
         }
     }
 
@@ -417,6 +479,7 @@ impl App {
             chat_response_rx: None,
             chat_pending: false,
             chat_history: Vec::new(),
+            chat_scroll_offset: 0,
             worker_launcher: WorkerLauncher::new(),
             worker_runtime: tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -434,6 +497,8 @@ impl App {
             forge_config: ForgeConfig::default(),
             data_poll_interval: Duration::from_millis(DEFAULT_DATA_POLL_INTERVAL_MS),
             chat_spinner_frame: 0,
+            show_confirmation: false,
+            pending_action: None,
         }
     }
 
@@ -789,20 +854,24 @@ impl App {
                         side_effects,
                         confirmation,
                         metadata,
+                        error_guidance: None,
                     });
                     self.status_message = Some("✅ Response received".to_string());
                 }
                 Err(e) => {
                     info!("❌ Error response: {}", e);
+                    let error_msg = format!("Error: {}", e);
+                    let guidance = get_error_guidance(&error_msg);
                     self.chat_history.push(ChatExchange {
                         user_query: query,
-                        assistant_response: format!("Error: {}", e),
+                        assistant_response: error_msg,
                         timestamp,
                         is_error: true,
                         tool_calls: vec![],
                         side_effects: vec![],
                         confirmation: None,
                         metadata: ResponseMetadata::default(),
+                        error_guidance: guidance,
                     });
                     self.status_message = Some(format!("❌ Chat error: {}", e));
                 }
@@ -1190,7 +1259,10 @@ impl App {
                 // Panel-specific handling - to be implemented
             }
             AppEvent::SpawnWorker(executor) => {
-                self.spawn_worker(executor);
+                // Show confirmation dialog before spawning
+                self.pending_action = Some(PendingAction::SpawnWorker(executor));
+                self.show_confirmation = true;
+                self.mark_dirty();
             }
             AppEvent::KillWorker => {
                 // Toggle kill dialog
