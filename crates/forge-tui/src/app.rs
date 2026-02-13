@@ -665,6 +665,11 @@ impl App {
             forge_config.dashboard.refresh_interval_ms.min(DEFAULT_DATA_POLL_INTERVAL_MS)
         );
 
+        // Load chat history from disk
+        let history_path = chat_history_path();
+        let chat_history = load_chat_history(&history_path);
+        info!("⏱️ Loaded {} chat exchanges from history", chat_history.len());
+
         info!("⏱️ App::new() completed in {:?}", start.elapsed());
 
         Self {
@@ -700,7 +705,7 @@ impl App {
             streaming_position: 0,
             streaming_active: false,
             pending_complete_response: None,
-            chat_history: Vec::new(),
+            chat_history,
             chat_scroll_offset: 0,
             worker_launcher,
             worker_runtime,
@@ -1087,7 +1092,7 @@ impl App {
                         let error_msg = response.error.clone().unwrap_or_else(|| "Unknown error".to_string());
                         let guidance = get_error_guidance(&error_msg);
 
-                        self.chat_history.push(ChatExchange {
+                        let exchange = ChatExchange {
                             user_query: query,
                             assistant_response: response.text.clone(),
                             timestamp,
@@ -1101,7 +1106,14 @@ impl App {
                                 provider: response.provider.clone(),
                             },
                             error_guidance: guidance,
-                        });
+                        };
+
+                        // Auto-save to disk
+                        if let Err(e) = append_chat_exchange(&exchange, &chat_history_path()) {
+                            warn!("Failed to save chat history: {}", e);
+                        }
+
+                        self.chat_history.push(exchange);
                         self.status_message = Some(format!("❌ Chat error: {}", error_msg));
                     } else {
                         info!(
@@ -1192,7 +1204,8 @@ impl App {
                     info!("❌ Error response: {}", e);
                     let error_msg = format!("Error: {}", e);
                     let guidance = get_error_guidance(&error_msg);
-                    self.chat_history.push(ChatExchange {
+
+                    let exchange = ChatExchange {
                         user_query: query,
                         assistant_response: error_msg,
                         timestamp,
@@ -1202,7 +1215,14 @@ impl App {
                         confirmation: None,
                         metadata: ResponseMetadata::default(),
                         error_guidance: guidance,
-                    });
+                    };
+
+                    // Auto-save to disk
+                    if let Err(e) = append_chat_exchange(&exchange, &chat_history_path()) {
+                        warn!("Failed to save chat history: {}", e);
+                    }
+
+                    self.chat_history.push(exchange);
                     self.status_message = Some(format!("❌ Chat error: {}", e));
                 }
             }
@@ -1278,7 +1298,7 @@ impl App {
 
         // Get the pending exchange data
         if let Some(pending) = self.pending_chat_exchange.take() {
-            self.chat_history.push(ChatExchange {
+            let exchange = ChatExchange {
                 user_query: pending.query,
                 assistant_response: pending.response_text,
                 timestamp: pending.timestamp,
@@ -1288,7 +1308,14 @@ impl App {
                 confirmation: pending.confirmation,
                 metadata: pending.metadata,
                 error_guidance: None,
-            });
+            };
+
+            // Auto-save to disk
+            if let Err(e) = append_chat_exchange(&exchange, &chat_history_path()) {
+                warn!("Failed to save chat history: {}", e);
+            }
+
+            self.chat_history.push(exchange);
 
             // Keep only last 10 exchanges
             if self.chat_history.len() > 10 {
@@ -1489,6 +1516,12 @@ impl App {
             return;
         }
 
+        // Handle confirmation dialog if active
+        if self.show_confirmation {
+            self.handle_confirmation_key(key);
+            return;
+        }
+
         // Handle task detail overlay if active
         if self.show_task_detail {
             self.handle_task_detail_key(key);
@@ -1677,48 +1710,53 @@ impl App {
                     let query = self.chat_input.clone();
                     self.chat_input.clear();
 
-                    // Process chat request in background thread
-                    if let Some(backend) = &self.chat_backend {
-                        self.status_message = Some(format!("⏳ Processing: {}...", query));
-                        self.chat_pending = true;
-
-                        // Clone Arc for thread
-                        let backend_clone = Arc::clone(backend);
-                        let query_clone = query.clone();
-
-                        // Create channel if not already created
-                        if self.chat_response_rx.is_none() {
-                            let (tx, rx) = mpsc::channel();
-                            self.chat_response_tx = Some(tx);
-                            self.chat_response_rx = Some(rx);
-                        }
-
-                        let tx = self.chat_response_tx.as_ref().unwrap().clone();
-
-                        // Spawn background thread to process request
-                        std::thread::spawn(move || {
-                            use tracing::info;
-
-                            info!("Chat thread started for query: {}", query_clone);
-
-                            let result = match tokio::runtime::Runtime::new() {
-                                Ok(rt) => rt.block_on(backend_clone.process_command(&query_clone)),
-                                Err(e) => Err(forge_chat::ChatError::ApiError(format!(
-                                    "Runtime error: {}",
-                                    e
-                                ))),
-                            };
-
-                            info!("Chat request completed, result: {:?}", result.is_ok());
-
-                            // Send result back to UI thread
-                            match tx.send((query_clone, result)) {
-                                Ok(_) => info!("✅ Sent response to UI thread via channel"),
-                                Err(e) => info!("❌ Failed to send response: {:?}", e),
-                            }
-                        });
+                    // Check for slash commands first
+                    if query.starts_with('/') {
+                        self.handle_chat_command(&query);
                     } else {
-                        self.status_message = Some("Chat backend not initialized".to_string());
+                        // Process chat request in background thread
+                        if let Some(backend) = &self.chat_backend {
+                            self.status_message = Some(format!("⏳ Processing: {}...", query));
+                            self.chat_pending = true;
+
+                            // Clone Arc for thread
+                            let backend_clone = Arc::clone(backend);
+                            let query_clone = query.clone();
+
+                            // Create channel if not already created
+                            if self.chat_response_rx.is_none() {
+                                let (tx, rx) = mpsc::channel();
+                                self.chat_response_tx = Some(tx);
+                                self.chat_response_rx = Some(rx);
+                            }
+
+                            let tx = self.chat_response_tx.as_ref().unwrap().clone();
+
+                            // Spawn background thread to process request
+                            std::thread::spawn(move || {
+                                use tracing::info;
+
+                                info!("Chat thread started for query: {}", query_clone);
+
+                                let result = match tokio::runtime::Runtime::new() {
+                                    Ok(rt) => rt.block_on(backend_clone.process_command(&query_clone)),
+                                    Err(e) => Err(forge_chat::ChatError::ApiError(format!(
+                                        "Runtime error: {}",
+                                        e
+                                    ))),
+                                };
+
+                                info!("Chat request completed, result: {:?}", result.is_ok());
+
+                                // Send result back to UI thread
+                                match tx.send((query_clone, result)) {
+                                    Ok(_) => info!("✅ Sent response to UI thread via channel"),
+                                    Err(e) => info!("❌ Failed to send response: {:?}", e),
+                                }
+                            });
+                        } else {
+                            self.status_message = Some("Chat backend not initialized".to_string());
+                        }
                     }
                 }
                 self.mark_dirty();
@@ -2135,6 +2173,95 @@ impl App {
         self.paused_workers.contains(worker_id)
     }
 
+    /// Handle chat slash commands.
+    ///
+    /// Available commands:
+    /// - /save - Manually save chat history to disk
+    /// - /load - Reload chat history from disk
+    /// - /export [path] - Export history to markdown file
+    /// - /clear - Clear chat history
+    /// - /history - Show history file location
+    /// - /help - Show available commands
+    fn handle_chat_command(&mut self, command: &str) {
+        let parts: Vec<&str> = command.split_whitespace().collect();
+        if parts.is_empty() {
+            return;
+        }
+
+        match parts[0] {
+            "/save" => {
+                let path = chat_history_path();
+                match save_chat_history(&self.chat_history, &path) {
+                    Ok(_) => {
+                        self.status_message = Some(format!(
+                            "✅ Saved {} exchanges to {:?}",
+                            self.chat_history.len(),
+                            path
+                        ));
+                    }
+                    Err(e) => {
+                        self.status_message = Some(format!("❌ Failed to save: {}", e));
+                    }
+                }
+            }
+            "/load" => {
+                let path = chat_history_path();
+                let loaded = load_chat_history(&path);
+                let count = loaded.len();
+                self.chat_history = loaded;
+                self.status_message = Some(format!("✅ Loaded {} exchanges from {:?}", count, path));
+            }
+            "/export" => {
+                let export_path = if parts.len() > 1 {
+                    PathBuf::from(parts[1])
+                } else {
+                    dirs::config_dir()
+                        .unwrap_or_else(|| PathBuf::from("."))
+                        .join("forge")
+                        .join("chat-history.md")
+                };
+
+                match export_chat_history_md(&self.chat_history, &export_path) {
+                    Ok(_) => {
+                        self.status_message = Some(format!(
+                            "✅ Exported {} exchanges to {:?}",
+                            self.chat_history.len(),
+                            export_path
+                        ));
+                    }
+                    Err(e) => {
+                        self.status_message = Some(format!("❌ Export failed: {}", e));
+                    }
+                }
+            }
+            "/clear" => {
+                self.chat_history.clear();
+                // Also clear the persisted file
+                let path = chat_history_path();
+                if let Err(e) = save_chat_history(&self.chat_history, &path) {
+                    warn!("Failed to clear history file: {}", e);
+                }
+                self.status_message = Some("✅ Chat history cleared".to_string());
+            }
+            "/history" => {
+                let path = chat_history_path();
+                self.status_message = Some(format!("📁 History file: {:?}", path));
+            }
+            "/help" => {
+                self.status_message = Some(
+                    "Commands: /save, /load, /export [path], /clear, /history, /help".to_string(),
+                );
+            }
+            _ => {
+                self.status_message = Some(format!(
+                    "Unknown command: {}. Type /help for available commands.",
+                    parts[0]
+                ));
+            }
+        }
+        self.mark_dirty();
+    }
+
     /// Acknowledge the currently selected alert in the alerts list.
     fn acknowledge_selected_alert(&mut self) {
         let alerts = self.data_manager.alert_manager.alerts_by_severity();
@@ -2183,8 +2310,17 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                // Kill the selected worker
-                self.kill_selected_worker();
+                // Kill the selected worker - show confirmation first
+                if self.kill_dialog_selected < self.kill_dialog_workers.len() {
+                    let worker = &self.kill_dialog_workers[self.kill_dialog_selected];
+                    self.pending_action = Some(PendingAction::KillWorker {
+                        suffix: worker.suffix.clone(),
+                        worker_type: worker.worker_type.to_string(),
+                    });
+                    self.show_kill_dialog = false;
+                    self.show_confirmation = true;
+                    self.mark_dirty();
+                }
             }
             KeyCode::Esc | KeyCode::Char('q') => {
                 // Close dialog
@@ -2194,6 +2330,103 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// Handle confirmation dialog key events.
+    fn handle_confirmation_key(&mut self, key: KeyEvent) {
+        use crossterm::event::KeyCode;
+
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                // User confirmed - execute the pending action
+                self.execute_pending_action();
+                self.show_confirmation = false;
+                self.pending_action = None;
+                self.mark_dirty();
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc | KeyCode::Char('q') => {
+                // User cancelled - return to previous state
+                self.show_confirmation = false;
+                self.pending_action = None;
+                self.status_message = Some("Action cancelled".to_string());
+                self.mark_dirty();
+            }
+            _ => {}
+        }
+    }
+
+    /// Execute the pending action after confirmation.
+    fn execute_pending_action(&mut self) {
+        if let Some(action) = self.pending_action.take() {
+            match action {
+                PendingAction::SpawnWorker(executor) => {
+                    self.spawn_worker(executor);
+                }
+                PendingAction::KillWorker { suffix, worker_type } => {
+                    self.execute_kill_worker(&suffix, &worker_type);
+                }
+            }
+        }
+    }
+
+    /// Execute kill worker after confirmation.
+    fn execute_kill_worker(&mut self, suffix: &str, worker_type: &str) {
+        use forge_worker::tmux::{kill_session, session_exists};
+        use tracing::{error, info, warn};
+
+        let session_name = format!("forge-{}", suffix);
+
+        info!(
+            "Killing worker: {} (session: {})",
+            suffix, session_name
+        );
+
+        // First check if session exists (to handle already-dead workers gracefully)
+        let exists = self
+            .worker_runtime
+            .block_on(async { session_exists(&session_name).await });
+
+        match exists {
+            Ok(true) => {
+                // Session exists, proceed to kill
+                let result = self
+                    .worker_runtime
+                    .block_on(async { kill_session(&session_name).await });
+
+                match result {
+                    Ok(_) => {
+                        info!("Successfully killed worker: {}", suffix);
+                        self.status_message = Some(format!(
+                            "Killed {} worker: {}",
+                            worker_type, suffix
+                        ));
+                    }
+                    Err(e) => {
+                        error!("Failed to kill worker {}: {}", suffix, e);
+                        self.status_message = Some(format!(
+                            "Failed to kill worker {}: {}",
+                            suffix, e
+                        ));
+                    }
+                }
+            }
+            Ok(false) => {
+                warn!("Worker session no longer exists: {}", suffix);
+                self.status_message = Some(format!(
+                    "Worker {} already terminated",
+                    suffix
+                ));
+            }
+            Err(e) => {
+                error!("Failed to check session for {}: {}", suffix, e);
+                self.status_message = Some(format!(
+                    "Error checking worker {}: {}",
+                    suffix, e
+                ));
+            }
+        }
+
+        self.mark_dirty();
     }
 
     /// Handle task detail overlay key navigation.
@@ -2732,6 +2965,11 @@ impl App {
         // Draw kill worker dialog if active
         if self.show_kill_dialog {
             self.draw_kill_dialog(frame, area);
+        }
+
+        // Draw confirmation dialog if active
+        if self.show_confirmation {
+            self.draw_confirmation_dialog(frame, area);
         }
 
         // Draw task detail overlay if active
@@ -4051,6 +4289,121 @@ Press any key to close this help.";
                     .style(Style::default().bg(Color::Black)),
             )
             .wrap(Wrap { trim: false });
+
+        frame.render_widget(dialog, overlay_area);
+    }
+
+    /// Draw the confirmation dialog overlay for destructive actions.
+    fn draw_confirmation_dialog(&mut self, frame: &mut Frame, area: Rect) {
+        let theme = self.theme_manager.current();
+
+        // Calculate dialog dimensions - compact confirmation dialog
+        let overlay_width = 60.min(area.width.saturating_sub(4));
+        let overlay_height = 10.min(area.height.saturating_sub(4));
+        let overlay_x = (area.width - overlay_width) / 2;
+        let overlay_y = (area.height - overlay_height) / 2;
+
+        let overlay_area = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
+
+        // Clear background
+        frame.render_widget(Clear, overlay_area);
+
+        // Build dialog content based on pending action
+        let mut lines: Vec<Line> = Vec::new();
+
+        let (title, action_desc, warning_level) = match &self.pending_action {
+            Some(PendingAction::SpawnWorker(executor)) => {
+                use crate::event::WorkerExecutor;
+                let model = match executor {
+                    WorkerExecutor::Glm => "GLM (budget)",
+                    WorkerExecutor::Sonnet => "Sonnet (standard)",
+                    WorkerExecutor::Opus => "Opus (premium)",
+                    WorkerExecutor::Haiku => "Haiku (budget)",
+                };
+                (
+                    " Confirm Spawn ",
+                    format!("Spawn a new {} worker?", model),
+                    "info",
+                )
+            }
+            Some(PendingAction::KillWorker { suffix, worker_type }) => {
+                (
+                    " Confirm Kill ",
+                    format!("Kill {} worker {}?", worker_type, suffix),
+                    "danger",
+                )
+            }
+            None => (
+                " Confirm ",
+                "No action pending".to_string(),
+                "info",
+            ),
+        };
+
+        // Title styling based on warning level
+        let border_color = match warning_level {
+            "danger" => Color::Red,
+            "warning" => Color::Yellow,
+            _ => theme.colors.hotkey,
+        };
+
+        // Header with warning icon for dangerous actions
+        let header_icon = if warning_level == "danger" { "⚠ " } else { "" };
+        lines.push(Line::from(Span::styled(
+            format!("{}{}", header_icon, action_desc),
+            Style::default()
+                .fg(if warning_level == "danger" {
+                    Color::Red
+                } else {
+                    theme.colors.text
+                })
+                .add_modifier(Modifier::BOLD),
+        )));
+
+        lines.push(Line::raw("")); // Empty line
+
+        // Additional context for destructive actions
+        if matches!(self.pending_action, Some(PendingAction::KillWorker { .. })) {
+            lines.push(Line::from(Span::styled(
+                "This action cannot be undone.",
+                Style::default().fg(theme.colors.status_warning),
+            )));
+            lines.push(Line::raw("")); // Empty line
+        }
+
+        // Options with key hints
+        let yes_style = Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD);
+        let no_style = Style::default()
+            .fg(Color::Red)
+            .add_modifier(Modifier::BOLD);
+        let cancel_style = Style::default().fg(theme.colors.text_dim);
+
+        lines.push(Line::from(vec![
+            Span::styled("[y] ", yes_style),
+            Span::styled("Yes", Style::default().fg(theme.colors.text)),
+            Span::raw("    "),
+            Span::styled("[n] ", no_style),
+            Span::styled("No", Style::default().fg(theme.colors.text)),
+            Span::raw("    "),
+            Span::styled("[Esc] ", cancel_style),
+            Span::styled("Cancel", Style::default().fg(theme.colors.text_dim)),
+        ]));
+
+        let dialog = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(border_color))
+                    .title(Span::styled(
+                        title,
+                        Style::default().fg(border_color).add_modifier(Modifier::BOLD),
+                    ))
+                    .style(Style::default().bg(Color::Black)),
+            )
+            .wrap(Wrap { trim: false })
+            .alignment(ratatui::layout::Alignment::Center);
 
         frame.render_widget(dialog, overlay_area);
     }
@@ -5712,5 +6065,218 @@ mod tests {
         let key = KeyEvent::new(KeyCode::Up, KeyModifiers::NONE);
         app.handle_key_event(key);
         assert_eq!(app.selected_task_index, 0);
+    }
+}
+
+    // ============================================================
+    // Chat History Persistence Tests
+    // ============================================================
+
+    #[test]
+    fn test_chat_exchange_serialization() {
+        let exchange = ChatExchange {
+            user_query: "What is the status?".to_string(),
+            assistant_response: "All systems operational".to_string(),
+            timestamp: "2024-01-15 10:30:00".to_string(),
+            is_error: false,
+            tool_calls: vec![ToolCallInfo {
+                name: "get_status".to_string(),
+                success: true,
+                message: "Status retrieved".to_string(),
+            }],
+            side_effects: vec![SideEffectInfo {
+                effect_type: "read".to_string(),
+                description: "Read system status".to_string(),
+            }],
+            confirmation: None,
+            metadata: ResponseMetadata {
+                duration_ms: 150,
+                cost_usd: Some(0.001),
+                provider: "test".to_string(),
+            },
+            error_guidance: None,
+        };
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&exchange).expect("Failed to serialize");
+        assert!(json.contains("What is the status?"));
+        assert!(json.contains("All systems operational"));
+
+        // Deserialize back
+        let deserialized: ChatExchange =
+            serde_json::from_str(&json).expect("Failed to deserialize");
+        assert_eq!(deserialized.user_query, exchange.user_query);
+        assert_eq!(deserialized.assistant_response, exchange.assistant_response);
+        assert_eq!(deserialized.tool_calls.len(), 1);
+    }
+
+    #[test]
+    fn test_chat_history_save_load() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let path = temp_dir.path().join("chat-history.jsonl");
+
+        let history = vec![
+            ChatExchange {
+                user_query: "Query 1".to_string(),
+                assistant_response: "Response 1".to_string(),
+                timestamp: "2024-01-15 10:00:00".to_string(),
+                is_error: false,
+                tool_calls: vec![],
+                side_effects: vec![],
+                confirmation: None,
+                metadata: ResponseMetadata::default(),
+                error_guidance: None,
+            },
+            ChatExchange {
+                user_query: "Query 2".to_string(),
+                assistant_response: "Response 2".to_string(),
+                timestamp: "2024-01-15 10:01:00".to_string(),
+                is_error: true,
+                tool_calls: vec![],
+                side_effects: vec![],
+                confirmation: None,
+                metadata: ResponseMetadata::default(),
+                error_guidance: Some("Try again".to_string()),
+            },
+        ];
+
+        // Save
+        save_chat_history(&history, &path).expect("Failed to save");
+
+        // Load
+        let loaded = load_chat_history(&path);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].user_query, "Query 1");
+        assert_eq!(loaded[1].user_query, "Query 2");
+        assert!(loaded[1].is_error);
+    }
+
+    #[test]
+    fn test_chat_history_append() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let path = temp_dir.path().join("chat-history.jsonl");
+
+        let exchange1 = ChatExchange {
+            user_query: "First query".to_string(),
+            assistant_response: "First response".to_string(),
+            timestamp: "2024-01-15 10:00:00".to_string(),
+            is_error: false,
+            tool_calls: vec![],
+            side_effects: vec![],
+            confirmation: None,
+            metadata: ResponseMetadata::default(),
+            error_guidance: None,
+        };
+
+        let exchange2 = ChatExchange {
+            user_query: "Second query".to_string(),
+            assistant_response: "Second response".to_string(),
+            timestamp: "2024-01-15 10:01:00".to_string(),
+            is_error: false,
+            tool_calls: vec![],
+            side_effects: vec![],
+            confirmation: None,
+            metadata: ResponseMetadata::default(),
+            error_guidance: None,
+        };
+
+        // Append first exchange
+        append_chat_exchange(&exchange1, &path).expect("Failed to append first");
+
+        // Append second exchange
+        append_chat_exchange(&exchange2, &path).expect("Failed to append second");
+
+        // Load and verify
+        let loaded = load_chat_history(&path);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].user_query, "First query");
+        assert_eq!(loaded[1].user_query, "Second query");
+    }
+
+    #[test]
+    fn test_chat_history_export_md() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let export_path = temp_dir.path().join("chat-export.md");
+
+        let history = vec![ChatExchange {
+            user_query: "Test question".to_string(),
+            assistant_response: "Test answer".to_string(),
+            timestamp: "2024-01-15 10:00:00".to_string(),
+            is_error: false,
+            tool_calls: vec![ToolCallInfo {
+                name: "test_tool".to_string(),
+                success: true,
+                message: "Tool executed".to_string(),
+            }],
+            side_effects: vec![],
+            confirmation: None,
+            metadata: ResponseMetadata {
+                duration_ms: 100,
+                cost_usd: Some(0.01),
+                provider: "claude".to_string(),
+            },
+            error_guidance: None,
+        }];
+
+        export_chat_history_md(&history, &export_path).expect("Failed to export");
+
+        let contents = std::fs::read_to_string(&export_path).expect("Failed to read export");
+        assert!(contents.contains("# FORGE Chat History Export"));
+        assert!(contents.contains("Test question"));
+        assert!(contents.contains("Test answer"));
+        assert!(contents.contains("test_tool"));
+    }
+
+    #[test]
+    fn test_chat_history_load_empty() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let path = temp_dir.path().join("nonexistent.jsonl");
+
+        // Load from non-existent file should return empty vec
+        let loaded = load_chat_history(&path);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn test_chat_commands() {
+        let mut app = App::with_status_dir(std::path::PathBuf::from("/tmp/test-forge-status"));
+        app.switch_view(View::Chat);
+
+        // Test /help command
+        app.chat_input = "/help".to_string();
+        app.handle_app_event(AppEvent::Submit);
+        assert!(app.status_message.as_ref().unwrap().contains("Commands:"));
+
+        // Test /history command
+        app.chat_input = "/history".to_string();
+        app.handle_app_event(AppEvent::Submit);
+        assert!(app.status_message.as_ref().unwrap().contains("History file:"));
+
+        // Test /clear command
+        app.chat_history.push(ChatExchange {
+            user_query: "test".to_string(),
+            assistant_response: "test".to_string(),
+            timestamp: "2024-01-15 10:00:00".to_string(),
+            is_error: false,
+            tool_calls: vec![],
+            side_effects: vec![],
+            confirmation: None,
+            metadata: ResponseMetadata::default(),
+            error_guidance: None,
+        });
+        assert_eq!(app.chat_history.len(), 1);
+
+        app.chat_input = "/clear".to_string();
+        app.handle_app_event(AppEvent::Submit);
+        assert!(app.chat_history.is_empty());
+        assert!(app.status_message.as_ref().unwrap().contains("cleared"));
     }
 }
