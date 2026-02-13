@@ -43,6 +43,35 @@ cargo run -- --debug
 - Screen corruption on exit
 - Terminal state not restored properly
 
+**IMPORTANT: Test in Multiple Terminal Dimensions**
+
+Visual artifacts often appear only at specific terminal sizes. FORGE has layout modes:
+- **Narrow**: < 120 columns (single-view mode)
+- **Wide**: 120-198 columns (2-column mode)
+- **UltraWide**: 199+ columns (3-column mode with all panels)
+
+Always test at **multiple dimensions** to catch layout-specific bugs:
+
+```bash
+# Test at narrow size (common for small terminals / split panes)
+tmux new-session -d -s forge-narrow -x 80 -y 24
+
+# Test at standard wide size
+tmux new-session -d -s forge-wide -x 140 -y 40
+
+# Test at ultra-wide size
+tmux new-session -d -s forge-ultrawide -x 200 -y 50
+
+# Test at minimum viable size
+tmux new-session -d -s forge-min -x 60 -y 20
+```
+
+**Common dimension-specific issues**:
+- Text overflow in narrow mode (< 80 cols)
+- Panel clipping when height < 30 rows
+- Timestamp misalignment at narrow widths
+- Chat history truncation in small areas
+
 **How to test correctly**:
 
 ```bash
