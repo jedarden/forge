@@ -10,7 +10,7 @@
 //! ## Usage
 //!
 //! ```no_run
-//! use forge_cost::{CostDatabase, CostQuery, CostOptimizer, OptimizerConfig};
+//! use forge_cost::{CostDatabase, CostQuery, CostOptimizer, OptimizerConfig, TaskPriority};
 //!
 //! fn main() -> anyhow::Result<()> {
 //!     let db = CostDatabase::open("~/.forge/costs.db")?;
