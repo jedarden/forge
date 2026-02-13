@@ -57,6 +57,14 @@ pub enum AppEvent {
     SpawnWorker(WorkerExecutor),
     /// Kill selected worker
     KillWorker,
+    /// Pause selected worker (Workers view only)
+    PauseWorker,
+    /// Pause all workers (Workers view only)
+    PauseAllWorkers,
+    /// Resume selected worker (Workers view only)
+    ResumeWorker,
+    /// Resume all workers (Workers view only)
+    ResumeAllWorkers,
     /// Open configuration menu
     OpenConfig,
     /// Open budget configuration
@@ -67,6 +75,10 @@ pub enum AppEvent {
     CycleTheme,
     /// Trigger forge update/rebuild and restart
     Update,
+    /// Acknowledge the selected alert (Alerts view only)
+    AcknowledgeAlert,
+    /// Acknowledge all alerts (Alerts view only)
+    AcknowledgeAllAlerts,
     /// No action needed
     None,
 }
@@ -111,12 +123,17 @@ impl WorkerExecutor {
 pub struct InputHandler {
     /// Whether we're currently in chat/text input mode
     chat_mode: bool,
+    /// Current view for view-specific key handling
+    current_view: View,
 }
 
 impl InputHandler {
     /// Create a new input handler.
     pub fn new() -> Self {
-        Self { chat_mode: false }
+        Self {
+            chat_mode: false,
+            current_view: View::default(),
+        }
     }
 
     /// Set whether chat/text input mode is active.
@@ -127,6 +144,16 @@ impl InputHandler {
     /// Returns whether chat mode is active.
     pub fn is_chat_mode(&self) -> bool {
         self.chat_mode
+    }
+
+    /// Set the current view for view-specific key handling.
+    pub fn set_current_view(&mut self, view: View) {
+        self.current_view = view;
+    }
+
+    /// Returns the current view.
+    pub fn current_view(&self) -> View {
+        self.current_view
     }
 
     /// Handle a key event and return the corresponding app event.
@@ -197,16 +224,26 @@ impl InputHandler {
             // Quick Actions - Kill worker
             KeyCode::Char('k') => AppEvent::KillWorker,
 
-            // Quick Actions - Refresh
-            KeyCode::Char('r') => AppEvent::Refresh,
+            // Workers view: Pause/Resume controls
+            // 'p' = pause selected worker, 'P' = pause all workers
+            // 'r' = resume selected worker, 'R' = resume all workers
+            KeyCode::Char('p') if self.current_view == View::Workers => AppEvent::PauseWorker,
+            KeyCode::Char('P') if self.current_view == View::Workers => AppEvent::PauseAllWorkers,
+            KeyCode::Char('r') if self.current_view == View::Workers => AppEvent::ResumeWorker,
+            KeyCode::Char('R') if self.current_view == View::Workers => AppEvent::ResumeAllWorkers,
+
+            // Quick Actions - Refresh (only when not in Workers view, where 'r' is resume)
+            KeyCode::Char('r') if self.current_view != View::Workers => AppEvent::Refresh,
 
             // View navigation hotkeys (also quick actions - view shortcuts)
             KeyCode::Char('w') | KeyCode::Char('W') => AppEvent::SwitchView(View::Workers),
             KeyCode::Char('t') | KeyCode::Char('T') => AppEvent::SwitchView(View::Tasks),
-            // 'a' for Activity/Logs view
-            KeyCode::Char('a') | KeyCode::Char('A') => AppEvent::SwitchView(View::Logs),
-            // 'l' for Logs view (alternative to 'a')
-            KeyCode::Char('l') => AppEvent::SwitchView(View::Logs),
+            // 'a' for Alerts view, 'A' for acknowledge all when in Alerts view
+            KeyCode::Char('a') => AppEvent::SwitchView(View::Alerts),
+            KeyCode::Char('A') if self.current_view == View::Alerts => AppEvent::AcknowledgeAllAlerts,
+            KeyCode::Char('A') => AppEvent::SwitchView(View::Alerts),
+            // 'l' or 'L' for Logs view
+            KeyCode::Char('l') | KeyCode::Char('L') => AppEvent::SwitchView(View::Logs),
 
             // Quick Actions - Configure
             KeyCode::Char('M') => AppEvent::OpenConfig,
@@ -254,6 +291,9 @@ impl InputHandler {
             KeyCode::Enter => AppEvent::Select,
             KeyCode::Char(' ') => AppEvent::Toggle,
 
+            // Alerts view: Acknowledge all alerts with 'A' (already mapped to SwitchView)
+            // We handle 'A' in the Alerts view via app.rs instead
+
             _ => AppEvent::None,
         }
     }
@@ -300,9 +340,14 @@ mod tests {
             handler.handle_key(key_event(KeyCode::Char('l'))),
             AppEvent::SwitchView(View::Logs)
         );
-        // 'a' for Activity/Logs view
+        // 'a' for Alerts view
         assert_eq!(
             handler.handle_key(key_event(KeyCode::Char('a'))),
+            AppEvent::SwitchView(View::Alerts)
+        );
+        // 'L' for Logs view
+        assert_eq!(
+            handler.handle_key(key_event(KeyCode::Char('L'))),
             AppEvent::SwitchView(View::Logs)
         );
     }
@@ -465,6 +510,65 @@ mod tests {
         assert_eq!(
             handler.handle_key(key_event(KeyCode::Char('U'))),
             AppEvent::OpenWorkerConfig
+        );
+    }
+
+    #[test]
+    fn test_pause_resume_keys_in_workers_view() {
+        let mut handler = InputHandler::new();
+
+        // Set to Workers view
+        handler.set_current_view(View::Workers);
+
+        // 'p' in Workers view should pause selected worker
+        assert_eq!(
+            handler.handle_key(key_event(KeyCode::Char('p'))),
+            AppEvent::PauseWorker
+        );
+
+        // 'P' (Shift+p) in Workers view should pause all workers
+        assert_eq!(
+            handler.handle_key(key_event(KeyCode::Char('P'))),
+            AppEvent::PauseAllWorkers
+        );
+
+        // 'r' in Workers view should resume selected worker
+        assert_eq!(
+            handler.handle_key(key_event(KeyCode::Char('r'))),
+            AppEvent::ResumeWorker
+        );
+
+        // 'R' (Shift+r) in Workers view should resume all workers
+        assert_eq!(
+            handler.handle_key(key_event(KeyCode::Char('R'))),
+            AppEvent::ResumeAllWorkers
+        );
+    }
+
+    #[test]
+    fn test_pause_resume_keys_not_in_workers_view() {
+        let mut handler = InputHandler::new();
+
+        // Default view is Overview, 'p' should do nothing
+        assert_eq!(
+            handler.handle_key(key_event(KeyCode::Char('p'))),
+            AppEvent::None
+        );
+
+        // 'r' in non-Workers view should refresh
+        assert_eq!(
+            handler.handle_key(key_event(KeyCode::Char('r'))),
+            AppEvent::Refresh
+        );
+
+        // 'P' and 'R' should do nothing in non-Workers view
+        assert_eq!(
+            handler.handle_key(key_event(KeyCode::Char('P'))),
+            AppEvent::None
+        );
+        assert_eq!(
+            handler.handle_key(key_event(KeyCode::Char('R'))),
+            AppEvent::None
         );
     }
 }
