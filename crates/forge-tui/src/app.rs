@@ -2409,56 +2409,84 @@ impl App {
         // Spinner animation frames (4-frame spinner)
         const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸"];
 
-        // Chat history
+        // Build styled chat history
         let history_text = if self.chat_history.is_empty() {
-            "Type commands or ask questions. Examples:\n\n\
-             > show workers\n\
-             > spawn 2 glm workers\n\
-             > show P0 tasks\n\
-             > costs today\n\
-             > help\n\n\
-             Press Esc to exit chat mode."
-                .to_string()
+            Text::from(
+                "Type commands or ask questions. Examples:\n\n                 > show workers\n                 > spawn 2 glm workers\n                 > show P0 tasks\n                 > costs today\n                 > help\n\n                 Press Esc to exit chat mode.",
+            )
         } else {
-            // Format chat exchanges
-            let mut lines = Vec::new();
+            let mut lines: Vec<Line> = Vec::new();
+
             for exchange in &self.chat_history {
-                lines.push(format!(
-                    "[{}] You: {}",
-                    exchange.timestamp, exchange.user_query
+                // User query line
+                lines.push(Line::styled(
+                    format!("[{}] You: {}", exchange.timestamp, exchange.user_query),
+                    Style::default().fg(theme.colors.text),
                 ));
 
-                let response_prefix = if exchange.is_error {
-                    "❌ Error:"
-                } else {
-                    "Assistant:"
-                };
+                if exchange.is_error {
+                    // Error response with red styling
+                    for line in exchange.assistant_response.lines() {
+                        lines.push(Line::styled(
+                            format!("  ❌ {}", line),
+                            Style::default().fg(theme.colors.status_error),
+                        ));
+                    }
 
-                // Split response into lines if long
-                for line in exchange.assistant_response.lines() {
-                    lines.push(format!("  {} {}", response_prefix, line));
+                    // Show error guidance if available
+                    if let Some(ref guidance) = exchange.error_guidance {
+                        lines.push(Line::raw("")); // Blank line
+                        lines.push(Line::styled(
+                            "  ┌─ 💡 Suggested Action ─┐",
+                            Style::default().fg(Color::Yellow),
+                        ));
+                        for guidance_line in guidance.lines() {
+                            lines.push(Line::styled(
+                                format!("  │ {}", guidance_line),
+                                Style::default().fg(Color::Yellow),
+                            ));
+                        }
+                        lines.push(Line::styled(
+                            "  └────────────────────────┘",
+                            Style::default().fg(Color::Yellow),
+                        ));
+                    }
+                } else {
+                    // Normal response
+                    for line in exchange.assistant_response.lines() {
+                        lines.push(Line::styled(
+                            format!("  Assistant: {}", line),
+                            Style::default().fg(theme.colors.text),
+                        ));
+                    }
                 }
 
                 // Show tool execution results
                 if !exchange.tool_calls.is_empty() {
-                    lines.push("  ── Tool Results ──".to_string());
+                    lines.push(Line::styled(
+                        "  ── Tool Results ──",
+                        Style::default().fg(theme.colors.text_dim),
+                    ));
                     for tool in &exchange.tool_calls {
                         let status_icon = if tool.success { "✓" } else { "✗" };
                         let status_color = if tool.success {
-                            "success"
+                            theme.colors.status_healthy
                         } else {
-                            "failed"
+                            theme.colors.status_error
                         };
-                        lines.push(format!(
-                            "    {} {} [{}] {}",
-                            status_icon, tool.name, status_color, tool.message
+                        lines.push(Line::styled(
+                            format!("    {} {} {}", status_icon, tool.name, tool.message),
+                            Style::default().fg(status_color),
                         ));
                     }
                 }
 
                 // Show side effects
                 if !exchange.side_effects.is_empty() {
-                    lines.push("  ── Side Effects ──".to_string());
+                    lines.push(Line::styled(
+                        "  ── Side Effects ──",
+                        Style::default().fg(theme.colors.text_dim),
+                    ));
                     for effect in &exchange.side_effects {
                         let effect_icon = match effect.effect_type.as_str() {
                             "spawn" => "🚀",
@@ -2466,15 +2494,33 @@ impl App {
                             "assign" => "📌",
                             _ => "⚡",
                         };
-                        lines.push(format!("    {} {}", effect_icon, effect.description));
+                        lines.push(Line::styled(
+                            format!("    {} {}", effect_icon, effect.description),
+                            Style::default().fg(theme.colors.text),
+                        ));
                     }
                 }
 
                 // Show confirmation prompt if present
                 if let Some(ref confirmation) = exchange.confirmation {
-                    lines.push("  ┌─ ⚠️  CONFIRMATION REQUIRED ─┐".to_string());
-                    lines.push(format!("  │ {}", confirmation.title));
-                    lines.push(format!("  │ {}", confirmation.description));
+                    let level_color = match confirmation.level {
+                        ConfirmationLevel::Info => Color::Blue,
+                        ConfirmationLevel::Warning => Color::Yellow,
+                        ConfirmationLevel::Danger => Color::Red,
+                    };
+
+                    lines.push(Line::styled(
+                        "  ┌─ ⚠️  CONFIRMATION REQUIRED ─┐",
+                        Style::default().fg(level_color),
+                    ));
+                    lines.push(Line::styled(
+                        format!("  │ {}", confirmation.title),
+                        Style::default().fg(level_color),
+                    ));
+                    lines.push(Line::styled(
+                        format!("  │ {}", confirmation.description),
+                        Style::default().fg(level_color),
+                    ));
 
                     // Warning level indicator
                     let level_text = match confirmation.level {
@@ -2482,18 +2528,30 @@ impl App {
                         ConfirmationLevel::Warning => "⚠️ WARNING",
                         ConfirmationLevel::Danger => "🚨 DANGER",
                     };
-                    lines.push(format!("  │ Level: {}", level_text));
+                    lines.push(Line::styled(
+                        format!("  │ Level: {}", level_text),
+                        Style::default().fg(level_color),
+                    ));
 
                     // Cost impact
                     if let Some(cost) = confirmation.cost_impact {
-                        lines.push(format!("  │ Cost Impact: ${:.4}", cost));
+                        lines.push(Line::styled(
+                            format!("  │ Cost Impact: ${:.4}", cost),
+                            Style::default().fg(level_color),
+                        ));
                     }
 
                     // Affected items
                     if !confirmation.affected_items.is_empty() {
-                        lines.push("  │ Affected:".to_string());
+                        lines.push(Line::styled(
+                            "  │ Affected:",
+                            Style::default().fg(level_color),
+                        ));
                         for item in &confirmation.affected_items {
-                            lines.push(format!("  │   • {}", item));
+                            lines.push(Line::styled(
+                                format!("  │   • {}", item),
+                                Style::default().fg(level_color),
+                            ));
                         }
                     }
 
@@ -2503,10 +2561,19 @@ impl App {
                     } else {
                         "No (permanent)"
                     };
-                    lines.push(format!("  │ Reversible: {}", reversible_text));
+                    lines.push(Line::styled(
+                        format!("  │ Reversible: {}", reversible_text),
+                        Style::default().fg(level_color),
+                    ));
 
-                    lines.push("  │ Type 'yes' to confirm or 'no' to cancel".to_string());
-                    lines.push("  └────────────────────────────┘".to_string());
+                    lines.push(Line::styled(
+                        "  │ Type 'yes' to confirm or 'no' to cancel",
+                        Style::default().fg(level_color),
+                    ));
+                    lines.push(Line::styled(
+                        "  └────────────────────────────┘",
+                        Style::default().fg(level_color),
+                    ));
                 }
 
                 // Show metadata (duration, cost, provider)
@@ -2527,23 +2594,47 @@ impl App {
                     }
 
                     if !meta_parts.is_empty() {
-                        lines.push(format!("  📊 [{}]", meta_parts.join(" | ")));
+                        lines.push(Line::styled(
+                            format!("  📊 [{}]", meta_parts.join(" | ")),
+                            Style::default().fg(theme.colors.text_dim),
+                        ));
                     }
                 }
 
-                lines.push("".to_string()); // Blank line between exchanges
+                lines.push(Line::raw("")); // Blank line between exchanges
             }
 
             if self.chat_pending {
                 let spinner = SPINNER_FRAMES[self.chat_spinner_frame % SPINNER_FRAMES.len()];
-                lines.push(format!("{} Processing your request...", spinner));
-                lines.push("  Executing tools...".to_string());
+                lines.push(Line::styled(
+                    format!("{} Processing your request...", spinner),
+                    Style::default().fg(theme.colors.hotkey),
+                ));
+                lines.push(Line::styled(
+                    "  Executing tools...",
+                    Style::default().fg(theme.colors.text_dim),
+                ));
             }
 
-            lines.join("\n")
+            Text::from(lines)
         };
 
-        self.draw_panel(frame, chunks[0], "Chat History", &history_text, false);
+        // Draw history panel with styled text
+        let border_style = Style::default().fg(theme.colors.border_dim);
+        let title_style = Style::default()
+            .fg(theme.colors.header)
+            .add_modifier(Modifier::BOLD);
+
+        let history_panel = Paragraph::new(history_text)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(border_style)
+                    .title(Span::styled(" Chat History ", title_style)),
+            )
+            .wrap(Wrap { trim: false });
+
+        frame.render_widget(history_panel, chunks[0]);
 
         // Input field
         let input_style = if self.focus_panel == FocusPanel::ChatInput {
@@ -2569,6 +2660,7 @@ impl App {
 
         frame.render_widget(input, chunks[1]);
     }
+
 
     /// Draw a panel with optional highlight.
     fn draw_panel(&self, frame: &mut Frame, area: Rect, title: &str, content: &str, focused: bool) {
