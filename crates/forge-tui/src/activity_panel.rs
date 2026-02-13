@@ -49,6 +49,8 @@ pub enum ActivityEventType {
     ApiCall,
     /// Health check result
     HealthCheck,
+    /// Config hot-reloaded
+    ConfigReload,
     /// General info
     Info,
     /// Warning event
@@ -69,6 +71,7 @@ impl ActivityEventType {
             ActivityEventType::TaskFailed => "✗",
             ActivityEventType::ApiCall => "⚡",
             ActivityEventType::HealthCheck => "♥",
+            ActivityEventType::ConfigReload => "🔄",
             ActivityEventType::Info => "●",
             ActivityEventType::Warning => "⚠",
             ActivityEventType::Error => "✖",
@@ -86,6 +89,7 @@ impl ActivityEventType {
             ActivityEventType::TaskFailed => Color::Red,
             ActivityEventType::ApiCall => Color::Magenta,
             ActivityEventType::HealthCheck => Color::Green,
+            ActivityEventType::ConfigReload => Color::LightCyan,
             ActivityEventType::Info => Color::White,
             ActivityEventType::Warning => Color::Yellow,
             ActivityEventType::Error => Color::Red,

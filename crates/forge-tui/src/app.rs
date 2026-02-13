@@ -62,6 +62,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
+use crate::config_watcher::{ConfigEvent, ConfigWatcher, ForgeConfig};
 use crate::cost_panel::CostPanel;
 use crate::data::DataManager;
 use crate::event::{AppEvent, InputHandler};
@@ -69,6 +70,7 @@ use crate::metrics_panel::MetricsPanel;
 use crate::theme::ThemeManager;
 use crate::view::{FocusPanel, LayoutMode, View};
 use crate::widget::QuickActionsPanel;
+use tracing::{info, warn};
 
 /// Result type for app operations.
 pub type AppResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -77,8 +79,8 @@ pub type AppResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const TARGET_FPS: u64 = 60;
 const FRAME_DURATION: Duration = Duration::from_millis(1000 / TARGET_FPS);
 
-/// Data polling intervals (optimized for performance).
-const DATA_POLL_INTERVAL: Duration = Duration::from_millis(100);
+/// Default data polling interval (100ms).
+const DEFAULT_DATA_POLL_INTERVAL_MS: u64 = 100;
 
 /// Header timestamp cache duration (update every second).
 const TIMESTAMP_CACHE_DURATION: Duration = Duration::from_secs(1);
@@ -158,6 +160,14 @@ pub struct App {
     show_task_detail: bool,
     /// Currently selected task index in the flattened task list
     selected_task_index: usize,
+    /// Configuration watcher for hot-reload
+    config_watcher: Option<ConfigWatcher>,
+    /// Receiver for config change events
+    config_rx: Option<Receiver<ConfigEvent>>,
+    /// Current forge configuration
+    forge_config: ForgeConfig,
+    /// Configurable data poll interval (from forge_config.dashboard.refresh_interval_ms)
+    data_poll_interval: Duration,
 }
 
 /// A single chat exchange (user query + assistant response).
@@ -237,6 +247,26 @@ impl App {
             .build()
             .expect("Failed to create worker runtime");
 
+        // Initialize config watcher for hot-reload
+        let config_start = Instant::now();
+        info!("⏱️ Initializing config watcher...");
+        let (config_watcher, config_rx, forge_config) = match ConfigWatcher::new() {
+            Some((watcher, rx)) => {
+                let config = watcher.current_config().clone();
+                info!("⏱️ Config watcher initialized in {:?}", config_start.elapsed());
+                (Some(watcher), Some(rx), config)
+            }
+            None => {
+                info!("⏱️ Config watcher not initialized (config file not found)");
+                (None, None, ForgeConfig::default())
+            }
+        };
+
+        // Calculate initial data poll interval from config
+        let data_poll_interval = Duration::from_millis(
+            forge_config.dashboard.refresh_interval_ms.min(DEFAULT_DATA_POLL_INTERVAL_MS)
+        );
+
         info!("⏱️ App::new() completed in {:?}", start.elapsed());
 
         Self {
@@ -277,6 +307,10 @@ impl App {
             priority_filter: None,
             show_task_detail: false,
             selected_task_index: 0,
+            config_watcher,
+            config_rx,
+            forge_config,
+            data_poll_interval,
         }
     }
 
@@ -325,6 +359,10 @@ impl App {
             priority_filter: None,
             show_task_detail: false,
             selected_task_index: 0,
+            config_watcher: None, // Don't initialize in test mode
+            config_rx: None,
+            forge_config: ForgeConfig::default(),
+            data_poll_interval: Duration::from_millis(DEFAULT_DATA_POLL_INTERVAL_MS),
         }
     }
 
@@ -650,6 +688,160 @@ impl App {
             self.mark_dirty();
             info!("🔄 UI marked dirty for redraw");
         }
+    }
+
+    /// Poll for config changes and apply hot-reload.
+    ///
+    /// This method checks for config file changes and applies them immediately
+    /// without requiring an application restart.
+    fn poll_config_changes(&mut self) {
+        use crate::activity_panel::ActivityEventType;
+
+        // Collect all pending events first to avoid borrow issues
+        let events: Vec<ConfigEvent> = if let Some(ref rx) = self.config_rx {
+            let mut evts = Vec::new();
+            while let Ok(event) = rx.try_recv() {
+                evts.push(event);
+            }
+            evts
+        } else {
+            return;
+        };
+
+        // Process events after releasing the borrow
+        for event in events {
+            match event {
+                ConfigEvent::Reloaded { config } => {
+                    self.apply_config_change(&config);
+                    self.forge_config = config;
+
+                    // Add activity log entry
+                    self.data_manager.add_activity(
+                        ActivityEventType::ConfigReload,
+                        None,
+                        "Config reloaded from disk",
+                    );
+
+                    self.status_message = Some("✅ Config reloaded".to_string());
+                    self.mark_dirty();
+                    info!("Config hot-reloaded successfully");
+                }
+                ConfigEvent::Created { config } => {
+                    self.apply_config_change(&config);
+                    self.forge_config = config;
+
+                    self.data_manager.add_activity(
+                        ActivityEventType::ConfigReload,
+                        None,
+                        "Config file created",
+                    );
+
+                    self.status_message = Some("✅ Config file created".to_string());
+                    self.mark_dirty();
+                    info!("Config file created");
+                }
+                ConfigEvent::ValidationError { error, path } => {
+                    // Keep old config on validation error
+                    warn!(
+                        "Config validation failed for {:?}: {} - keeping old config",
+                        path, error
+                    );
+
+                    self.data_manager.add_activity(
+                        ActivityEventType::Error,
+                        None,
+                        format!("Config validation failed: {}", error),
+                    );
+
+                    self.status_message = Some(format!("⚠️ Invalid config: {}", error));
+                    self.mark_dirty();
+                }
+                ConfigEvent::Removed => {
+                    warn!("Config file removed - keeping last known config");
+
+                    self.data_manager.add_activity(
+                        ActivityEventType::Warning,
+                        None,
+                        "Config file removed",
+                    );
+
+                    self.status_message = Some("⚠️ Config file removed".to_string());
+                    self.mark_dirty();
+                }
+                ConfigEvent::Error { error } => {
+                    warn!("Config error: {} - keeping old config", error);
+
+                    self.data_manager.add_activity(
+                        ActivityEventType::Error,
+                        None,
+                        format!("Config parse error: {}", error),
+                    );
+
+                    self.status_message = Some(format!("⚠️ Config error: {}", error));
+                    self.mark_dirty();
+                }
+            }
+        }
+    }
+
+    /// Apply a configuration change to the running application.
+    ///
+    /// This method applies the hot-reloadable portions of the config
+    /// while preserving application state.
+    fn apply_config_change(&mut self, config: &ForgeConfig) {
+        use crate::activity_panel::{ActivityEntry, ActivityEventType};
+
+        let mut changes_applied = Vec::new();
+
+        // Apply theme change if specified
+        if let Some(ref theme_name) = config.theme.name {
+            if let Some(theme) = crate::theme::ThemeName::from_str(theme_name) {
+                if self.theme_manager.theme_name() != theme {
+                    self.theme_manager.set_theme(theme);
+                    changes_applied.push(format!("theme={}", theme_name));
+                    info!("Theme changed to: {}", theme_name);
+                }
+            }
+        }
+
+        // Apply refresh interval change
+        let new_interval = Duration::from_millis(
+            config.dashboard.refresh_interval_ms.min(DEFAULT_DATA_POLL_INTERVAL_MS)
+        );
+        if self.data_poll_interval != new_interval {
+            self.data_poll_interval = new_interval;
+            changes_applied.push(format!("refresh_interval={}ms", config.dashboard.refresh_interval_ms));
+            info!("Refresh interval changed to: {}ms", config.dashboard.refresh_interval_ms);
+        }
+
+        // Apply budget threshold changes (these are used by cost_panel when rendering)
+        let old_warning = self.forge_config.cost_tracking.budget_warning_threshold;
+        let old_critical = self.forge_config.cost_tracking.budget_critical_threshold;
+        if config.cost_tracking.budget_warning_threshold != old_warning {
+            changes_applied.push(format!("warning_threshold={}%", config.cost_tracking.budget_warning_threshold));
+            info!("Budget warning threshold changed: {}% -> {}%", old_warning, config.cost_tracking.budget_warning_threshold);
+        }
+        if config.cost_tracking.budget_critical_threshold != old_critical {
+            changes_applied.push(format!("critical_threshold={}%", config.cost_tracking.budget_critical_threshold));
+            info!("Budget critical threshold changed: {}% -> {}%", old_critical, config.cost_tracking.budget_critical_threshold);
+        }
+
+        // Log config reload to activity panel
+        if !changes_applied.is_empty() {
+            let message = format!("Config reloaded: {}", changes_applied.join(", "));
+            self.data_manager.activity_data.push(
+                ActivityEntry::new(ActivityEventType::ConfigReload, message.clone())
+            );
+
+            // Show visual feedback via status message
+            self.status_message = Some(message);
+            self.mark_dirty();
+
+            info!("Applied config change: {}", changes_applied.join(", "));
+        }
+
+        // Store the updated config
+        self.forge_config = config.clone();
     }
 
     /// Handle a key event.
@@ -1416,8 +1608,11 @@ impl App {
             // frequently to ensure responsive chat UX. Don't let data polling block it.
             self.poll_chat_responses();
 
+            // Poll for config hot-reload changes
+            self.poll_config_changes();
+
             // Optimized data polling - only poll if interval elapsed
-            let needs_poll = self.last_poll_time.elapsed() >= DATA_POLL_INTERVAL;
+            let needs_poll = self.last_poll_time.elapsed() >= self.data_poll_interval;
             if needs_poll {
                 let data_changed = self.data_manager.poll_updates();
                 self.last_poll_time = Instant::now();
@@ -1934,9 +2129,13 @@ impl App {
 
     /// Draw the Workers view.
     fn draw_workers(&self, frame: &mut Frame, area: Rect) {
-        let worker_table = self.data_manager.worker_data.format_worker_table();
+        use crate::worker_panel::WorkerPanel;
 
-        self.draw_panel(frame, area, "Worker Pool Management", &worker_table, true);
+        // Use the WorkerPanel widget with color-coded health indicators
+        let worker_panel = WorkerPanel::new(&self.data_manager.worker_data)
+            .focused(self.focus_panel == FocusPanel::WorkerPool);
+
+        frame.render_widget(worker_panel, area);
     }
 
     /// Draw the Tasks view.

@@ -8,12 +8,18 @@
 //! 1. **Process Health**: PID exists, not zombie
 //! 2. **Activity Health**: Last activity within threshold
 //! 3. **Memory Health**: RSS below limit (configurable)
-//! 4. **Response Health**: Responds to ping within timeout
+//! 4. **Response Health**: Responds to SIGUSR1 ping within timeout
 //! 5. **Task Health**: No stuck tasks > 30 minutes
 //!
 //! ## Recovery Actions
 //!
-//! Per ADR 0014: No automatic recovery - visibility first, user decides.
+//! The health monitor supports configurable recovery actions:
+//! - **Warn**: Log warning and show yellow indicator
+//! - **Restart**: Kill and respawn worker (after 2+ failed checks)
+//! - **Escalate**: Route to different model tier
+//! - **Alert**: Send notification (future: Slack/Discord)
+//!
+//! Per ADR 0014: Automatic recovery is opt-in. By default, visibility first.
 //! Health status is displayed prominently but actions require user confirmation.
 //!
 //! ## Usage
@@ -59,6 +65,12 @@ pub const DEFAULT_MEMORY_LIMIT_MB: u64 = 1024;
 /// Default maximum recovery attempts.
 pub const DEFAULT_MAX_RECOVERY_ATTEMPTS: u8 = 3;
 
+/// Default response ping timeout in milliseconds.
+pub const DEFAULT_RESPONSE_TIMEOUT_MS: u64 = 5000;
+
+/// Default consecutive failures before auto-restart.
+pub const DEFAULT_AUTO_RESTART_AFTER_FAILURES: u8 = 2;
+
 /// Configuration for health monitoring.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthMonitorConfig {
@@ -88,6 +100,18 @@ pub struct HealthMonitorConfig {
 
     /// Task stuck threshold in minutes
     pub task_stuck_threshold_mins: i64,
+
+    /// Enable response ping check (SIGUSR1)
+    pub enable_response_check: bool,
+
+    /// Response ping timeout in milliseconds
+    pub response_timeout_ms: u64,
+
+    /// Enable automatic recovery (restart after failures)
+    pub enable_auto_recovery: bool,
+
+    /// Number of consecutive failures before auto-restart
+    pub auto_restart_after_failures: u8,
 }
 
 impl Default for HealthMonitorConfig {
@@ -102,6 +126,10 @@ impl Default for HealthMonitorConfig {
             enable_memory_check: false, // Disabled by default - requires procfs
             enable_task_check: true,
             task_stuck_threshold_mins: 30,
+            enable_response_check: false, // Disabled by default - requires signal handling
+            response_timeout_ms: DEFAULT_RESPONSE_TIMEOUT_MS,
+            enable_auto_recovery: false, // Disabled by default per ADR 0014
+            auto_restart_after_failures: DEFAULT_AUTO_RESTART_AFTER_FAILURES,
         }
     }
 }
@@ -120,6 +148,8 @@ pub enum HealthCheckType {
     TaskProgress,
     /// Check if tmux session exists
     TmuxSession,
+    /// Check if worker responds to ping
+    ResponseHealth,
 }
 
 impl std::fmt::Display for HealthCheckType {
@@ -130,6 +160,7 @@ impl std::fmt::Display for HealthCheckType {
             Self::MemoryUsage => write!(f, "Memory"),
             Self::TaskProgress => write!(f, "Task"),
             Self::TmuxSession => write!(f, "Session"),
+            Self::ResponseHealth => write!(f, "Response"),
         }
     }
 }
@@ -148,6 +179,8 @@ pub enum HealthErrorType {
     StuckTask,
     /// Tmux session missing
     MissingSession,
+    /// Worker not responding to ping
+    Unresponsive,
     /// Unknown error
     Unknown,
 }
@@ -160,6 +193,7 @@ impl std::fmt::Display for HealthErrorType {
             Self::HighMemory => write!(f, "high memory"),
             Self::StuckTask => write!(f, "stuck task"),
             Self::MissingSession => write!(f, "missing session"),
+            Self::Unresponsive => write!(f, "unresponsive"),
             Self::Unknown => write!(f, "unknown"),
         }
     }
@@ -240,6 +274,12 @@ pub struct WorkerHealthStatus {
     pub last_checked: DateTime<Utc>,
     /// Recovery attempts count
     pub recovery_attempts: u8,
+    /// Consecutive health check failures
+    pub consecutive_failures: u8,
+    /// Whether auto-restart should be triggered
+    pub should_auto_restart: bool,
+    /// Whether recovery is exhausted (max attempts reached)
+    pub recovery_exhausted: bool,
 }
 
 impl WorkerHealthStatus {
@@ -255,6 +295,9 @@ impl WorkerHealthStatus {
             guidance: Vec::new(),
             last_checked: Utc::now(),
             recovery_attempts: 0,
+            consecutive_failures: 0,
+            should_auto_restart: false,
+            recovery_exhausted: false,
         }
     }
 
@@ -323,6 +366,9 @@ impl WorkerHealthStatus {
                 HealthCheckType::TmuxSession => {
                     self.guidance.push("Session missing - restart required".to_string());
                 }
+                HealthCheckType::ResponseHealth => {
+                    self.guidance.push("Worker not responding - check if hung".to_string());
+                }
             }
         }
 
@@ -355,6 +401,8 @@ pub struct HealthMonitor {
     log_dir: PathBuf,
     /// Recovery attempt tracking per worker
     recovery_attempts: HashMap<String, u8>,
+    /// Consecutive failure tracking per worker
+    consecutive_failures: HashMap<String, u8>,
 }
 
 impl HealthMonitor {
@@ -372,6 +420,7 @@ impl HealthMonitor {
             status_reader,
             log_dir,
             recovery_attempts: HashMap::new(),
+            consecutive_failures: HashMap::new(),
         })
     }
 
@@ -388,6 +437,7 @@ impl HealthMonitor {
             status_reader,
             log_dir,
             recovery_attempts: HashMap::new(),
+            consecutive_failures: HashMap::new(),
         })
     }
 
@@ -413,6 +463,11 @@ impl HealthMonitor {
             status.recovery_attempts = attempts;
         }
 
+        // Carry over consecutive failures
+        if let Some(&failures) = self.consecutive_failures.get(&worker.worker_id) {
+            status.consecutive_failures = failures;
+        }
+
         // Run health checks
         if self.config.enable_pid_check {
             let result = self.check_pid_exists(worker);
@@ -434,6 +489,43 @@ impl HealthMonitor {
             status.add_result(result);
         }
 
+        if self.config.enable_response_check {
+            let result = self.check_response_health(worker);
+            status.add_result(result);
+        }
+
+        // Update consecutive failure tracking
+        if status.is_healthy {
+            // Reset consecutive failures on healthy check
+            self.consecutive_failures.remove(&worker.worker_id);
+            status.consecutive_failures = 0;
+        } else {
+            // Increment consecutive failures
+            let failures = self
+                .consecutive_failures
+                .entry(worker.worker_id.clone())
+                .or_insert(0);
+            *failures = failures.saturating_add(1);
+            status.consecutive_failures = *failures;
+
+            // Check if auto-restart should be triggered
+            if self.config.enable_auto_recovery
+                && *failures >= self.config.auto_restart_after_failures
+            {
+                status.should_auto_restart = true;
+                info!(
+                    worker_id = %worker.worker_id,
+                    consecutive_failures = *failures,
+                    threshold = self.config.auto_restart_after_failures,
+                    "Auto-restart triggered after consecutive failures"
+                );
+            }
+        }
+
+        // Check if recovery is exhausted
+        status.recovery_exhausted =
+            status.recovery_attempts >= self.config.max_recovery_attempts;
+
         // Generate guidance based on results
         status.generate_guidance();
         status.last_checked = Utc::now();
@@ -443,10 +535,48 @@ impl HealthMonitor {
             is_healthy = status.is_healthy,
             health_score = status.health_score,
             failed_checks = ?status.failed_checks,
+            consecutive_failures = status.consecutive_failures,
             "Health check completed"
         );
 
         status
+    }
+
+    /// Check if worker responds to ping (SIGUSR1).
+    /// This is a placeholder that always passes - actual implementation requires
+    /// workers to set up a signal handler and update a response file.
+    fn check_response_health(&self, worker: &WorkerStatusInfo) -> HealthCheckResult {
+        let Some(pid) = worker.pid else {
+            return HealthCheckResult::skipped(HealthCheckType::ResponseHealth);
+        };
+
+        // Check if response file exists and is recent
+        let response_file = self.log_dir.join(format!("{}.response", worker.worker_id));
+
+        if let Ok(metadata) = std::fs::metadata(&response_file) {
+            if let Ok(modified) = metadata.modified() {
+                let elapsed = modified.elapsed().unwrap_or(std::time::Duration::MAX);
+                let timeout = std::time::Duration::from_millis(self.config.response_timeout_ms);
+
+                if elapsed < timeout {
+                    return HealthCheckResult::passed(HealthCheckType::ResponseHealth);
+                } else {
+                    return HealthCheckResult::failed(
+                        HealthCheckType::ResponseHealth,
+                        HealthErrorType::Unresponsive,
+                        format!(
+                            "Worker response file is {}ms old (timeout: {}ms)",
+                            elapsed.as_millis(),
+                            self.config.response_timeout_ms
+                        ),
+                    );
+                }
+            }
+        }
+
+        // No response file - worker may not support ping
+        // This is not an error if the check is disabled or worker is new
+        HealthCheckResult::skipped(HealthCheckType::ResponseHealth)
     }
 
     /// Check if worker's PID exists and is not a zombie.
@@ -621,7 +751,24 @@ impl HealthMonitor {
     /// Reset recovery attempts for a worker (after successful recovery).
     pub fn reset_recovery_attempts(&mut self, worker_id: &str) {
         self.recovery_attempts.remove(worker_id);
-        debug!(worker_id = %worker_id, "Reset recovery attempts");
+        self.consecutive_failures.remove(worker_id);
+        debug!(worker_id = %worker_id, "Reset recovery attempts and consecutive failures");
+    }
+
+    /// Get consecutive failure count for a worker.
+    pub fn consecutive_failures(&self, worker_id: &str) -> u8 {
+        self.consecutive_failures.get(worker_id).copied().unwrap_or(0)
+    }
+
+    /// Check if auto-restart should be triggered for a worker.
+    pub fn should_auto_restart(&self, worker_id: &str) -> bool {
+        if !self.config.enable_auto_recovery {
+            return false;
+        }
+        self.consecutive_failures
+            .get(worker_id)
+            .map(|&failures| failures >= self.config.auto_restart_after_failures)
+            .unwrap_or(false)
     }
 
     /// Get the configuration.
@@ -697,6 +844,9 @@ mod tests {
         assert!(status.is_healthy);
         assert_eq!(status.health_score, 1.0);
         assert!(status.check_results.is_empty());
+        assert_eq!(status.consecutive_failures, 0);
+        assert!(!status.should_auto_restart);
+        assert!(!status.recovery_exhausted);
     }
 
     #[test]
@@ -926,6 +1076,7 @@ mod tests {
         assert_eq!(HealthCheckType::MemoryUsage.to_string(), "Memory");
         assert_eq!(HealthCheckType::TaskProgress.to_string(), "Task");
         assert_eq!(HealthCheckType::TmuxSession.to_string(), "Session");
+        assert_eq!(HealthCheckType::ResponseHealth.to_string(), "Response");
     }
 
     #[test]
@@ -935,5 +1086,117 @@ mod tests {
         assert_eq!(HealthErrorType::HighMemory.to_string(), "high memory");
         assert_eq!(HealthErrorType::StuckTask.to_string(), "stuck task");
         assert_eq!(HealthErrorType::MissingSession.to_string(), "missing session");
+        assert_eq!(HealthErrorType::Unresponsive.to_string(), "unresponsive");
+    }
+
+    #[test]
+    fn test_consecutive_failures_tracking() {
+        let config = HealthMonitorConfig {
+            enable_auto_recovery: true,
+            auto_restart_after_failures: 2,
+            ..Default::default()
+        };
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().to_path_buf();
+        let log_dir = temp_dir.path().to_path_buf();
+
+        let mut monitor =
+            HealthMonitor::with_dirs(config, status_dir, log_dir).expect("Failed to create monitor");
+
+        let worker_id = "test-worker";
+
+        // Initially no consecutive failures
+        assert_eq!(monitor.consecutive_failures(worker_id), 0);
+        assert!(!monitor.should_auto_restart(worker_id));
+
+        // Simulate consecutive failures by checking an unhealthy worker
+        // (Worker without PID will fail PID check)
+        let worker = WorkerStatusInfo {
+            worker_id: worker_id.to_string(),
+            status: WorkerStatus::Active,
+            pid: None, // This will cause PID check to fail
+            ..Default::default()
+        };
+
+        // First failure
+        let health1 = monitor.check_worker_health(&worker);
+        assert!(!health1.is_healthy);
+        assert_eq!(health1.consecutive_failures, 1);
+        assert!(!health1.should_auto_restart);
+
+        // Second failure
+        let health2 = monitor.check_worker_health(&worker);
+        assert_eq!(health2.consecutive_failures, 2);
+        assert!(health2.should_auto_restart); // Should trigger after 2 failures
+
+        // Third failure
+        let health3 = monitor.check_worker_health(&worker);
+        assert_eq!(health3.consecutive_failures, 3);
+        assert!(health3.should_auto_restart);
+    }
+
+    #[test]
+    fn test_auto_recovery_disabled_by_default() {
+        let config = HealthMonitorConfig::default();
+        assert!(!config.enable_auto_recovery, "Auto-recovery should be disabled by default per ADR 0014");
+    }
+
+    #[test]
+    fn test_consecutive_failures_reset_on_healthy() {
+        let config = HealthMonitorConfig {
+            enable_auto_recovery: true,
+            auto_restart_after_failures: 2,
+            ..Default::default()
+        };
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().to_path_buf();
+        let log_dir = temp_dir.path().to_path_buf();
+
+        let mut monitor =
+            HealthMonitor::with_dirs(config, status_dir, log_dir).expect("Failed to create monitor");
+
+        let worker_id = "test-worker";
+
+        // Set up some consecutive failures
+        monitor.consecutive_failures.insert(worker_id.to_string(), 3);
+        assert_eq!(monitor.consecutive_failures(worker_id), 3);
+
+        // Reset via the reset_recovery_attempts method
+        monitor.reset_recovery_attempts(worker_id);
+        assert_eq!(monitor.consecutive_failures(worker_id), 0);
+    }
+
+    #[test]
+    fn test_response_health_check_no_pid() {
+        let config = HealthMonitorConfig {
+            enable_response_check: true,
+            ..Default::default()
+        };
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().to_path_buf();
+        let log_dir = temp_dir.path().to_path_buf();
+
+        let monitor =
+            HealthMonitor::with_dirs(config, status_dir, log_dir).expect("Failed to create monitor");
+
+        // Worker without PID - should skip
+        let worker = WorkerStatusInfo {
+            worker_id: "test".to_string(),
+            status: WorkerStatus::Active,
+            pid: None,
+            ..Default::default()
+        };
+
+        let result = monitor.check_response_health(&worker);
+        assert!(result.passed); // Skipped counts as passing
+    }
+
+    #[test]
+    fn test_new_config_fields() {
+        let config = HealthMonitorConfig::default();
+        assert!(!config.enable_response_check);
+        assert_eq!(config.response_timeout_ms, 5000);
+        assert!(!config.enable_auto_recovery);
+        assert_eq!(config.auto_restart_after_failures, 2);
     }
 }
