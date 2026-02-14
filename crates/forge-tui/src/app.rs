@@ -71,6 +71,7 @@ use crate::perf_panel::PerfPanel;
 use crate::theme::ThemeManager;
 use crate::view::{FocusPanel, LayoutMode, View};
 use crate::widget::QuickActionsPanel;
+use crate::error_recovery::{ErrorCategory, ErrorRecoveryManager, ErrorSeverity, SharedErrorRecoveryManager};
 use tracing::{info, warn};
 
 /// Result type for app operations.
@@ -208,6 +209,8 @@ pub struct App {
     paused_workers: std::collections::HashSet<String>,
     /// Currently selected worker index in Workers view
     selected_worker_index: usize,
+    /// Error recovery manager for tracking and recovering from errors
+    error_recovery: SharedErrorRecoveryManager,
 }
 
 /// Temporary storage for chat exchange data during streaming display.
@@ -514,6 +517,7 @@ impl App {
             pending_action: None,
             paused_workers: std::collections::HashSet::new(),
             selected_worker_index: 0,
+            error_recovery: SharedErrorRecoveryManager::new(),
         }
     }
 
@@ -581,6 +585,7 @@ impl App {
             task_search_mode: false,
             paused_workers: std::collections::HashSet::new(),
             selected_worker_index: 0,
+            error_recovery: SharedErrorRecoveryManager::new(),
         }
     }
 
@@ -598,7 +603,13 @@ impl App {
         info!("⏱️ init_chat_backend() started");
 
         // Load config from ~/.forge/config.yaml
-        let config_path = dirs::home_dir()?.join(".forge/config.yaml");
+        let config_path = match dirs::home_dir() {
+            Some(home) => home.join(".forge/config.yaml"),
+            None => {
+                warn!("⏱️ Could not determine home directory (took {:?})", start.elapsed());
+                return None;
+            }
+        };
 
         info!(
             "⏱️ Initializing chat backend from {}",
@@ -1271,9 +1282,19 @@ impl App {
         }
 
         // Handle priority filter keys (0-4) when in Tasks view
+        // Also handle search mode activation with '/' key
         if self.current_view == View::Tasks {
             if let KeyCode::Char(c) = key.code {
                 match c {
+                    // Activate search mode with '/' key
+                    '/' if !self.task_search_mode => {
+                        self.task_search_mode = true;
+                        self.task_search_query.clear();
+                        self.input_handler.set_chat_mode(true);
+                        self.status_message = Some("Search mode: type to filter tasks, Esc to clear".to_string());
+                        self.mark_dirty();
+                        return;
+                    }
                     '0' | '1' | '2' | '3' | '4' => {
                         let priority = c.to_digit(10).unwrap() as u8;
                         // Toggle filter: if same priority, clear it; otherwise set new filter
@@ -1330,6 +1351,14 @@ impl App {
                 } else if self.current_view == View::Chat {
                     self.chat_input.clear();
                     self.go_back();
+                } else if self.task_search_mode {
+                    // Exit search mode
+                    self.task_search_mode = false;
+                    self.task_search_query.clear();
+                    self.input_handler.set_chat_mode(false);
+                    self.status_message = Some("Search cleared".to_string());
+                    self.scroll_offset = 0;
+                    self.mark_dirty();
                 }
                 self.mark_dirty();
             }
@@ -1364,8 +1393,9 @@ impl App {
                     }
                 } else if self.current_view == View::Tasks {
                     // In Tasks view, navigate down through tasks
-                    // Get actual task count for proper clamping
-                    let task_count = self.data_manager.bead_manager.task_count_filtered(self.priority_filter);
+                    // Get actual task count for proper clamping (including search)
+                    let search_query = if self.task_search_mode { &self.task_search_query } else { "" };
+                    let task_count = self.data_manager.bead_manager.task_count_filtered_with_search(self.priority_filter, search_query);
                     if self.selected_task_index < task_count.saturating_sub(1) {
                         self.selected_task_index += 1;
                     }
@@ -1440,12 +1470,23 @@ impl App {
                 self.mark_dirty();
             }
             AppEvent::TextInput(c) => {
-                self.chat_input.push(c);
-                self.mark_dirty();
+                if self.task_search_mode && self.current_view == View::Tasks {
+                    self.task_search_query.push(c);
+                    self.scroll_offset = 0;
+                    self.mark_dirty();
+                } else {
+                    self.chat_input.push(c);
+                    self.mark_dirty();
+                }
             }
             AppEvent::Backspace => {
-                self.chat_input.pop();
-                self.mark_dirty();
+                if self.task_search_mode && self.current_view == View::Tasks {
+                    self.task_search_query.pop();
+                    self.mark_dirty();
+                } else {
+                    self.chat_input.pop();
+                    self.mark_dirty();
+                }
             }
             AppEvent::Submit => {
                 if !self.chat_input.is_empty() {
@@ -2372,6 +2413,16 @@ impl App {
             theme.colors.status_warning
         };
 
+        // Get unacknowledged errors for display
+        let unacknowledged = self.error_recovery.unacknowledged_errors();
+        let error_text = if !unacknowledged.is_empty() {
+            // Show count of unacknowledged errors
+            let count = unacknowledged.len();
+            format!("⚠️{} ", count)
+        } else {
+            String::new()
+        };
+
         // Determine system status from real data
         let (status_text, status_color) = if let Some(err) = self.data_manager.init_error() {
             (
@@ -2397,8 +2448,8 @@ impl App {
             }
         };
 
-        // Calculate spacing to right-align timestamp, dimensions, alert badge, and status
-        let right_content_len = now.len() + 2 + dimensions.len() + 2 + alert_text.len() + status_text.len();
+        // Calculate spacing to right-align timestamp, dimensions, alert badge, error indicator, and status
+        let right_content_len = now.len() + 2 + dimensions.len() + 2 + alert_text.len() + error_text.len() + status_text.len();
         let spacing = area
             .width
             .saturating_sub(title_len as u16 + right_content_len as u16 + 2)
@@ -2417,6 +2468,11 @@ impl App {
             Span::styled(dimensions, Style::default().fg(theme.colors.text_dim)),
             Span::raw("  "),
         ];
+
+        // Add error indicator if there are unacknowledged errors
+        if !error_text.is_empty() {
+            header_spans.push(Span::styled(&error_text, Style::default().fg(theme.colors.status_error).add_modifier(Modifier::BOLD)));
+        }
 
         // Add alert badge if there are alerts
         if alert_badge.should_display() {
@@ -2786,12 +2842,27 @@ impl App {
 
     /// Draw the Tasks view.
     fn draw_tasks(&self, frame: &mut Frame, area: Rect) {
+        // Get formatted content with search query included
+        let search_query = if self.task_search_mode {
+            &self.task_search_query
+        } else {
+            ""
+        };
         let content = self
             .data_manager
             .bead_manager
-            .format_task_queue_full_filtered(self.priority_filter);
+            .format_task_queue_full_filtered_with_search(self.priority_filter, search_query);
 
-        self.draw_panel(frame, area, "Task Queue & Bead Management", &content, true);
+        // Update panel title with search indicator
+        let title = if self.task_search_mode && !self.task_search_query.is_empty() {
+            format!("Task Queue & Bead Management [Search: \"{}\"]", self.task_search_query)
+        } else if self.task_search_mode {
+            "Task Queue & Bead Management [Search active]".to_string()
+        } else {
+            "Task Queue & Bead Management".to_string()
+        };
+
+        self.draw_panel(frame, area, &title, &content, true);
     }
 
     /// Draw the Costs view.

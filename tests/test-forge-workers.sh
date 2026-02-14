@@ -30,6 +30,21 @@ TEST_NAME="forge-workers"
 # o   - Opus 4.6 (lowercase only)
 # h   - Haiku (lowercase only)
 
+# Global variable for tracking sessions before spawning
+BEFORE_SESSIONS=""
+
+# Trap handler to cleanup on any exit
+cleanup_on_exit() {
+    local exit_code=$?
+    if [ -n "${BEFORE_SESSIONS:-}" ]; then
+        cleanup_spawned_workers "$BEFORE_SESSIONS" 2>/dev/null || true
+    fi
+    exit $exit_code
+}
+
+# Set up trap for cleanup on script exit
+trap cleanup_on_exit EXIT
+
 # ==============================================================================
 # Test Implementation
 # ==============================================================================
@@ -40,6 +55,7 @@ test_worker_spawn_all_models() {
     local result=0
     local spawn_passed=0
     local spawn_total=4
+    local test_before_sessions
 
     log_info "=== Testing All Worker Spawn Keys ==="
 
@@ -57,6 +73,10 @@ test_worker_spawn_all_models() {
         stop_forge "$session"
         return 1
     fi
+
+    # Step 2.5: Capture sessions before spawning workers
+    log_info "Step 2.5: Capturing sessions before spawning workers..."
+    test_before_sessions=$(capture_before_sessions)
 
     # Step 3: Navigate to Workers view
     log_info "Step 3: Navigating to Workers view with 'w' key..."
@@ -113,8 +133,11 @@ test_worker_spawn_all_models() {
         log_warn "Worker panel content not fully verified"
     fi
 
-    # Step 5: Cleanup
-    log_info "Step 5: Cleaning up..."
+    # Step 5: Cleanup spawned workers and main session
+    log_info "Step 5: Cleaning up spawned worker sessions..."
+    cleanup_spawned_workers "$test_before_sessions"
+
+    log_info "Step 6: Cleaning up main test session..."
     stop_forge "$session"
 
     # Pass if at least 2 spawn keys worked
@@ -493,6 +516,7 @@ test_multiple_workers() {
     local session
     session=$(get_session_name)
     local result=0
+    local test_before_sessions
 
     log_info "=== Testing Multiple Worker Spawn ==="
 
@@ -510,6 +534,10 @@ test_multiple_workers() {
         stop_forge "$session"
         return 1
     fi
+
+    # Step 2.5: Capture sessions before spawning workers
+    log_info "Step 2.5: Capturing sessions before spawning workers..."
+    test_before_sessions=$(capture_before_sessions)
 
     # Step 3: Navigate to Workers view
     log_info "Step 3: Navigating to Workers view..."
@@ -556,8 +584,11 @@ test_multiple_workers() {
         log_warn "Uppercase spawn key response not verified"
     fi
 
-    # Step 7: Cleanup
-    log_info "Step 7: Cleaning up..."
+    # Step 7: Cleanup spawned workers and main session
+    log_info "Step 7: Cleaning up spawned worker sessions..."
+    cleanup_spawned_workers "$test_before_sessions"
+
+    log_info "Step 8: Cleaning up main test session..."
     stop_forge "$session"
 
     return $result

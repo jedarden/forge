@@ -66,6 +66,84 @@ pub struct ApiUsage {
     pub cache_creation_tokens: Option<u32>,
 }
 
+// ============ Streaming Types ============
+
+/// A server-sent event from the Claude API streaming endpoint.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "type")]
+pub enum StreamEvent {
+    #[serde(rename = "message_start")]
+    MessageStart { message: MessageMessage },
+    #[serde(rename = "message_delta")]
+    MessageDelta { delta: MessageDelta, usage: Option<StreamUsage> },
+    #[serde(rename = "message_stop")]
+    MessageStop,
+    #[serde(rename = "content_block_start")]
+    ContentBlockStart { index: u32, content_block: Option<ContentBlock> },
+    #[serde(rename = "content_block_delta")]
+    ContentBlockDelta { index: u32, delta: ContentBlockDelta },
+    #[serde(rename = "content_block_stop")]
+    ContentBlockStop { index: u32 },
+    #[serde(rename = "ping")]
+    Ping,
+    #[serde(rename = "error")]
+    Error { error: StreamError },
+}
+
+/// Message data from message_start event.
+#[derive(Debug, Deserialize, Clone)]
+pub struct MessageMessage {
+    pub id: String,
+    pub role: String,
+    pub content: Vec<ContentBlock>,
+    pub model: String,
+    pub stop_reason: Option<String>,
+}
+
+/// Delta from message_delta event.
+#[derive(Debug, Deserialize, Clone)]
+pub struct MessageDelta {
+    pub stop_reason: Option<String>,
+    pub stop_sequence: Option<String>,
+}
+
+/// Usage information from streaming events.
+#[derive(Debug, Deserialize, Clone)]
+pub struct StreamUsage {
+    pub output_tokens: u32,
+}
+
+/// Delta from content_block_delta event.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "type")]
+pub enum ContentBlockDelta {
+    #[serde(rename = "text_delta")]
+    TextDelta { text: String },
+    #[serde(rename = "input_json_delta")]
+    InputJsonDelta { partial_json: String },
+}
+
+/// Error from streaming event.
+#[derive(Debug, Deserialize, Clone)]
+pub struct StreamError {
+    #[serde(default)]
+    pub r#type: String,
+    pub message: String,
+}
+
+/// A parsed chunk of streaming text.
+#[derive(Debug, Clone)]
+pub struct StreamChunk {
+    /// Text content chunk (may be partial).
+    pub text: String,
+    /// Whether this is the final chunk.
+    pub is_done: bool,
+    /// Token usage (only available in final chunks).
+    pub usage: Option<ApiUsage>,
+    /// Error if one occurred.
+    pub error: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -160,6 +160,52 @@ impl Bead {
         }
     }
 
+    /// Check if this bead matches a search query (case-insensitive substring match).
+    /// Matches against id, title, description, labels, and issue_type.
+    pub fn matches_search(&self, query: &str) -> bool {
+        if query.is_empty() {
+            return true;
+        }
+
+        let query_lower = query.to_lowercase();
+
+        // Check ID
+        if self.id.to_lowercase().contains(&query_lower) {
+            return true;
+        }
+
+        // Check title
+        if self.title.to_lowercase().contains(&query_lower) {
+            return true;
+        }
+
+        // Check description
+        if self.description.to_lowercase().contains(&query_lower) {
+            return true;
+        }
+
+        // Check issue type
+        if self.issue_type.to_lowercase().contains(&query_lower) {
+            return true;
+        }
+
+        // Check labels
+        for label in &self.labels {
+            if label.to_lowercase().contains(&query_lower) {
+                return true;
+            }
+        }
+
+        // Check assignee
+        if let Some(ref assignee) = self.assignee {
+            if assignee.to_lowercase().contains(&query_lower) {
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// Calculate the task value score (0-100).
     ///
     /// Uses the TaskScorer to compute a score based on:
@@ -696,7 +742,7 @@ impl BeadManager {
 
     /// Get aggregated bead data across all workspaces.
     pub fn get_aggregated_data(&self) -> AggregatedBeadData {
-        self.get_filtered_aggregated_data(None)
+        self.get_filtered_aggregated_data(None, None)
     }
 
     /// Get aggregated bead data, optionally filtered by priority.
@@ -704,26 +750,38 @@ impl BeadManager {
     /// When `priority_filter` is Some(p), only beads with priority == p are included.
     /// When `priority_filter` is None, all beads are included.
     pub fn get_filtered_aggregated_data(&self, priority_filter: Option<u8>) -> AggregatedBeadData {
+        self.get_filtered_aggregated_data_with_search(priority_filter, "")
+    }
+
+    /// Get aggregated bead data, optionally filtered by priority and search query.
+    ///
+    /// When `priority_filter` is Some(p), only beads with priority == p are included.
+    /// When `priority_filter` is None, all beads are included.
+    /// When `search_query` is non-empty, only beads matching the query are included.
+    pub fn get_filtered_aggregated_data_with_search(&self, priority_filter: Option<u8>, search_query: &str) -> AggregatedBeadData {
         let mut data = AggregatedBeadData::default();
 
         for (_, cache) in &self.cache {
             // Add ready beads (filtered)
             for bead in &cache.ready {
-                if priority_filter.map_or(true, |p| bead.priority == p) {
+                if priority_filter.map_or(true, |p| bead.priority == p)
+                    && bead.matches_search(search_query) {
                     data.ready.push((cache.name.clone(), bead.clone()));
                 }
             }
 
             // Add blocked beads (filtered)
             for bead in &cache.blocked {
-                if priority_filter.map_or(true, |p| bead.priority == p) {
+                if priority_filter.map_or(true, |p| bead.priority == p)
+                    && bead.matches_search(search_query) {
                     data.blocked.push((cache.name.clone(), bead.clone()));
                 }
             }
 
             // Add in-progress beads (filtered)
             for bead in &cache.in_progress {
-                if priority_filter.map_or(true, |p| bead.priority == p) {
+                if priority_filter.map_or(true, |p| bead.priority == p)
+                    && bead.matches_search(search_query) {
                     data.in_progress.push((cache.name.clone(), bead.clone()));
                 }
             }
@@ -759,6 +817,12 @@ impl BeadManager {
     /// Get the total count of actionable beads (ready + in_progress + blocked), filtered by priority.
     pub fn task_count_filtered(&self, priority_filter: Option<u8>) -> usize {
         let data = self.get_filtered_aggregated_data(priority_filter);
+        data.ready.len() + data.in_progress.len() + data.blocked.len()
+    }
+
+    /// Get the total count of actionable beads (ready + in_progress + blocked), filtered by priority and search query.
+    pub fn task_count_filtered_with_search(&self, priority_filter: Option<u8>, search_query: &str) -> usize {
+        let data = self.get_filtered_aggregated_data_with_search(priority_filter, search_query);
         data.ready.len() + data.in_progress.len() + data.blocked.len()
     }
 
@@ -881,10 +945,12 @@ impl BeadManager {
         let data = self.get_filtered_aggregated_data(priority_filter);
         let mut lines = Vec::new();
 
-        // Filter indicator in header
-        let filter_text = match priority_filter {
-            Some(p) => format!(" [Filtered: P{}]", p),
-            None => String::new(),
+        // Filter indicator in header (priority + search)
+        let filter_text = match (priority_filter, search_query.is_empty()) {
+            (Some(p), true) => format!(" [Filtered: P{}]", p),
+            (Some(p), false) => format!(" [Search: \"{}\" | P{}]", search_query, p),
+            (None, false) => format!(" [Search: \"{}\"]", search_query),
+            (None, true) => String::new(),
         };
 
         // Summary header
@@ -968,7 +1034,7 @@ impl BeadManager {
         // Hotkeys
         lines.push("─────────────────────────────────────────────────────".to_string());
         lines.push(
-            "[0-4] Filter by priority  [X] Clear filter  [Enter] View  [C] Close".to_string(),
+            "[/] Search  [0-4] Filter by priority  [X] Clear filter  [Enter] View  [Esc] Clear search".to_string(),
         );
 
         lines.join("\n")

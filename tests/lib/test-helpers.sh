@@ -464,6 +464,54 @@ ci_adjust() {
     fi
 }
 
+# ==============================================================================
+# Worker Session Cleanup
+# ==============================================================================
+
+# Capture current forge worker sessions
+# Usage: capture_before_sessions [OUTPUT_VAR_NAME]
+# Outputs: List of session names (one per line)
+capture_before_sessions() {
+    local output_var="${1:-BEFORE_SESSIONS}"
+    local sessions
+    sessions=$(tmux list-sessions 2>/dev/null | grep -E '^forge-forge-' | cut -d: -f1 || true)
+    eval "$output_var=\"\$sessions\""
+    echo "$sessions"
+}
+
+# Cleanup spawned worker sessions created during test
+# Usage: cleanup_spawned_workers BEFORE_SESSIONS
+cleanup_spawned_workers() {
+    local before="$1"
+
+    log_info "Cleaning up spawned worker sessions..."
+
+    # Get current forge-forge-* sessions
+    local after
+    after=$(tmux list-sessions 2>/dev/null | grep -E '^forge-forge-' | cut -d: -f1 || true)
+
+    # Find and kill new sessions
+    local cleaned=0
+    while IFS= read -r session; do
+        if [ -n "$session" ]; then
+            # Check if this session existed before
+            if ! echo "$before" | grep -qx "$session"; then
+                log_info "  Cleaning up spawned worker: $session"
+                tmux kill-session -t "$session" 2>/dev/null || true
+                ((cleaned++)) || true
+            fi
+        fi
+    done <<< "$after"
+
+    if [ $cleaned -gt 0 ]; then
+        log_success "Cleaned up $cleaned spawned worker session(s)"
+    else
+        log_info "No spawned worker sessions to clean up"
+    fi
+
+    return 0
+}
+
 # Export functions for use in subshells
 export -f log_info log_success log_fail log_warn
 export -f get_session_name get_log_file session_exists
@@ -476,3 +524,4 @@ export -f test_init test_cleanup test_result run_test
 export -f assert_pane_contains assert_pane_not_contains
 export -f assert_log_contains assert_session_running
 export -f is_ci ci_adjust
+export -f capture_before_sessions cleanup_spawned_workers
