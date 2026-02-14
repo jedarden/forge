@@ -35,6 +35,8 @@
 
 use chrono::{DateTime, Utc};
 use forge_cost::{ApiCall, LogParser};
+use forge_core::worker_perf::{TaskEvent, TaskPerfMetrics, WorkerPerfTracker};
+use serde_json::Value;
 use notify::{Event as NotifyEvent, EventKind, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, new_debouncer};
 use std::collections::HashMap;
@@ -155,6 +157,114 @@ impl LogWatcherConfig {
     pub fn with_parse_existing(mut self, parse: bool) -> Self {
         self.parse_existing = parse;
         self
+    }
+}
+
+/// Parse task-related events from log lines for performance tracking.
+///
+/// This function extracts task lifecycle events (start, complete, fail)
+/// from worker log entries to enable performance metrics tracking.
+pub fn parse_task_event(line: &str, worker_id: &str) -> Option<TaskEvent> {
+    // Skip non-JSON lines
+    if !line.starts_with('{') {
+        return None;
+    }
+
+    let value: Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
+
+    // Check event type
+    let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+    match event_type {
+        // Task start event - look for tool_use or task initiation
+        "tool_use" | "task_start" => {
+            let task_id = value.get("bead_id")
+                .or_else(|| value.get("task_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            let model = value.get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            Some(TaskEvent::Started {
+                task_id,
+                worker_id: worker_id.to_string(),
+                model,
+            })
+        }
+
+        // Task completion event - result type with success/failure
+        "result" => {
+            let task_id = value.get("bead_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            // Check for success/failure
+            let subtype = value.get("subtype")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            let success = subtype == "success";
+
+            // Extract duration if available
+            let duration_ms = value.get("duration_ms")
+                .or_else(|| value.get("duration_api_ms"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+
+            // Extract usage data
+            let usage = value.get("usage");
+            let (input_tokens, output_tokens) = if let Some(u) = usage {
+                let input = u.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+                let output = u.get("output_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+                (input, output)
+            } else {
+                (0, 0)
+            };
+
+            // Extract or calculate cost
+            let cost_usd = value.get("total_cost_usd")
+                .and_then(|v| v.as_f64())
+                .or_else(|| {
+                    // Try to calculate from usage if pricing available
+                    if input_tokens > 0 || output_tokens > 0 {
+                        // Rough estimate: Opus pricing
+                        let cost = (input_tokens as f64 * 15.0 / 1_000_000.0)
+                            + (output_tokens as f64 * 75.0 / 1_000_000.0);
+                        Some(cost)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0.0);
+
+            if success {
+                Some(TaskEvent::Completed {
+                    task_id,
+                    worker_id: worker_id.to_string(),
+                    success: true,
+                    duration_ms,
+                    input_tokens,
+                    output_tokens,
+                    cost_usd,
+                })
+            } else {
+                Some(TaskEvent::Failed {
+                    task_id,
+                    worker_id: worker_id.to_string(),
+                    error: subtype.to_string(),
+                })
+            }
+        }
+
+        _ => None,
     }
 }
 
