@@ -1260,10 +1260,68 @@ impl DataManager {
 
     /// Poll subscription tracker for updates.
     fn poll_subscription_data(&mut self) {
-        // Rebuild subscription data from tracker
+        use chrono::{Duration, Utc};
+        use tracing::info;
+
+        let Some(ref db) = self.cost_db else {
+            // No database, just rebuild from tracker
+            self.subscription_data = Self::build_subscription_data(&self.subscription_tracker);
+            return;
+        };
+
+        // 1. Check and auto-reset billing periods that have ended
+        if let Ok(reset_count) = self.subscription_tracker.check_and_reset_billing(db) {
+            if reset_count > 0 {
+                info!("Reset {} subscription billing periods", reset_count);
+                self.dirty = true;
+            }
+        }
+
+        // 2. Track recent API calls against subscriptions
+        // Get API calls from the last polling interval (5 minutes)
+        let since = Utc::now() - Duration::seconds(300); // 5 minutes
+        if let Ok(recent_calls) = db.get_api_calls_since(since) {
+            for call in recent_calls {
+                // Find which subscription this model belongs to
+                if let Some(sub_name) = self.subscription_tracker
+                    .find_subscription_for_model(&call.model)
+                {
+                    // Track total tokens used
+                    let total_tokens = call.total_tokens();
+
+                    // Record usage and update subscription quota
+                    if let Err(e) = db.increment_subscription_usage(&sub_name, total_tokens) {
+                        tracing::warn!(
+                            "Failed to increment subscription usage for {}: {}",
+                            sub_name, e
+                        );
+                    } else {
+                        // Update local tracker cache
+                        self.subscription_tracker.increment_usage(&sub_name, total_tokens);
+
+                        // Also record detailed usage event
+                        use forge_cost::SubscriptionUsageRecord;
+                        let sub_id = db.get_subscription_id(&sub_name).ok().flatten();
+                        if let Some(sid) = sub_id {
+                            let record = SubscriptionUsageRecord::new(sid, total_tokens)
+                                .with_worker(&call.worker_id)
+                                .with_api_call(call.id.unwrap_or(0));
+                            let _ = db.record_subscription_usage(&record);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Reload subscriptions from database to get updated quota_used values
+        if let Err(e) = self.subscription_tracker.load_from_database(db) {
+            tracing::warn!("Failed to reload subscriptions from database: {}", e);
+        }
+
+        // 4. Rebuild subscription data for display
         self.subscription_data = Self::build_subscription_data(&self.subscription_tracker);
 
-        // Check for critical alerts
+        // 5. Check for critical alerts
         if self.subscription_tracker.has_critical_alert() {
             self.dirty = true;
         }
