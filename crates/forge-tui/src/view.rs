@@ -21,6 +21,8 @@ pub enum View {
     Costs,
     /// Performance metrics and statistics
     Metrics,
+    /// FORGE internal performance (event loop, render time, memory)
+    Perf,
     /// Activity log viewer
     Logs,
     /// Subscription tracking and utilization
@@ -40,6 +42,7 @@ impl View {
             View::Tasks => 't',
             View::Costs => 'c',
             View::Metrics => 'm',
+            View::Perf => 'p',
             View::Logs => 'l',
             View::Subscriptions => 'u',
             View::Alerts => 'a',
@@ -55,6 +58,7 @@ impl View {
             View::Tasks => "Tasks",
             View::Costs => "Costs",
             View::Metrics => "Metrics",
+            View::Perf => "Perf",
             View::Logs => "Logs",
             View::Subscriptions => "Subscriptions",
             View::Alerts => "Alerts",
@@ -68,12 +72,13 @@ impl View {
     }
 
     /// All views in display order (for Tab cycling).
-    pub const ALL: [View; 9] = [
+    pub const ALL: [View; 10] = [
         View::Overview,
         View::Workers,
         View::Tasks,
         View::Costs,
         View::Metrics,
+        View::Perf,
         View::Logs,
         View::Subscriptions,
         View::Alerts,
@@ -104,6 +109,7 @@ impl View {
             't' => Some(View::Tasks),
             'c' => Some(View::Costs),
             'm' => Some(View::Metrics),
+            'p' => Some(View::Perf),
             'l' => Some(View::Logs),
             'u' => Some(View::Subscriptions),
             'a' => Some(View::Alerts),
@@ -139,6 +145,8 @@ pub enum FocusPanel {
     CostBreakdown,
     /// Metrics charts panel
     MetricsCharts,
+    /// Perf metrics panel
+    PerfCharts,
     /// Chat input panel
     ChatInput,
     /// Alert list panel
