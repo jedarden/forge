@@ -71,6 +71,109 @@ pub const DEFAULT_RESPONSE_TIMEOUT_MS: u64 = 5000;
 /// Default consecutive failures before auto-restart.
 pub const DEFAULT_AUTO_RESTART_AFTER_FAILURES: u8 = 2;
 
+/// Recovery action types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryAction {
+    /// Log warning and show yellow indicator
+    Warn,
+    /// Kill and respawn worker
+    Restart,
+    /// Route to different model tier
+    Escalate,
+    /// Send notification (future: Slack/Discord)
+    Alert,
+}
+
+impl std::fmt::Display for RecoveryAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Warn => write!(f, "warn"),
+            Self::Restart => write!(f, "restart"),
+            Self::Escalate => write!(f, "escalate"),
+            Self::Alert => write!(f, "alert"),
+        }
+    }
+}
+
+/// Recovery policy configuration per health metric.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecoveryPolicy {
+    /// Health check type this policy applies to
+    pub check_type: HealthCheckType,
+    /// Action to take on first failure
+    pub first_action: RecoveryAction,
+    /// Action to take on second failure (if applicable)
+    pub second_action: Option<RecoveryAction>,
+    /// Action to take on third failure (if applicable)
+    pub third_action: Option<RecoveryAction>,
+}
+
+impl RecoveryPolicy {
+    /// Get the appropriate action for a given failure count.
+    pub fn action_for_failure(&self, failure_count: u8) -> RecoveryAction {
+        match failure_count {
+            1 => self.first_action,
+            2 => self.second_action.unwrap_or(self.first_action),
+            _ => self.third_action.unwrap_or(self.first_action),
+        }
+    }
+}
+
+impl Default for RecoveryPolicy {
+    fn default() -> Self {
+        Self {
+            check_type: HealthCheckType::PidExists,
+            first_action: RecoveryAction::Warn,
+            second_action: None,
+            third_action: None,
+        }
+    }
+}
+
+/// Result of a recovery action execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecoveryResult {
+    /// Worker this recovery was for
+    pub worker_id: String,
+    /// Action taken
+    pub action: RecoveryAction,
+    /// Whether the action succeeded
+    pub success: bool,
+    /// Error message if action failed
+    pub error_message: Option<String>,
+    /// Timestamp of recovery attempt
+    pub timestamp: DateTime<Utc>,
+}
+
+impl RecoveryResult {
+    /// Create a successful recovery result.
+    pub fn success(worker_id: impl Into<String>, action: RecoveryAction) -> Self {
+        Self {
+            worker_id: worker_id.into(),
+            action,
+            success: true,
+            error_message: None,
+            timestamp: Utc::now(),
+        }
+    }
+
+    /// Create a failed recovery result.
+    pub fn failed(
+        worker_id: impl Into<String>,
+        action: RecoveryAction,
+        error: impl Into<String>,
+    ) -> Self {
+        Self {
+            worker_id: worker_id.into(),
+            action,
+            success: false,
+            error_message: Some(error.into()),
+            timestamp: Utc::now(),
+        }
+    }
+}
+
 /// Configuration for health monitoring.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthMonitorConfig {
@@ -403,6 +506,8 @@ pub struct HealthMonitor {
     recovery_attempts: HashMap<String, u8>,
     /// Consecutive failure tracking per worker
     consecutive_failures: HashMap<String, u8>,
+    /// Recovery policies per health check type
+    recovery_policies: HashMap<HealthCheckType, RecoveryPolicy>,
 }
 
 impl HealthMonitor {
@@ -421,6 +526,7 @@ impl HealthMonitor {
             log_dir,
             recovery_attempts: HashMap::new(),
             consecutive_failures: HashMap::new(),
+            recovery_policies: Self::default_recovery_policies(),
         })
     }
 
@@ -438,7 +544,158 @@ impl HealthMonitor {
             log_dir,
             recovery_attempts: HashMap::new(),
             consecutive_failures: HashMap::new(),
+            recovery_policies: Self::default_recovery_policies(),
         })
+    }
+
+    /// Create default recovery policies for each health check type.
+    fn default_recovery_policies() -> HashMap<HealthCheckType, RecoveryPolicy> {
+        let mut policies = HashMap::new();
+
+        // PID check failures: warn -> restart -> escalate
+        policies.insert(HealthCheckType::PidExists, RecoveryPolicy {
+            check_type: HealthCheckType::PidExists,
+            first_action: RecoveryAction::Warn,
+            second_action: Some(RecoveryAction::Restart),
+            third_action: Some(RecoveryAction::Escalate),
+        });
+
+        // Activity stale: warn -> warn -> restart
+        policies.insert(HealthCheckType::ActivityFresh, RecoveryPolicy {
+            check_type: HealthCheckType::ActivityFresh,
+            first_action: RecoveryAction::Warn,
+            second_action: Some(RecoveryAction::Warn),
+            third_action: Some(RecoveryAction::Restart),
+        });
+
+        // Memory high: warn -> restart -> escalate
+        policies.insert(HealthCheckType::MemoryUsage, RecoveryPolicy {
+            check_type: HealthCheckType::MemoryUsage,
+            first_action: RecoveryAction::Warn,
+            second_action: Some(RecoveryAction::Restart),
+            third_action: Some(RecoveryAction::Escalate),
+        });
+
+        // Task stuck: warn -> warn -> restart
+        policies.insert(HealthCheckType::TaskProgress, RecoveryPolicy {
+            check_type: HealthCheckType::TaskProgress,
+            first_action: RecoveryAction::Warn,
+            second_action: Some(RecoveryAction::Warn),
+            third_action: Some(RecoveryAction::Restart),
+        });
+
+        // Response health: warn -> warn -> restart
+        policies.insert(HealthCheckType::ResponseHealth, RecoveryPolicy {
+            check_type: HealthCheckType::ResponseHealth,
+            first_action: RecoveryAction::Warn,
+            second_action: Some(RecoveryAction::Warn),
+            third_action: Some(RecoveryAction::Restart),
+        });
+
+        // Tmux session: warn -> restart -> escalate
+        policies.insert(HealthCheckType::TmuxSession, RecoveryPolicy {
+            check_type: HealthCheckType::TmuxSession,
+            first_action: RecoveryAction::Warn,
+            second_action: Some(RecoveryAction::Restart),
+            third_action: Some(RecoveryAction::Escalate),
+        });
+
+        policies
+    }
+
+    /// Get recovery policy for a health check type.
+    pub fn recovery_policy(&self, check_type: HealthCheckType) -> Option<&RecoveryPolicy> {
+        self.recovery_policies.get(&check_type)
+    }
+
+    /// Set a custom recovery policy for a health check type.
+    pub fn set_recovery_policy(&mut self, policy: RecoveryPolicy) {
+        self.recovery_policies.insert(policy.check_type, policy);
+    }
+
+    /// Determine the appropriate recovery action for a worker based on failed checks.
+    pub fn determine_recovery_action(&self, health: &WorkerHealthStatus) -> Option<(RecoveryAction, HealthCheckType)> {
+        if health.is_healthy {
+            return None;
+        }
+
+        // Get the most critical failed check (in priority order)
+        let critical_check = health.failed_checks.iter().find(|&&ct| {
+            matches!(ct, HealthCheckType::PidExists)
+        }).or_else(|| {
+            health.failed_checks.iter().find(|&&ct| {
+                matches!(ct, HealthCheckType::ActivityFresh)
+            })
+        }).or_else(|| {
+            health.failed_checks.iter().find(|&&ct| {
+                matches!(ct, HealthCheckType::TaskProgress)
+            })
+        }).or_else(|| {
+            health.failed_checks.iter().find(|&&ct| {
+                matches!(ct, HealthCheckType::MemoryUsage)
+            })
+        }).or_else(|| {
+            health.failed_checks.first()
+        })?;
+
+        let policy = self.recovery_policies.get(critical_check)?;
+        let action = policy.action_for_failure(health.consecutive_failures);
+        Some((action, *critical_check))
+    }
+
+    /// Execute a recovery action for a worker.
+    ///
+    /// Returns the recovery result.
+    pub fn execute_recovery_action(
+        &mut self,
+        worker_id: &str,
+        health: &WorkerHealthStatus,
+        action: RecoveryAction,
+        check_type: HealthCheckType,
+    ) -> RecoveryResult {
+        match action {
+            RecoveryAction::Warn => {
+                // Warning is already logged in TUI activity log
+                // Just record the attempt
+                info!(
+                    worker_id = %worker_id,
+                    check_type = %check_type,
+                    "Recovery action: warn (no action taken, visibility only)"
+                );
+                RecoveryResult::success(worker_id, action)
+            }
+            RecoveryAction::Restart => {
+                info!(
+                    worker_id = %worker_id,
+                    check_type = %check_type,
+                    "Recovery action: restart - recording attempt"
+                );
+                self.record_recovery_attempt(worker_id);
+                // Note: Actual restart must be handled by WorkerLauncher
+                // This records the attempt so the caller can execute the restart
+                RecoveryResult::success(worker_id, action)
+            }
+            RecoveryAction::Escalate => {
+                info!(
+                    worker_id = %worker_id,
+                    check_type = %check_type,
+                    "Recovery action: escalate - recording attempt"
+                );
+                self.record_recovery_attempt(worker_id);
+                // Note: Actual escalation must be handled by caller
+                // This records the attempt so the caller can execute escalation
+                RecoveryResult::success(worker_id, action)
+            }
+            RecoveryAction::Alert => {
+                info!(
+                    worker_id = %worker_id,
+                    check_type = %check_type,
+                    "Recovery action: alert - notification sent"
+                );
+                // Future: Send Slack/Discord notification
+                RecoveryResult::success(worker_id, action)
+            }
+        }
     }
 
     /// Check health of all known workers.

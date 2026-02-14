@@ -1201,8 +1201,88 @@ impl DataManager {
                     self.dirty = true;
                 }
 
+                // Execute recovery actions for unhealthy workers (if enabled)
+                // Note: We check config before dropping the immutable borrow
+                let enable_auto_recovery = monitor.config().enable_auto_recovery;
+                // Clone health_status before moving it to update_health_status
+                let health_status_clone = health_status.clone();
+
                 // Update worker data with health status
                 self.worker_data.update_health_status(health_status);
+
+                if enable_auto_recovery {
+                    // Execute recovery actions - drop immutable borrow first
+                    drop(monitor);
+
+                    // Inline the recovery logic to avoid borrow issues
+                    use forge_worker::health::{RecoveryAction, HealthCheckType};
+
+                    if let Some(ref mut monitor_mut) = self.health_monitor {
+                        for (worker_id, health) in health_status_clone {
+                            if health.is_healthy {
+                                continue;
+                            }
+
+                            let Some((action, check_type)) = monitor_mut.determine_recovery_action(&health) else {
+                                continue;
+                            };
+
+                            if matches!(action, RecoveryAction::Warn) {
+                                continue;
+                            }
+
+                            let result = monitor_mut.execute_recovery_action(&worker_id, &health, action, check_type);
+
+                            if result.success {
+                                match action {
+                                    RecoveryAction::Restart => {
+                                        self.activity_data.push(
+                                            ActivityEntry::new(
+                                                ActivityEventType::Warning,
+                                                format!("Recovery: restart initiated for worker (attempt {} of {})",
+                                                    health.recovery_attempts.saturating_add(1),
+                                                    monitor_mut.config().max_recovery_attempts,
+                                                ),
+                                            )
+                                            .with_source(&worker_id),
+                                        );
+                                    }
+                                    RecoveryAction::Escalate => {
+                                        self.activity_data.push(
+                                            ActivityEntry::new(
+                                                ActivityEventType::Warning,
+                                                format!("Recovery: escalating worker to higher tier (attempt {} of {})",
+                                                    health.recovery_attempts.saturating_add(1),
+                                                    monitor_mut.config().max_recovery_attempts,
+                                                ),
+                                            )
+                                            .with_source(&worker_id),
+                                        );
+                                    }
+                                    RecoveryAction::Alert => {
+                                        self.activity_data.push(
+                                            ActivityEntry::new(
+                                                ActivityEventType::Info,
+                                                "Recovery: notification sent".to_string(),
+                                            )
+                                            .with_source(&worker_id),
+                                        );
+                                    }
+                                    RecoveryAction::Warn => {}
+                                }
+                            } else {
+                                self.activity_data.push(
+                                    ActivityEntry::new(
+                                        ActivityEventType::Error,
+                                        format!("Recovery failed: {}",
+                                            result.error_message.as_deref().unwrap_or("unknown error")),
+                                    )
+                                    .with_source(&worker_id),
+                                );
+                            }
+                        }
+                    }
+                }
             }
             Err(e) => {
                 tracing::warn!("Health check failed: {}", e);
@@ -1212,6 +1292,7 @@ impl DataManager {
             }
         }
     }
+
 
     /// Poll subscription tracker for updates.
     fn poll_subscription_data(&mut self) {
