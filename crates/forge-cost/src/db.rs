@@ -2195,6 +2195,65 @@ impl CostDatabase {
 
         Ok(results)
     }
+
+    /// Get API calls since a specific timestamp.
+    pub fn get_api_calls_since(&self, since: DateTime<Utc>) -> Result<Vec<ApiCall>> {
+        let conn = self.conn.lock().map_err(|e| {
+            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+
+        let since_str = since.to_rfc3339();
+        let mut stmt = conn.prepare_cached(
+            "SELECT id, timestamp, worker_id, session_id, model,
+                    input_tokens, output_tokens,
+                    cache_creation_tokens, cache_read_tokens,
+                    cost_usd, bead_id, event_type
+             FROM api_calls
+             WHERE timestamp >= ?1
+             ORDER BY timestamp DESC"
+        )?;
+
+        let calls: Vec<ApiCall> = stmt
+            .query_map(params![since_str], |row| {
+                Ok(ApiCall {
+                    id: Some(row.get(0)?),
+                    timestamp: DateTime::parse_from_rfc3339(&row.get::<_, String>(1)?)
+                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))?
+                        .with_timezone(&Utc),
+                    worker_id: row.get(2)?,
+                    session_id: row.get(3)?,
+                    model: row.get(4)?,
+                    input_tokens: row.get(5)?,
+                    output_tokens: row.get(6)?,
+                    cache_creation_tokens: row.get(7)?,
+                    cache_read_tokens: row.get(8)?,
+                    cost_usd: row.get(9)?,
+                    bead_id: row.get(10)?,
+                    event_type: row.get(11)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(calls)
+    }
+
+    /// Get subscription ID by name.
+    pub fn get_subscription_id(&self, name: &str) -> Result<Option<i64>> {
+        let conn = self.conn.lock().map_err(|e| {
+            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+        })?;
+
+        let mut stmt = conn.prepare_cached(
+            "SELECT id FROM subscriptions WHERE name = ?1"
+        )?;
+
+        match stmt.query_row(params![name], |row| row.get(0)) {
+            Ok(id) => Ok(Some(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(CostError::Database(e)),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1283,25 +1283,25 @@ impl DataManager {
         if let Ok(recent_calls) = db.get_api_calls_since(since) {
             for call in recent_calls {
                 // Find which subscription this model belongs to
-                if let Some(sub_name) = self.subscription_tracker
+                if let Some(ref sub_name) = self.subscription_tracker
                     .find_subscription_for_model(&call.model)
                 {
                     // Track total tokens used
                     let total_tokens = call.total_tokens();
 
                     // Record usage and update subscription quota
-                    if let Err(e) = db.increment_subscription_usage(&sub_name, total_tokens) {
+                    if let Err(e) = db.increment_subscription_usage(sub_name, total_tokens) {
                         tracing::warn!(
                             "Failed to increment subscription usage for {}: {}",
                             sub_name, e
                         );
                     } else {
                         // Update local tracker cache
-                        self.subscription_tracker.increment_usage(&sub_name, total_tokens);
+                        self.subscription_tracker.increment_usage(sub_name, total_tokens);
 
                         // Also record detailed usage event
                         use forge_cost::SubscriptionUsageRecord;
-                        let sub_id = db.get_subscription_id(&sub_name).ok().flatten();
+                        let sub_id = db.get_subscription_id(sub_name).ok().flatten();
                         if let Some(sid) = sub_id {
                             let record = SubscriptionUsageRecord::new(sid, total_tokens)
                                 .with_worker(&call.worker_id)
