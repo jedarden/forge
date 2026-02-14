@@ -742,7 +742,7 @@ impl BeadManager {
 
     /// Get aggregated bead data across all workspaces.
     pub fn get_aggregated_data(&self) -> AggregatedBeadData {
-        self.get_filtered_aggregated_data(None, None)
+        self.get_filtered_aggregated_data(None)
     }
 
     /// Get aggregated bead data, optionally filtered by priority.
@@ -945,12 +945,10 @@ impl BeadManager {
         let data = self.get_filtered_aggregated_data(priority_filter);
         let mut lines = Vec::new();
 
-        // Filter indicator in header (priority + search)
-        let filter_text = match (priority_filter, search_query.is_empty()) {
-            (Some(p), true) => format!(" [Filtered: P{}]", p),
-            (Some(p), false) => format!(" [Search: \"{}\" | P{}]", search_query, p),
-            (None, false) => format!(" [Search: \"{}\"]", search_query),
-            (None, true) => String::new(),
+        // Filter indicator in header (priority)
+        let filter_text = match priority_filter {
+            Some(p) => format!(" [Filtered: P{}]", p),
+            None => String::new(),
         };
 
         // Summary header
