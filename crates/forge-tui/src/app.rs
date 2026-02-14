@@ -50,7 +50,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyEvent};
-use forge_chat::{ChatBackend, ChatConfig, ChatResponse};
+use forge_chat::{ChatBackend, ChatConfig, ChatResponse, StreamingChunk};
 use forge_core::types::WorkerTier;
 use forge_worker::{LaunchConfig, SpawnRequest, WorkerLauncher, discovery::DiscoveredWorker};
 use ratatui::{
@@ -152,6 +152,10 @@ pub struct App {
     chat_response_tx: Option<Sender<(String, Result<ChatResponse, forge_chat::ChatError>)>>,
     /// Channel receiver for chat responses from background thread
     chat_response_rx: Option<Receiver<(String, Result<ChatResponse, forge_chat::ChatError>)>>,
+    /// Channel sender for streaming chunks from background thread
+    chat_streaming_tx: Option<Sender<StreamingChunk>>,
+    /// Channel receiver for streaming chunks from background thread
+    chat_streaming_rx: Option<Receiver<StreamingChunk>>,
     /// Whether a chat request is pending
     chat_pending: bool,
     /// Spinner animation frame index (0-3 for 4-frame spinner)
@@ -699,6 +703,8 @@ impl App {
             chat_backend,
             chat_response_tx: None,
             chat_response_rx: None,
+            chat_streaming_tx: None,
+            chat_streaming_rx: None,
             chat_pending: false,
             chat_spinner_frame: 0,
             streaming_response: String::new(),
@@ -765,6 +771,8 @@ impl App {
             chat_backend: None, // Don't initialize in test mode
             chat_response_tx: None,
             chat_response_rx: None,
+            chat_streaming_tx: None,
+            chat_streaming_rx: None,
             chat_pending: false,
             streaming_response: String::new(),
             streaming_position: 0,
@@ -1057,8 +1065,71 @@ impl App {
         }
     }
 
+    /// Poll for streaming chunks from background thread.
+    ///
+    /// This method collects streaming token deltas and appends them to
+    /// the streaming response in real-time.
+    fn poll_streaming_chunks(&mut self) {
+        if let Some(rx) = &self.chat_streaming_rx {
+            // Process all available chunks
+            while let Ok(chunk) = rx.try_recv() {
+                if let Some(ref error) = chunk.error {
+                    // Streaming error occurred
+                    self.streaming_active = false;
+                    self.status_message = Some(format!("❌ Streaming error: {}", error));
+                    self.mark_dirty();
+                    return;
+                }
+
+                if !chunk.text_delta.is_empty() {
+                    // Append the delta to our streaming response
+                    if let Some(ref mut complete) = self.pending_complete_response {
+                        complete.push_str(&chunk.text_delta);
+                    } else {
+                        // First chunk - initialize streaming
+                        self.pending_complete_response = Some(chunk.text_delta);
+                    }
+
+                    // Update the visible streaming text
+                    self.streaming_response.push_str(&chunk.text_delta);
+
+                    self.mark_dirty();
+                }
+
+                if chunk.is_complete {
+                    // Streaming finished - finalize will be called when
+                    // the complete response arrives via response channel
+                    self.streaming_active = false;
+                }
+            }
+        }
+    }
+
     /// Poll for chat responses from background thread.
     fn poll_chat_responses(&mut self) {
+        use tracing::info;
+
+        // First poll streaming chunks if active
+        self.poll_streaming_chunks();
+
+        // Non-blocking check for responses (need to avoid borrow checker issues)
+        let mut responses = Vec::new();
+        if let Some(rx) = &self.chat_response_rx {
+            match rx.try_recv() {
+                Ok(response) => {
+                    info!("📥 Got response from channel!");
+                    responses.push(response);
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    // No response yet, this is normal
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    info!("❌ Channel disconnected!");
+                }
+            }
+        }
+
+        // Process responses after releasing the borrow
         use tracing::info;
 
         // Non-blocking check for responses (need to avoid borrow checker issues)
@@ -1264,7 +1335,17 @@ impl App {
 
         // How many characters to reveal per frame (streaming speed)
         // Adjust this to change streaming speed - higher = faster
-        const CHARS_PER_FRAME: usize = 3;
+        // Dynamic speed: reveal more characters when more text remains
+        let remaining = complete_text.chars().count().saturating_sub(self.streaming_position);
+        let chars_per_frame = if remaining > 100 {
+            20  // Fast when lots of text remaining
+        } else if remaining > 50 {
+            10  // Medium speed
+        } else if remaining > 20 {
+            5   // Slow down near end
+        } else {
+            2   // Very slow for final few characters
+        };
 
         let total_chars = complete_text.chars().count();
 
@@ -1275,7 +1356,7 @@ impl App {
         }
 
         // Advance position
-        let new_position = (self.streaming_position + CHARS_PER_FRAME).min(total_chars);
+        let new_position = (self.streaming_position + chars_per_frame).min(total_chars);
 
         // Update streaming_response with characters up to new position
         self.streaming_response = complete_text
@@ -1730,7 +1811,14 @@ impl App {
                                 self.chat_response_rx = Some(rx);
                             }
 
+                            if self.chat_streaming_rx.is_none() {
+                                let (tx, rx) = mpsc::channel();
+                                self.chat_streaming_tx = Some(tx);
+                                self.chat_streaming_rx = Some(rx);
+                            }
+
                             let tx = self.chat_response_tx.as_ref().unwrap().clone();
+                            let stream_tx = self.chat_streaming_tx.as_ref().unwrap().clone();
 
                             // Spawn background thread to process request
                             std::thread::spawn(move || {
