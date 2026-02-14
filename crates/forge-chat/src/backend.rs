@@ -46,6 +46,22 @@ pub struct ChatResponse {
     pub provider: String,
 }
 
+/// Streaming chunk from the chat backend.
+///
+/// This is sent during SSE (Server-Sent Events) streaming
+/// to provide real-time token updates to the UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamingChunk {
+    /// Text delta for this chunk (new tokens since last chunk).
+    pub text_delta: String,
+
+    /// Whether this is the final chunk (streaming complete).
+    pub is_complete: bool,
+
+    /// Error message if streaming failed.
+    pub error: Option<String>,
+}
+
 impl ChatResponse {
     /// Create a successful response.
     pub fn success(text: impl Into<String>) -> Self {
