@@ -36,6 +36,12 @@ pub mod self_update;
 pub mod status;
 pub mod types;
 pub mod watcher;
+pub mod worker_perf;
+
+// Re-export worker performance types
+pub use worker_perf::{
+    TaskEvent, TaskPerfMetrics, WorkerPerfSummary, WorkerPerfTracker,
+};
 
 // Re-export main types for convenience
 pub use error::{ForgeError, Result};

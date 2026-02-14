@@ -67,6 +67,7 @@ use crate::cost_panel::CostPanel;
 use crate::data::DataManager;
 use crate::event::{AppEvent, InputHandler};
 use crate::metrics_panel::MetricsPanel;
+use crate::perf_panel::PerfPanel;
 use crate::theme::ThemeManager;
 use crate::view::{FocusPanel, LayoutMode, View};
 use crate::widget::QuickActionsPanel;
@@ -799,6 +800,7 @@ impl App {
                 View::Tasks => FocusPanel::TaskQueue,
                 View::Costs => FocusPanel::CostBreakdown,
                 View::Metrics => FocusPanel::MetricsCharts,
+                View::Perf => FocusPanel::PerfCharts,
                 View::Logs => FocusPanel::ActivityLog,
                 View::Subscriptions => FocusPanel::Subscriptions,
                 View::Alerts => FocusPanel::None,
@@ -2441,6 +2443,7 @@ impl App {
             View::Tasks => self.draw_tasks(frame, area),
             View::Costs => self.draw_costs(frame, area),
             View::Metrics => self.draw_metrics(frame, area),
+            View::Perf => self.draw_perf(frame, area),
             View::Logs => self.draw_logs(frame, area),
             View::Subscriptions => self.draw_subscriptions(frame, area),
             View::Alerts => self.draw_alerts(frame, area),
@@ -2797,6 +2800,14 @@ impl App {
         let cost_panel = CostPanel::new(&self.data_manager.cost_data)
             .focused(self.focus_panel == FocusPanel::CostBreakdown);
         frame.render_widget(cost_panel, area);
+    }
+
+    /// Draw the Perf view (alias for Metrics).
+    fn draw_perf(&self, frame: &mut Frame, area: Rect) {
+        // Use the same MetricsPanel widget as Perf view
+        let metrics_panel = MetricsPanel::new(&self.data_manager.metrics_data)
+            .focused(self.focus_panel == FocusPanel::PerfCharts);
+        frame.render_widget(metrics_panel, area);
     }
 
     /// Draw the Metrics view.
