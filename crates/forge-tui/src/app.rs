@@ -6066,7 +6066,6 @@ mod tests {
         app.handle_key_event(key);
         assert_eq!(app.selected_task_index, 0);
     }
-}
 
     // ============================================================
     // Chat History Persistence Tests
