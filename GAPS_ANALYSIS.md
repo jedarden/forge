@@ -110,7 +110,7 @@ error[E0004]: non-exhaustive patterns: `View::Perf` not covered
 | Advanced health monitoring | ⚠️ Partial | Basic monitoring works, alerts missing |
 | Performance analytics | ❌ Missing | Perf view exists but no draw method |
 
-**Phase 3 Completion: 25% (1/4 complete)**
+**Phase 3 Completion: 50% (2/4 complete)**
 
 ### Phase 4: Enterprise (Not Started)
 
@@ -175,9 +175,12 @@ error[E0004]: non-exhaustive patterns: `View::Perf` not covered
    - Missing: Quota tracking, usage monitoring, reset cycles
    - Needed for cost optimization strategy
 
-7. **Hot-Reload & Self-Update** ♻️
-   - ConfigWatcher exists but not fully integrated
-   - Missing: State preservation, binary updates, seamless reload
+7. **Hot-Reload & Self-Update** ✅ Done
+   - ConfigWatcher fully integrated in app.rs
+   - Hot config reload: `poll_config_changes()` and `apply_config_change()` implemented
+   - Binary self-update: `trigger_update()` and `perform_update()` in self_update.rs
+   - State preservation: Chat history serialized/deserialized, config preserves state
+   - Atomic binary swap: Implemented with rollback support
 
 8. **Advanced Health Monitoring** 🏥
    - Basic monitoring works (worker status files)
