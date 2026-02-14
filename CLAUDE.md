@@ -102,6 +102,26 @@ tmux attach -t forge-test
 # - Validates rendering and responses
 ```
 
+**IMPORTANT: Cleanup Test Sessions**
+
+Always clean up tmux sessions after testing to prevent accumulation:
+
+```bash
+# Kill your test session when done
+tmux kill-session -t forge-test
+
+# Clean up all forge-related test sessions
+tmux list-sessions | grep '^forge-' | cut -d: -f1 | xargs -I{} tmux kill-session -t {}
+
+# The test framework provides cleanup helpers (see tests/lib/test-helpers.sh)
+stop_forge "$session"           # Clean up main test session
+cleanup_spawned_workers         # Clean up worker sessions spawned during test
+```
+
+For detailed testing architecture and cleanup requirements, see:
+- **[ADR 0017: Tmux-Based Testing with Agent Control and Cleanup](docs/adr/0017-tmux-based-testing-with-cleanup.md)**
+- **[Bead bd-3er6](https://github.com/jedarden/forge/issues)** - Implements cleanup for test-forge-workers.sh
+
 ### Tmux Testing Commands
 
 ```bash

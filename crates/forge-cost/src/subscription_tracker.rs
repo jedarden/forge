@@ -407,6 +407,43 @@ impl SubscriptionTracker {
         }
     }
 
+    /// Find subscription by model name.
+    pub fn find_subscription_for_model(&self, model: &str) -> Option<String> {
+        for (name, sub) in &self.subscriptions {
+            if sub.model.as_ref().map(|m| m == model).unwrap_or(false) {
+                return Some(name.clone());
+            }
+        }
+        None
+    }
+
+    /// Check and reset billing periods that have ended.
+    /// Returns the number of subscriptions that were reset.
+    pub fn check_and_reset_billing(&mut self, _db: &CostDatabase) -> Result<usize> {
+        // Check all subscriptions for expired billing periods
+        let now = Utc::now();
+        let mut reset_count = 0;
+
+        for sub in self.subscriptions.values_mut() {
+            if sub.billing_end <= now && sub.active {
+                // Reset billing period
+                let new_start = sub.billing_end;
+                let new_end = new_start + Duration::days(30);
+                sub.billing_start = new_start;
+                sub.billing_end = new_end;
+                sub.quota_used = 0;
+                sub.updated_at = now;
+                reset_count += 1;
+            }
+        }
+
+        if reset_count > 0 {
+            self.update_summary_cache();
+        }
+
+        Ok(reset_count)
+    }
+
     /// Create demo data for testing.
     pub fn with_demo_data() -> Self {
         let now = Utc::now();

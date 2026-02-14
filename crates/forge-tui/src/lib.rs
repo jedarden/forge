@@ -49,6 +49,8 @@ mod integration_tests;
 pub mod log;
 pub mod log_watcher;
 pub mod metrics_panel;
+pub mod perf_metrics;
+pub mod perf_panel;
 pub mod status;
 pub mod subscription_panel;
 pub mod theme;
@@ -83,6 +85,8 @@ pub use alert::{
     AlertBadge, AlertManager, AlertSeverity, AlertType, HealthAlert,
 };
 pub use metrics_panel::{MetricsPanel, MetricsPanelData, MetricsSummaryCompact};
+pub use perf_metrics::{HealthStatus, PerfAlert, PerfAlertType, PerfMetrics, get_memory_rss};
+pub use perf_panel::PerfPanel;
 pub use status::{StatusEvent, StatusWatcher, StatusWatcherConfig, WorkerStatusFile};
 pub use subscription_panel::{
     SubscriptionAction, SubscriptionData, SubscriptionPanel, SubscriptionService,
