@@ -221,6 +221,39 @@ pub trait ChatProvider: Send + Sync {
         tools: &[ProviderTool],
     ) -> Result<ProviderResponse>;
 
+    /// Process a prompt with streaming response via channel.
+    ///
+    /// This method sends streaming chunks via the provided channel as tokens arrive.
+    /// The final ProviderResponse is returned when streaming completes.
+    ///
+    /// # Arguments
+    /// * `prompt` - The user's prompt/command
+    /// * `context` - Current dashboard context for contextual awareness
+    /// * `tools` - Available tools that the provider may invoke
+    /// * `chunk_tx` - Channel to send streaming chunks to UI
+    ///
+    /// # Default Implementation
+    /// Falls back to non-streaming process() method.
+    async fn process_streaming(
+        &self,
+        prompt: &str,
+        context: &DashboardContext,
+        tools: &[ProviderTool],
+        chunk_tx: &tokio::sync::mpsc::Sender<crate::backend::StreamingChunk>,
+    ) -> Result<ProviderResponse> {
+        // Default: collect full response then send as single chunk
+        let response = self.process(prompt, context, tools).await?;
+
+        // Send complete response as single chunk
+        let _ = chunk_tx.send(crate::backend::StreamingChunk {
+            text_delta: response.text.clone(),
+            is_complete: true,
+            error: None,
+        }).await;
+
+        Ok(response)
+    }
+
     /// Get the provider name for logging/debugging.
     fn name(&self) -> &str;
 

@@ -852,6 +852,20 @@ impl BeadManager {
         self.format_task_queue_full_filtered(None)
     }
 
+    /// Check if a bead matches a search query (case-insensitive substring match).
+    fn bead_matches_query(bead: &Bead, query: &str) -> bool {
+        if query.is_empty() {
+            return true;
+        }
+        let query_lower = query.to_lowercase();
+        bead.id.to_lowercase().contains(&query_lower)
+            || bead.title.to_lowercase().contains(&query_lower)
+            || bead.description.to_lowercase().contains(&query_lower)
+            || bead.status.to_lowercase().contains(&query_lower)
+            || bead.labels.iter().any(|l| l.to_lowercase().contains(&query_lower))
+            || bead.assignee.as_ref().map_or(false, |a| a.to_lowercase().contains(&query_lower))
+    }
+
     /// Format full task queue for the Tasks view with optional priority filter.
     ///
     /// When `priority_filter` is Some(p), only beads with priority == p are shown.
@@ -970,6 +984,152 @@ impl BeadManager {
         lines.push(
             "[0-4] Filter by priority  [X] Clear filter  [Enter] View  [C] Close".to_string(),
         );
+
+        lines.join("\n")
+    }
+
+    /// Format full task queue for the Tasks view with optional priority filter and search query.
+    ///
+    /// When `priority_filter` is Some(p), only beads with priority == p are shown.
+    /// When `search_query` is non-empty, filters beads by matching id/title/description/labels.
+    pub fn format_task_queue_full_with_search(&self, priority_filter: Option<u8>, search_query: &str) -> String {
+        if !self.has_br() {
+            return "br CLI not available.\n\n\
+                    Install beads_rust to enable task queue:\n\
+                    cargo install beads_rust\n\n\
+                    Documentation: https://github.com/Dicklesworthstone/beads_rust"
+                .to_string();
+        }
+
+        if self.workspaces.is_empty() {
+            return "No workspaces configured.\n\n\
+                    To monitor workspaces, either:\n\
+                    1. Set FORGE_WORKSPACES=/path/to/workspace1:/path/to/workspace2\n\
+                    2. Run forge from a directory with a .beads/ folder\n\n\
+                    Workspaces are initialized with: br init --prefix <prefix>"
+                .to_string();
+        }
+
+        if !self.is_loaded() {
+            return "Loading bead data...".to_string();
+        }
+
+        // Get aggregated data with priority filter
+        let mut data = self.get_filtered_aggregated_data(priority_filter);
+
+        // Apply search filter to each category
+        data.in_progress.retain(|(_ws, bead)| Self::bead_matches_query(bead, search_query));
+        data.ready.retain(|(_ws, bead)| Self::bead_matches_query(bead, search_query));
+        data.blocked.retain(|(_ws, bead)| Self::bead_matches_query(bead, search_query));
+
+        let mut lines = Vec::new();
+
+        // Filter indicator in header
+        let mut filter_indicators = Vec::new();
+        if let Some(p) = priority_filter {
+            filter_indicators.push(format!("P{}", p));
+        }
+        if !search_query.is_empty() {
+            filter_indicators.push(format!("Search: \"{}\"", search_query));
+        }
+        let filter_text = if filter_indicators.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", filter_indicators.join(" | "))
+        };
+
+        // Summary header
+        lines.push("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".to_string());
+        lines.push(format!("{}{}", data.format_summary(), filter_text));
+        lines.push("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".to_string());
+        lines.push(String::new());
+
+        // In-progress section
+        if !data.in_progress.is_empty() {
+            lines.push("● IN PROGRESS".to_string());
+            lines.push("─────────────────────────────────────────────────────".to_string());
+            for (_ws, bead) in &data.in_progress {
+                let assignee = bead.assignee.as_deref().unwrap_or("-");
+                let score = bead.score();
+                lines.push(format!(
+                    "{} {:8} {} | {:3} | {} [{}]",
+                    bead.priority_indicator(),
+                    bead.id,
+                    bead.priority_str(),
+                    score,
+                    truncate_str(&bead.title, 25),
+                    truncate_str(assignee, 10)
+                ));
+            }
+            lines.push(String::new());
+        }
+
+        // Ready section
+        if !data.ready.is_empty() {
+            lines.push("○ READY".to_string());
+            lines.push("─────────────────────────────────────────────────────".to_string());
+            for (ws, bead) in data.ready.iter().take(10) {
+                let score = bead.score();
+                lines.push(format!(
+                    "{} {:8} {} | {:3} | {} [{}]",
+                    bead.priority_indicator(),
+                    bead.id,
+                    bead.priority_str(),
+                    score,
+                    truncate_str(&bead.title, 25),
+                    ws
+                ));
+            }
+            if data.ready.len() > 10 {
+                lines.push(format!("... {} more ready tasks", data.ready.len() - 10));
+            }
+            lines.push(String::new());
+        }
+
+        // Blocked section
+        if !data.blocked.is_empty() {
+            lines.push("⊘ BLOCKED".to_string());
+            lines.push("─────────────────────────────────────────────────────".to_string());
+            for (_ws, bead) in data.blocked.iter().take(5) {
+                let score = bead.score();
+                lines.push(format!(
+                    "{} {:8} {} | {:3} | {} ({} deps)",
+                    bead.priority_indicator(),
+                    bead.id,
+                    bead.priority_str(),
+                    score,
+                    truncate_str(&bead.title, 20),
+                    bead.dependency_count
+                ));
+            }
+            if data.blocked.len() > 5 {
+                lines.push(format!("... {} more blocked tasks", data.blocked.len() - 5));
+            }
+            lines.push(String::new());
+        }
+
+        // Show message if no results
+        if data.in_progress.is_empty() && data.ready.is_empty() && data.blocked.is_empty() {
+            if !search_query.is_empty() || priority_filter.is_some() {
+                lines.push("No tasks match the current filter.".to_string());
+                if !search_query.is_empty() {
+                    lines.push("Press Esc to clear search.".to_string());
+                }
+                lines.push(String::new());
+            }
+        }
+
+        // Hotkeys
+        lines.push("─────────────────────────────────────────────────────".to_string());
+        if !search_query.is_empty() {
+            lines.push(
+                "[/] Search active  [Esc] Clear search  [0-4] Filter by priority  [Enter] View".to_string(),
+            );
+        } else {
+            lines.push(
+                "[/] Search  [0-4] Filter by priority  [X] Clear filter  [Enter] View  [C] Close".to_string(),
+            );
+        }
 
         lines.join("\n")
     }

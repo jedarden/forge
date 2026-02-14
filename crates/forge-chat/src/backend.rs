@@ -226,6 +226,86 @@ impl ChatBackend {
         self.provider.model()
     }
 
+    /// Check if the provider supports streaming.
+    pub fn provider_supports_streaming(&self) -> bool {
+        self.provider.supports_streaming()
+    }
+
+    /// Process a user command with streaming response.
+    pub async fn process_command_streaming(
+        &self,
+        input: &str,
+        chunk_tx: tokio::sync::mpsc::Sender<StreamingChunk>,
+    ) -> Result<ChatResponse> {
+        let start = Instant::now();
+        let provider_name = self.provider.name().to_string();
+
+        // Check rate limit
+        self.rate_limiter.check().await?;
+
+        info!("Processing chat command with {} (streaming): {}", provider_name, input);
+
+        // Get current context
+        let context = self.context_provider.get_context().await?;
+
+        // Build prompt with context
+        let prompt = self.build_prompt(input, &context).await;
+
+        // Get tool definitions
+        let tools: Vec<ProviderTool> = self
+            .tool_registry
+            .tool_definitions()
+            .into_iter()
+            .map(|t| t.into())
+            .collect();
+
+        // Call provider with streaming
+        let response = match self.provider.process_streaming(&prompt, &context, &tools, &chunk_tx).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                let duration = start.elapsed().as_millis() as u64;
+                let response = ChatResponse::error(e.to_string())
+                    .with_duration(duration)
+                    .with_provider(&provider_name);
+
+                // Log error
+                let entry = AuditEntry::new(input)
+                    .with_error(e.to_string())
+                    .with_duration(duration);
+                if let Err(log_err) = self.audit_logger.log(&entry).await {
+                    error!("Failed to log audit entry: {}", log_err);
+                }
+
+                return Ok(response);
+            }
+        };
+
+        // Record the command for rate limiting
+        self.rate_limiter.record().await;
+
+        let duration = start.elapsed().as_millis() as u64;
+
+        // Build response
+        let mut chat_response = ChatResponse::success(response.text)
+            .with_duration(duration)
+            .with_provider(&provider_name);
+
+        if let Some(cost) = response.cost_usd {
+            chat_response = chat_response.with_cost(cost);
+        }
+
+        // Log successful interaction
+        let entry = AuditEntry::new(input)
+            .with_response(&chat_response.text)
+            .with_duration(duration)
+            .with_cost(chat_response.cost_usd.unwrap_or(0.0));
+        if let Err(log_err) = self.audit_logger.log(&entry).await {
+            error!("Failed to log audit entry: {}", log_err);
+        }
+
+        Ok(chat_response)
+    }
+
     /// Process a user command.
     pub async fn process_command(&self, input: &str) -> Result<ChatResponse> {
         let start = Instant::now();

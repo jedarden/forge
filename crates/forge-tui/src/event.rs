@@ -123,6 +123,8 @@ impl WorkerExecutor {
 pub struct InputHandler {
     /// Whether we're currently in chat/text input mode
     chat_mode: bool,
+    /// Whether we're currently in search mode (Tasks view)
+    search_mode: bool,
     /// Current view for view-specific key handling
     current_view: View,
 }
@@ -132,6 +134,7 @@ impl InputHandler {
     pub fn new() -> Self {
         Self {
             chat_mode: false,
+            search_mode: false,
             current_view: View::default(),
         }
     }
@@ -144,6 +147,16 @@ impl InputHandler {
     /// Returns whether chat mode is active.
     pub fn is_chat_mode(&self) -> bool {
         self.chat_mode
+    }
+
+    /// Set whether search mode is active.
+    pub fn set_search_mode(&mut self, active: bool) {
+        self.search_mode = active;
+    }
+
+    /// Returns whether search mode is active.
+    pub fn is_search_mode(&self) -> bool {
+        self.search_mode
     }
 
     /// Set the current view for view-specific key handling.
@@ -173,10 +186,14 @@ impl InputHandler {
             return AppEvent::Update;
         }
 
-        // Escape cancels current operation or exits chat mode
+        // Escape cancels current operation or exits chat/search mode
         if key.code == KeyCode::Esc {
             if self.chat_mode {
                 self.chat_mode = false;
+                return AppEvent::Cancel;
+            }
+            if self.search_mode {
+                self.search_mode = false;
                 return AppEvent::Cancel;
             }
             return AppEvent::Cancel;
@@ -187,6 +204,11 @@ impl InputHandler {
             return self.handle_chat_input(key);
         }
 
+        // In search mode, handle text input
+        if self.search_mode {
+            return self.handle_search_input(key);
+        }
+
         // Normal mode key handling
         self.handle_normal_mode(key)
     }
@@ -195,6 +217,18 @@ impl InputHandler {
     fn handle_chat_input(&self, key: KeyEvent) -> AppEvent {
         match key.code {
             KeyCode::Enter => AppEvent::Submit,
+            KeyCode::Backspace => AppEvent::Backspace,
+            KeyCode::Char(c) => AppEvent::TextInput(c),
+            KeyCode::Up => AppEvent::NavigateUp,
+            KeyCode::Down => AppEvent::NavigateDown,
+            _ => AppEvent::None,
+        }
+    }
+
+    /// Handle input when in search mode.
+    fn handle_search_input(&self, key: KeyEvent) -> AppEvent {
+        match key.code {
+            KeyCode::Enter => AppEvent::Cancel,  // Exit search mode on Enter
             KeyCode::Backspace => AppEvent::Backspace,
             KeyCode::Char(c) => AppEvent::TextInput(c),
             KeyCode::Up => AppEvent::NavigateUp,
@@ -267,6 +301,12 @@ impl InputHandler {
             KeyCode::Char(':') => {
                 self.chat_mode = true;
                 AppEvent::SwitchView(View::Chat)
+            }
+
+            // Search mode activation (Tasks view only)
+            KeyCode::Char('/') if self.current_view == View::Tasks => {
+                self.search_mode = true;
+                AppEvent::None
             }
 
             // Tab cycling

@@ -152,10 +152,10 @@ pub struct App {
     chat_response_tx: Option<Sender<(String, Result<ChatResponse, forge_chat::ChatError>)>>,
     /// Channel receiver for chat responses from background thread
     chat_response_rx: Option<Receiver<(String, Result<ChatResponse, forge_chat::ChatError>)>>,
-    /// Channel sender for streaming chunks from background thread
-    chat_streaming_tx: Option<Sender<StreamingChunk>>,
+    /// Channel sender for streaming chunks from background thread (tokio channel for async compatibility)
+    chat_streaming_tx: Option<tokio::sync::mpsc::Sender<StreamingChunk>>,
     /// Channel receiver for streaming chunks from background thread
-    chat_streaming_rx: Option<Receiver<StreamingChunk>>,
+    chat_streaming_rx: Option<tokio::sync::mpsc::Receiver<StreamingChunk>>,
     /// Whether a chat request is pending
     chat_pending: bool,
     /// Spinner animation frame index (0-3 for 4-frame spinner)
@@ -1035,6 +1035,12 @@ impl App {
 
             // Update input handler for chat mode
             self.input_handler.set_chat_mode(view == View::Chat);
+            // Exit search mode when leaving Tasks view
+            if view != View::Tasks && self.task_search_mode {
+                self.task_search_mode = false;
+                self.task_search_query.clear();
+                self.input_handler.set_search_mode(false);
+            }
             // Update input handler with current view for view-specific key handling
             self.input_handler.set_current_view(view);
 
@@ -1070,37 +1076,46 @@ impl App {
     /// This method collects streaming token deltas and appends them to
     /// the streaming response in real-time.
     fn poll_streaming_chunks(&mut self) {
-        if let Some(rx) = &self.chat_streaming_rx {
-            // Process all available chunks
+        // Collect all available chunks first to avoid borrow issues
+        let mut chunks = Vec::new();
+        if let Some(rx) = &mut self.chat_streaming_rx {
             while let Ok(chunk) = rx.try_recv() {
-                if let Some(ref error) = chunk.error {
-                    // Streaming error occurred
-                    self.streaming_active = false;
-                    self.status_message = Some(format!("❌ Streaming error: {}", error));
-                    self.mark_dirty();
-                    return;
+                chunks.push(chunk);
+            }
+        }
+
+        // Process chunks outside of the borrow
+        for chunk in chunks {
+            if let Some(ref error) = chunk.error {
+                // Streaming error occurred
+                self.streaming_active = false;
+                self.status_message = Some(format!("❌ Streaming error: {}", error));
+                self.mark_dirty();
+                return;
+            }
+
+            if !chunk.text_delta.is_empty() {
+                // Clone the delta since we need it twice
+                let text_delta = chunk.text_delta.clone();
+
+                // Append the delta to our streaming response
+                if let Some(ref mut complete) = self.pending_complete_response {
+                    complete.push_str(&text_delta);
+                } else {
+                    // First chunk - initialize streaming
+                    self.pending_complete_response = Some(text_delta.clone());
                 }
 
-                if !chunk.text_delta.is_empty() {
-                    // Append the delta to our streaming response
-                    if let Some(ref mut complete) = self.pending_complete_response {
-                        complete.push_str(&chunk.text_delta);
-                    } else {
-                        // First chunk - initialize streaming
-                        self.pending_complete_response = Some(chunk.text_delta);
-                    }
+                // Update the visible streaming text
+                self.streaming_response.push_str(&text_delta);
 
-                    // Update the visible streaming text
-                    self.streaming_response.push_str(&chunk.text_delta);
+                self.mark_dirty();
+            }
 
-                    self.mark_dirty();
-                }
-
-                if chunk.is_complete {
-                    // Streaming finished - finalize will be called when
-                    // the complete response arrives via response channel
-                    self.streaming_active = false;
-                }
+            if chunk.is_complete {
+                // Streaming finished - finalize will be called when
+                // the complete response arrives via response channel
+                self.streaming_active = false;
             }
         }
     }
@@ -1111,26 +1126,6 @@ impl App {
 
         // First poll streaming chunks if active
         self.poll_streaming_chunks();
-
-        // Non-blocking check for responses (need to avoid borrow checker issues)
-        let mut responses = Vec::new();
-        if let Some(rx) = &self.chat_response_rx {
-            match rx.try_recv() {
-                Ok(response) => {
-                    info!("📥 Got response from channel!");
-                    responses.push(response);
-                }
-                Err(mpsc::TryRecvError::Empty) => {
-                    // No response yet, this is normal
-                }
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    info!("❌ Channel disconnected!");
-                }
-            }
-        }
-
-        // Process responses after releasing the borrow
-        use tracing::info;
 
         // Non-blocking check for responses (need to avoid borrow checker issues)
         let mut responses = Vec::new();
@@ -1640,6 +1635,13 @@ impl App {
         }
 
         let event = self.input_handler.handle_key(key);
+
+        // Check if search mode was activated
+        if self.input_handler.is_search_mode() && !self.task_search_mode {
+            self.task_search_mode = true;
+            self.task_search_query.clear();
+        }
+
         self.handle_app_event(event);
     }
 
@@ -1669,6 +1671,10 @@ impl App {
                 } else if self.current_view == View::Chat {
                     self.chat_input.clear();
                     self.go_back();
+                } else if self.task_search_mode {
+                    self.task_search_mode = false;
+                    self.task_search_query.clear();
+                    self.input_handler.set_search_mode(false);
                 }
                 self.mark_dirty();
             }
@@ -1779,11 +1785,19 @@ impl App {
                 self.mark_dirty();
             }
             AppEvent::TextInput(c) => {
-                self.chat_input.push(c);
+                if self.task_search_mode {
+                    self.task_search_query.push(c);
+                } else {
+                    self.chat_input.push(c);
+                }
                 self.mark_dirty();
             }
             AppEvent::Backspace => {
-                self.chat_input.pop();
+                if self.task_search_mode {
+                    self.task_search_query.pop();
+                } else {
+                    self.chat_input.pop();
+                }
                 self.mark_dirty();
             }
             AppEvent::Submit => {
@@ -1812,7 +1826,7 @@ impl App {
                             }
 
                             if self.chat_streaming_rx.is_none() {
-                                let (tx, rx) = mpsc::channel();
+                                let (tx, rx) = tokio::sync::mpsc::channel(100);
                                 self.chat_streaming_tx = Some(tx);
                                 self.chat_streaming_rx = Some(rx);
                             }
@@ -1826,12 +1840,24 @@ impl App {
 
                                 info!("Chat thread started for query: {}", query_clone);
 
-                                let result = match tokio::runtime::Runtime::new() {
-                                    Ok(rt) => rt.block_on(backend_clone.process_command(&query_clone)),
-                                    Err(e) => Err(forge_chat::ChatError::ApiError(format!(
-                                        "Runtime error: {}",
-                                        e
-                                    ))),
+                                // Use streaming if supported by provider
+                                let supports_streaming = backend_clone.provider_supports_streaming();
+                                let result = if supports_streaming {
+                                    match tokio::runtime::Runtime::new() {
+                                        Ok(rt) => rt.block_on(backend_clone.process_command_streaming(&query_clone, stream_tx)),
+                                        Err(e) => Err(forge_chat::ChatError::ApiError(format!(
+                                            "Runtime error: {}",
+                                            e
+                                        ))),
+                                    }
+                                } else {
+                                    match tokio::runtime::Runtime::new() {
+                                        Ok(rt) => rt.block_on(backend_clone.process_command(&query_clone)),
+                                        Err(e) => Err(forge_chat::ChatError::ApiError(format!(
+                                            "Runtime error: {}",
+                                            e
+                                        ))),
+                                    }
                                 };
 
                                 info!("Chat request completed, result: {:?}", result.is_ok());
@@ -3528,9 +3554,18 @@ impl App {
         let content = self
             .data_manager
             .bead_manager
-            .format_task_queue_full_filtered(self.priority_filter);
+            .format_task_queue_full_with_search(self.priority_filter, &self.task_search_query);
 
-        self.draw_panel(frame, area, "Task Queue & Bead Management", &content, true);
+        // Update title to show search mode
+        let title = if self.task_search_mode {
+            format!("Task Queue & Bead Management [Search: {}]", self.task_search_query)
+        } else if !self.task_search_query.is_empty() {
+            format!("Task Queue & Bead Management [Filtered: {}]", self.task_search_query)
+        } else {
+            "Task Queue & Bead Management".to_string()
+        };
+
+        self.draw_panel(frame, area, &title, &content, true);
     }
 
     /// Draw the Costs view.

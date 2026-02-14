@@ -66,6 +66,90 @@ pub struct ApiUsage {
     pub cache_creation_tokens: Option<u32>,
 }
 
+/// Server-Sent Events (SSE) streaming event from Claude API.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+pub enum SseEvent {
+    #[serde(rename = "message_start")]
+    MessageStart { message: ApiMessageMeta },
+    #[serde(rename = "message_delta")]
+    MessageDelta { delta: MessageDelta, delta_usage: Option<DeltaUsage> },
+    #[serde(rename = "message_stop")]
+    MessageStop,
+    #[serde(rename = "content_block_start")]
+    ContentBlockStart { index: u32, content_block: Option<ContentBlockMeta> },
+    #[serde(rename = "content_block_delta")]
+    ContentBlockDelta { index: u32, delta: ContentDelta },
+    #[serde(rename = "content_block_stop")]
+    ContentBlockStop { index: u32 },
+    #[serde(rename = "error")]
+    Error { error: ApiError },
+}
+
+/// Message metadata from streaming API.
+#[derive(Debug, Deserialize)]
+pub struct ApiMessageMeta {
+    pub id: String,
+    #[serde(default)]
+    pub usage: Option<ApiUsage>,
+}
+
+/// Delta for message-level updates.
+#[derive(Debug, Deserialize)]
+pub struct MessageDelta {
+    #[serde(default)]
+    pub stop_reason: Option<String>,
+}
+
+/// Token usage delta from streaming API.
+#[derive(Debug, Deserialize)]
+pub struct DeltaUsage {
+    #[serde(default)]
+    pub output_tokens: Option<u32>,
+}
+
+/// Content block metadata.
+#[derive(Debug, Deserialize)]
+pub struct ContentBlockMeta {
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub tool_use: Option<ToolUseMeta>,
+}
+
+/// Tool use metadata from streaming API.
+#[derive(Debug, Deserialize)]
+pub struct ToolUseMeta {
+    pub id: String,
+    pub name: String,
+    pub input: serde_json::Value,
+}
+
+/// Content delta from streaming API.
+#[derive(Debug, Deserialize)]
+pub struct ContentDelta {
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub tool_use: Option<ToolUseDelta>,
+}
+
+/// Tool use delta from streaming API.
+#[derive(Debug, Deserialize)]
+pub struct ToolUseDelta {
+    #[serde(default)]
+    pub input: Option<serde_json::Value>,
+}
+
+/// Error from streaming API.
+#[derive(Debug, Deserialize)]
+pub struct ApiError {
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub type_: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -40,6 +40,9 @@ pub struct AuditEntry {
 
     /// Error message (if any).
     pub error: Option<String>,
+
+    /// Model used for the request.
+    pub model: Option<String>,
 }
 
 impl AuditEntry {
@@ -55,6 +58,7 @@ impl AuditEntry {
             duration_ms: 0,
             success: true,
             error: None,
+            model: None,
         }
     }
 
@@ -98,6 +102,12 @@ impl AuditEntry {
     pub fn with_error(mut self, error: impl Into<String>) -> Self {
         self.success = false;
         self.error = Some(error.into());
+        self
+    }
+
+    /// Set the model.
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        self.model = Some(model.into());
         self
     }
 }

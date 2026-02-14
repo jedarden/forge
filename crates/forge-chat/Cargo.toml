@@ -28,12 +28,14 @@ serde_yaml.workspace = true
 
 # HTTP client for Claude API
 reqwest.workspace = true
+bytes = "1.9"
 
 # Time
 chrono.workspace = true
 
 # Async utilities
 async-trait.workspace = true
+futures-util = "0.3"
 
 # Logging
 tracing.workspace = true

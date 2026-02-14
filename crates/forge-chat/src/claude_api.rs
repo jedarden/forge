@@ -242,6 +242,153 @@ impl ClaudeApiProvider {
         })
     }
 
+    /// Send a streaming API request with SSE (no retry logic for streaming).
+    async fn send_streaming_request(
+        &self,
+        request: &ApiRequest,
+        chunk_tx: &tokio::sync::mpsc::Sender<crate::backend::StreamingChunk>,
+    ) -> Result<(String, Vec<ToolCall>, ApiResponse)> {
+        use futures_util::stream::StreamExt;
+
+        debug!("Sending streaming API request to {}", self.base_url);
+
+        let response = self
+            .client
+            .post(format!("{}/v1/messages", self.base_url))
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .header("accept", "text/event-stream")
+            .json(request)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_timeout() {
+                    ChatError::Timeout(
+                        self.config.timeout_secs,
+                        "API request timed out".to_string(),
+                    )
+                } else if e.is_connect() {
+                    ChatError::ConnectionFailed(format!("Could not connect to API: {}", e))
+                } else {
+                    ChatError::HttpError(e)
+                }
+            })?;
+
+        let status = response.status();
+
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(ChatError::ApiError(format!(
+                "API error ({}): {}",
+                status.as_u16(), body
+            )));
+        }
+
+        // Stream SSE events
+        let mut byte_stream = response.bytes_stream();
+        let mut buffer = Vec::new();
+        let mut text = String::new();
+        let tool_calls = Vec::new();
+
+        // Track usage for final response
+        let mut input_tokens: Option<u32> = None;
+        let mut output_tokens: u32 = 0;
+
+        while let Some(chunk_result) = byte_stream.next().await {
+            let chunk: bytes::Bytes = chunk_result.map_err(|e| {
+                ChatError::ApiError(format!("Stream error: {}", e))
+            })?;
+
+            buffer.extend_from_slice(&chunk);
+
+            // Process complete SSE events from buffer
+            while let Some(event_end) = buffer.iter().position(|&b| b == b'\n') {
+                let line_bytes = buffer.drain(..event_end + 1).collect::<Vec<_>>();
+                let line = std::str::from_utf8(&line_bytes)
+                    .unwrap_or("")
+                    .trim();
+
+                // Parse SSE format: "data: {...}"
+                if line.starts_with("data: ") {
+                    let json_str = &line[6..]; // Skip "data: " prefix
+
+                    if json_str == "[DONE]" {
+                        debug!("Streaming complete");
+                        let _ = chunk_tx.send(crate::backend::StreamingChunk {
+                            text_delta: String::new(),
+                            is_complete: true,
+                            error: None,
+                        }).await;
+                        break;
+                    }
+
+                    // Parse SSE event
+                    if let Ok(sse_event) = serde_json::from_str::<crate::claude_api_types::SseEvent>(json_str) {
+                        use crate::claude_api_types::SseEvent;
+
+                        match sse_event {
+                            SseEvent::MessageStart { message } => {
+                                if let Some(usage) = message.usage {
+                                    input_tokens = Some(usage.input_tokens);
+                                }
+                            }
+                            SseEvent::ContentBlockDelta { delta, .. } => {
+                                if let Some(text_delta) = delta.text {
+                                    if !text_delta.is_empty() {
+                                        text.push_str(&text_delta);
+
+                                        // Send chunk to UI
+                                        let _ = chunk_tx.send(crate::backend::StreamingChunk {
+                                            text_delta,
+                                            is_complete: false,
+                                            error: None,
+                                        }).await;
+                                    }
+                                }
+                            }
+                            SseEvent::MessageDelta { delta_usage, .. } => {
+                                if let Some(usage) = delta_usage {
+                                    if let Some(tokens) = usage.output_tokens {
+                                        output_tokens = tokens;
+                                    }
+                                }
+                            }
+                            SseEvent::Error { error } => {
+                                let msg = error.message.unwrap_or_else(|| {
+                                    error.type_.unwrap_or("Unknown error".to_string())
+                                });
+                                let _ = chunk_tx.send(crate::backend::StreamingChunk {
+                                    text_delta: String::new(),
+                                    is_complete: true,
+                                    error: Some(msg.clone()),
+                                }).await;
+                                return Err(ChatError::ApiError(format!("Streaming error: {}", msg)));
+                            }
+                            _ => {
+                                // Other event types (message_stop, content_block_start, etc.) - ignore
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Build final ApiResponse for return value
+        let api_response = ApiResponse {
+            id: "streaming".to_string(),
+            content: vec![crate::claude_api_types::ContentBlock::Text { text: text.clone() }],
+            usage: crate::claude_api_types::ApiUsage {
+                input_tokens: input_tokens.unwrap_or(0),
+                output_tokens,
+                cache_read_tokens: Some(0),
+                cache_creation_tokens: Some(0),
+            },
+        };
+
+        Ok((text, tool_calls, api_response))
+    }
+
     /// Parse the API response into text and tool calls.
     fn parse_response(api_response: ApiResponse) -> (String, Vec<ToolCall>) {
         let mut text = String::new();
@@ -328,6 +475,48 @@ impl crate::provider::ChatProvider for ClaudeApiProvider {
 
     fn name(&self) -> &str {
         "claude-api"
+    }
+
+    /// Process a prompt with streaming response via SSE.
+    async fn process_streaming(
+        &self,
+        prompt: &str,
+        context: &DashboardContext,
+        tools: &[ProviderTool],
+        chunk_tx: &tokio::sync::mpsc::Sender<crate::backend::StreamingChunk>,
+    ) -> Result<crate::provider::ProviderResponse> {
+        let start = std::time::Instant::now();
+
+        // Build request
+        let request = self.build_request(prompt, context, tools);
+
+        // Send streaming request with SSE
+        let (text, tool_calls, api_response) = self.send_streaming_request(&request, chunk_tx).await?;
+
+        let duration = start.elapsed().as_millis() as u64;
+        let cost = self.estimate_cost(&api_response.usage);
+
+        let finish_reason = if !tool_calls.is_empty() {
+            FinishReason::ToolCall
+        } else {
+            FinishReason::Stop
+        };
+
+        let usage = TokenUsage {
+            input_tokens: api_response.usage.input_tokens,
+            output_tokens: api_response.usage.output_tokens,
+            cache_read_tokens: api_response.usage.cache_read_tokens.unwrap_or(0),
+            cache_creation_tokens: api_response.usage.cache_creation_tokens.unwrap_or(0),
+        };
+
+        Ok(crate::provider::ProviderResponse {
+            text,
+            tool_calls,
+            duration_ms: duration,
+            cost_usd: Some(cost),
+            finish_reason,
+            usage: Some(usage),
+        })
     }
 
     fn supports_streaming(&self) -> bool {
