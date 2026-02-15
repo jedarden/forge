@@ -1848,6 +1848,8 @@ impl App {
 
     /// Pause the currently selected worker in the workers list.
     fn pause_selected_worker(&mut self) {
+        use forge_worker::tmux;
+
         // Get sorted list of worker IDs
         let mut workers: Vec<_> = self.data_manager.worker_data.workers.keys().collect();
         workers.sort();
@@ -1872,14 +1874,32 @@ impl App {
             return;
         }
 
-        // Add to paused set
-        self.paused_workers.insert(worker_id.clone());
-        self.status_message = Some(format!("Paused worker: {}", worker_id));
+        // Send pause signal to tmux session
+        let worker_id_clone = worker_id.clone();
+        let result = self
+            .worker_runtime
+            .block_on(async { tmux::pause_session(&worker_id_clone).await });
+
+        match result {
+            Ok(()) => {
+                // Add to paused set
+                self.paused_workers.insert(worker_id.clone());
+                self.status_message = Some(format!("Paused worker: {}", worker_id));
+                info!("Paused worker: {}", worker_id);
+            }
+            Err(e) => {
+                self.status_message = Some(format!("Failed to pause worker: {}", e));
+                warn!("Failed to pause worker {}: {}", worker_id, e);
+            }
+        }
+
         self.mark_dirty();
     }
 
     /// Pause all workers.
     fn pause_all_workers(&mut self) {
+        use forge_worker::tmux;
+
         let workers = &self.data_manager.worker_data.workers;
 
         if workers.is_empty() {
@@ -1889,19 +1909,45 @@ impl App {
         }
 
         let mut paused_count = 0;
+        let mut failed_count = 0;
+
         for worker_id in workers.keys() {
             if !self.paused_workers.contains(worker_id) {
-                self.paused_workers.insert(worker_id.clone());
-                paused_count += 1;
+                let worker_id_clone = worker_id.clone();
+                let result = self
+                    .worker_runtime
+                    .block_on(async { tmux::pause_session(&worker_id_clone).await });
+
+                match result {
+                    Ok(()) => {
+                        self.paused_workers.insert(worker_id.clone());
+                        paused_count += 1;
+                    }
+                    Err(e) => {
+                        warn!("Failed to pause worker {}: {}", worker_id, e);
+                        failed_count += 1;
+                    }
+                }
             }
         }
 
-        self.status_message = Some(format!("Paused {} workers", paused_count));
+        if failed_count > 0 {
+            self.status_message = Some(format!(
+                "Paused {} workers ({} failed)",
+                paused_count, failed_count
+            ));
+        } else {
+            self.status_message = Some(format!("Paused {} workers", paused_count));
+        }
+
+        info!("Paused {} workers", paused_count);
         self.mark_dirty();
     }
 
     /// Resume the currently selected worker in the workers list.
     fn resume_selected_worker(&mut self) {
+        use forge_worker::tmux;
+
         // Get sorted list of worker IDs
         let mut workers: Vec<_> = self.data_manager.worker_data.workers.keys().collect();
         workers.sort();
@@ -1926,14 +1972,32 @@ impl App {
             return;
         }
 
-        // Remove from paused set
-        self.paused_workers.remove(&worker_id);
-        self.status_message = Some(format!("Resumed worker: {}", worker_id));
+        // Send resume signal to tmux session
+        let worker_id_clone = worker_id.clone();
+        let result = self
+            .worker_runtime
+            .block_on(async { tmux::resume_session(&worker_id_clone).await });
+
+        match result {
+            Ok(()) => {
+                // Remove from paused set
+                self.paused_workers.remove(&worker_id);
+                self.status_message = Some(format!("Resumed worker: {}", worker_id));
+                info!("Resumed worker: {}", worker_id);
+            }
+            Err(e) => {
+                self.status_message = Some(format!("Failed to resume worker: {}", e));
+                warn!("Failed to resume worker {}: {}", worker_id, e);
+            }
+        }
+
         self.mark_dirty();
     }
 
     /// Resume all paused workers.
     fn resume_all_workers(&mut self) {
+        use forge_worker::tmux;
+
         if self.paused_workers.is_empty() {
             self.status_message = Some("No paused workers to resume".to_string());
             self.mark_dirty();
@@ -1941,8 +2005,38 @@ impl App {
         }
 
         let resumed_count = self.paused_workers.len();
-        self.paused_workers.clear();
-        self.status_message = Some(format!("Resumed {} workers", resumed_count));
+        let mut failed_count = 0;
+
+        // Collect worker IDs to avoid modifying set while iterating
+        let worker_ids: Vec<_> = self.paused_workers.iter().cloned().collect();
+
+        for worker_id in worker_ids {
+            let result = self
+                .worker_runtime
+                .block_on(async { tmux::resume_session(&worker_id).await });
+
+            match result {
+                Ok(()) => {
+                    self.paused_workers.remove(&worker_id);
+                }
+                Err(e) => {
+                    warn!("Failed to resume worker {}: {}", worker_id, e);
+                    failed_count += 1;
+                }
+            }
+        }
+
+        let actually_resumed = resumed_count - failed_count;
+        if failed_count > 0 {
+            self.status_message = Some(format!(
+                "Resumed {} workers ({} failed)",
+                actually_resumed, failed_count
+            ));
+        } else {
+            self.status_message = Some(format!("Resumed {} workers", actually_resumed));
+        }
+
+        info!("Resumed {} workers", actually_resumed);
         self.mark_dirty();
     }
 
@@ -3484,27 +3578,40 @@ impl App {
     /// Draw a panel with optional highlight.
     fn draw_panel(&self, frame: &mut Frame, area: Rect, title: &str, content: &str, focused: bool) {
         let theme = self.theme_manager.current();
+
+        // Focus indicator icon: "◆" for focused, "◇" for unfocused
+        let focus_icon = if focused { "◆" } else { "◇" };
+
+        // Border style: use bright focus_highlight for focused, dim for unfocused
         let border_style = if focused {
-            Style::default().fg(theme.colors.header)
+            Style::default().fg(theme.colors.focus_highlight)
         } else {
             Style::default().fg(theme.colors.border_dim)
         };
 
+        // Title style: bold + bright for focused, dim for unfocused
         let title_style = if focused {
             Style::default()
-                .fg(theme.colors.header)
+                .fg(theme.colors.focus_highlight)
                 .add_modifier(Modifier::BOLD)
         } else {
+            Style::default().fg(theme.colors.unfocused_text)
+        };
+
+        // Content style: bright for focused panels, dimmed for unfocused
+        let content_style = if focused {
             Style::default().fg(theme.colors.text)
+        } else {
+            Style::default().fg(theme.colors.unfocused_text)
         };
 
         let panel = Paragraph::new(content)
-            .style(Style::default().fg(theme.colors.text))
+            .style(content_style)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(border_style)
-                    .title(Span::styled(format!(" {} ", title), title_style)),
+                    .title(Span::styled(format!(" {} {} ", focus_icon, title), title_style)),
             )
             .wrap(Wrap { trim: false });
 
