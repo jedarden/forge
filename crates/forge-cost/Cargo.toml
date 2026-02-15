@@ -33,6 +33,10 @@ tracing.workspace = true
 # Core types
 forge-core = { path = "../forge-core" }
 
+[[bin]]
+name = "check_db"
+path = "src/bin/check_db.rs"
+
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
