@@ -209,11 +209,15 @@ pub async fn capture_pane(session_name: &str, lines: Option<u32>) -> Result<Stri
     Ok(content)
 }
 
-/// Pause a worker by sending SIGTSTP to its tmux session.
+/// Pause a worker by sending SIGSTOP to its tmux session.
 ///
-/// This sends a pause signal (SIGTSTP) to the session's process group,
-/// which should cause the worker process to suspend. The worker can
-/// later be resumed with `resume_session`.
+/// This sends a pause signal (SIGSTOP) to all processes in the session's
+/// process group, which should cause the worker and all its children to
+/// suspend. The worker can later be resumed with `resume_session`.
+///
+/// Note: SIGSTOP is used instead of SIGTSTP because it cannot be
+/// caught or ignored by the target process, ensuring reliable pause
+/// functionality even for multi-threaded workers.
 ///
 /// # Arguments
 /// * `session_name` - The tmux session name (e.g., "claude-code-glm-47-alpha")
@@ -230,9 +234,10 @@ pub async fn pause_session(session_name: &str) -> Result<()> {
         }
     };
 
-    // Send SIGTSTP to suspend the process
+    // Send SIGSTOP to the entire process group using negative PID
+    // This stops the pane process and all its children
     let output = Command::new("kill")
-        .args(["-TSTP", &pid.to_string()])
+        .args(["-STOP", &format!("-{}", pid)])
         .output()
         .await
         .map_err(|e| ForgeError::WorkerSpawn {
@@ -254,8 +259,8 @@ pub async fn pause_session(session_name: &str) -> Result<()> {
 
 /// Resume a paused worker by sending SIGCONT to its tmux session.
 ///
-/// This sends a continue signal (SIGCONT) to the session's process group,
-/// which should resume a previously suspended worker process.
+/// This sends a continue signal (SIGCONT) to all processes in the session's
+/// process group, which should resume previously suspended worker processes.
 ///
 /// # Arguments
 /// * `session_name` - The tmux session name (e.g., "claude-code-glm-47-alpha")
@@ -272,9 +277,10 @@ pub async fn resume_session(session_name: &str) -> Result<()> {
         }
     };
 
-    // Send SIGCONT to resume the process
+    // Send SIGCONT to the entire process group using negative PID
+    // This resumes the pane process and all its children
     let output = Command::new("kill")
-        .args(["-CONT", &pid.to_string()])
+        .args(["-CONT", &format!("-{}", pid)])
         .output()
         .await
         .map_err(|e| ForgeError::WorkerSpawn {
