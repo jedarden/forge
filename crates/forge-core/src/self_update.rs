@@ -849,6 +849,9 @@ mod tests {
         save_current_version(test_version).unwrap();
         let read_version = read_last_version();
         assert_eq!(read_version, Some(test_version.to_string()));
+
+        // Clean up
+        let _ = fs::remove_file(get_version_file_path());
     }
 
     #[test]

@@ -56,5 +56,8 @@ pub use watcher::{StatusEvent, StatusWatcher, WatcherConfig};
 // Re-export self_update types when feature is enabled
 #[cfg(feature = "self-update")]
 pub use self_update::{
-    check_for_update, perform_update, DownloadProgress, UpdateResult, UpdateStatus,
+    check_and_perform_self_install, check_and_rollback, check_for_update,
+    did_previous_startup_crash, mark_startup_in_progress, mark_startup_successful,
+    perform_update, read_last_version, restart_with_new_binary, save_current_version,
+    DownloadProgress, RollbackResult, UpdateResult, UpdateStatus,
 };
