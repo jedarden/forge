@@ -209,6 +209,91 @@ pub async fn capture_pane(session_name: &str, lines: Option<u32>) -> Result<Stri
     Ok(content)
 }
 
+/// Pause a worker by sending SIGTSTP to its tmux session.
+///
+/// This sends a pause signal (SIGTSTP) to the session's process group,
+/// which should cause the worker process to suspend. The worker can
+/// later be resumed with `resume_session`.
+///
+/// # Arguments
+/// * `session_name` - The tmux session name (e.g., "claude-code-glm-47-alpha")
+#[instrument(level = "debug", skip_all, fields(session = %session_name))]
+pub async fn pause_session(session_name: &str) -> Result<()> {
+    // Get the pane PID
+    let pid = match get_session_pid(session_name).await? {
+        Some(p) => p,
+        None => {
+            return Err(ForgeError::WorkerSpawn {
+                worker_id: session_name.into(),
+                message: "No PID found for session".to_string(),
+            });
+        }
+    };
+
+    // Send SIGTSTP to suspend the process
+    let output = Command::new("kill")
+        .args(["-TSTP", &pid.to_string()])
+        .output()
+        .await
+        .map_err(|e| ForgeError::WorkerSpawn {
+            worker_id: session_name.into(),
+            message: format!("Failed to send pause signal: {}", e),
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(ForgeError::WorkerSpawn {
+            worker_id: session_name.into(),
+            message: format!("Failed to pause session: {}", stderr.trim()),
+        });
+    }
+
+    debug!("Paused tmux session: {}", session_name);
+    Ok(())
+}
+
+/// Resume a paused worker by sending SIGCONT to its tmux session.
+///
+/// This sends a continue signal (SIGCONT) to the session's process group,
+/// which should resume a previously suspended worker process.
+///
+/// # Arguments
+/// * `session_name` - The tmux session name (e.g., "claude-code-glm-47-alpha")
+#[instrument(level = "debug", skip_all, fields(session = %session_name))]
+pub async fn resume_session(session_name: &str) -> Result<()> {
+    // Get the pane PID
+    let pid = match get_session_pid(session_name).await? {
+        Some(p) => p,
+        None => {
+            return Err(ForgeError::WorkerSpawn {
+                worker_id: session_name.into(),
+                message: "No PID found for session".to_string(),
+            });
+        }
+    };
+
+    // Send SIGCONT to resume the process
+    let output = Command::new("kill")
+        .args(["-CONT", &pid.to_string()])
+        .output()
+        .await
+        .map_err(|e| ForgeError::WorkerSpawn {
+            worker_id: session_name.into(),
+            message: format!("Failed to send resume signal: {}", e),
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(ForgeError::WorkerSpawn {
+            worker_id: session_name.into(),
+            message: format!("Failed to resume session: {}", stderr.trim()),
+        });
+    }
+
+    debug!("Resumed tmux session: {}", session_name);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
