@@ -41,9 +41,15 @@ reqwest = { workspace = true, optional = true }
 # Async utilities (for streaming downloads)
 futures-util = { workspace = true, optional = true }
 
+# Directory helpers (for ~/.forge paths)
+dirs = { version = "5.0", optional = true }
+
+# Unix syscalls (for exec)
+libc = { version = "0.2", optional = true }
+
 [features]
 default = ["self-update"]
-self-update = ["reqwest", "futures-util"]
+self-update = ["reqwest", "futures-util", "dirs", "libc"]
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -25,7 +25,7 @@ use std::io::Write;
 use std::panic;
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use forge_core::{LogGuard, init_logging};
 use forge_init::{detection, generator};
 use forge_tui::App;
@@ -50,9 +50,77 @@ struct Cli {
     /// Directory for log files (defaults to ~/.forge/logs/)
     #[arg(long)]
     log_dir: Option<std::path::PathBuf>,
+
+    /// Subcommands
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Update forge binary from a URL
+    Update {
+        /// URL to download the new binary from
+        url: String,
+
+        /// Expected SHA256 checksum of the binary
+        checksum: String,
+
+        /// Filename to save in staging (defaults to "forge")
+        #[arg(short, long, default_value = "forge")]
+        filename: String,
+    },
+
+    /// Rollback to the previous version
+    Rollback,
+
+    /// Clean the staging directory
+    CleanStaging,
 }
 
 fn main() -> ExitCode {
+    // CRITICAL: Check for rollback BEFORE parsing CLI or initializing anything
+    // This must be the first thing we do to detect crashes from previous updates
+    #[cfg(feature = "self-update")]
+    {
+        use forge_core::RollbackResult;
+
+        match forge_core::check_and_rollback() {
+            RollbackResult::RolledBack {
+                failed_version,
+                restored_version,
+            } => {
+                let restored = restored_version
+                    .map(|v| format!("v{}", v))
+                    .unwrap_or_else(|| "previous version".to_string());
+                eprintln!(
+                    "⚠️  Update to v{} failed on startup - rolled back to {}",
+                    failed_version, restored
+                );
+                eprintln!("❌ Update failed, rolled back to previous version");
+                eprintln!("Please check ~/.forge/logs/forge.log for error details\n");
+                // Continue running with the rolled-back version
+            }
+            RollbackResult::Failed(err) => {
+                eprintln!("❌ Critical: Rollback failed: {}", err);
+                eprintln!("You may need to manually restore from backup\n");
+                // Continue anyway - better to try running than to abort
+            }
+            RollbackResult::NotNeeded => {
+                // Normal startup, no crash detected
+            }
+        }
+    }
+
+    // Mark that we're starting up (for crash detection on next run)
+    #[cfg(feature = "self-update")]
+    {
+        if let Err(e) = forge_core::mark_startup_in_progress() {
+            eprintln!("Warning: Failed to create startup marker: {}", e);
+            // Don't fail startup just because of this
+        }
+    }
+
     let cli = Cli::parse();
 
     // Initialize logging
@@ -63,6 +131,32 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
+
+    // Check if this is a freshly exec'd process that needs to install itself
+    #[cfg(feature = "self-update")]
+    {
+        match forge_core::check_and_perform_self_install() {
+            Ok(Some(install_path)) => {
+                eprintln!("✅ Update installed successfully to: {}", install_path.display());
+                eprintln!("🚀 Restarting FORGE with new version...\n");
+                info!("Self-install completed to {:?}", install_path);
+                // Continue with normal startup
+            }
+            Ok(None) => {
+                // Normal startup, not an auto-restart
+            }
+            Err(e) => {
+                eprintln!("❌ Self-install failed: {}", e);
+                error!("Self-install error: {}", e);
+                return ExitCode::from(1);
+            }
+        }
+    }
+
+    #[cfg(not(feature = "self-update"))]
+    {
+        // No self-update feature, skip installation check
+    }
 
     // Install panic hook to ensure terminal cleanup
     install_panic_hook();
@@ -82,6 +176,15 @@ fn main() -> ExitCode {
     }
 
     info!("Starting FORGE dashboard");
+
+    // Mark startup as successful (app initialized without crashing)
+    #[cfg(feature = "self-update")]
+    {
+        if let Err(e) = forge_core::mark_startup_successful() {
+            error!("Failed to mark startup as successful: {}", e);
+            // Don't fail just because of this
+        }
+    }
 
     // Log terminal dimensions for debugging
     if let Ok((cols, rows)) = crossterm::terminal::size() {
