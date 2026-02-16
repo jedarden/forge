@@ -1149,7 +1149,7 @@ mod tests {
             title: "Implement task filtering and search".to_string(),
             description: "Add fuzzy search for tasks".to_string(),
             labels: vec!["feature".to_string(), "ui".to_string()],
-            issue_type: Some("task".to_string()),
+            issue_type: "task".to_string(),
             ..Default::default()
         };
 
