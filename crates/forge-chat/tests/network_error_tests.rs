@@ -54,6 +54,26 @@ mod network_error_classification {
     }
 
     #[test]
+    fn test_api_rate_limit_is_retryable() {
+        let err = ChatError::ApiRateLimitExceeded(120);
+        assert!(err.is_retryable(), "API rate limits should be retryable after waiting");
+        assert!(!err.is_network_error(), "API rate limit is not a network error");
+        assert!(err.is_rate_limit(), "Should be classified as rate limit");
+    }
+
+    #[test]
+    fn test_retry_after_secs_extraction() {
+        let err1 = ChatError::RateLimitExceeded(10, 60);
+        assert_eq!(err1.retry_after_secs(), Some(60));
+
+        let err2 = ChatError::ApiRateLimitExceeded(120);
+        assert_eq!(err2.retry_after_secs(), Some(120));
+
+        let err3 = ChatError::ApiError("Not a rate limit".to_string());
+        assert_eq!(err3.retry_after_secs(), None);
+    }
+
+    #[test]
     fn test_api_error_is_not_retryable() {
         let err = ChatError::ApiError("400 Bad Request".to_string());
         assert!(!err.is_retryable(), "Permanent API errors should not be retryable");
@@ -123,11 +143,37 @@ mod http_error_classification {
     use super::*;
 
     #[test]
-    fn test_http_status_429_creates_rate_limit() {
+    fn test_http_status_429_creates_api_rate_limit() {
         let err = ChatError::from_http_status(429, "Too many requests");
         match err {
-            ChatError::RateLimitExceeded(_, _) => { /* expected */ }
-            _ => panic!("Expected RateLimitExceeded, got: {:?}", err),
+            ChatError::ApiRateLimitExceeded(_) => { /* expected */ }
+            _ => panic!("Expected ApiRateLimitExceeded, got: {:?}", err),
+        }
+        assert!(err.is_rate_limit(), "429 should be classified as rate limit");
+        assert!(err.is_retryable(), "429 should be retryable");
+    }
+
+    #[test]
+    fn test_http_status_429_with_retry_after_header() {
+        // Test with integer retry-after (seconds)
+        let err = ChatError::from_http_response(429, "Too many requests", Some("120"));
+        match err {
+            ChatError::ApiRateLimitExceeded(wait) => {
+                assert_eq!(wait, 120, "Should parse retry-after as 120 seconds");
+            }
+            _ => panic!("Expected ApiRateLimitExceeded, got: {:?}", err),
+        }
+    }
+
+    #[test]
+    fn test_http_status_429_without_retry_after() {
+        // Test without retry-after header (should use default)
+        let err = ChatError::from_http_response(429, "Too many requests", None);
+        match err {
+            ChatError::ApiRateLimitExceeded(wait) => {
+                assert_eq!(wait, 60, "Should use default 60 seconds");
+            }
+            _ => panic!("Expected ApiRateLimitExceeded, got: {:?}", err),
         }
     }
 
@@ -227,5 +273,73 @@ mod retry_behavior {
                 err
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod retry_after_parsing {
+    use super::*;
+
+    #[test]
+    fn test_parse_retry_after_integer() {
+        // Test parsing integer seconds
+        assert_eq!(ChatError::parse_retry_after("60"), Some(60));
+        assert_eq!(ChatError::parse_retry_after("120"), Some(120));
+        assert_eq!(ChatError::parse_retry_after("0"), Some(0));
+        assert_eq!(ChatError::parse_retry_after("  90  "), Some(90)); // with whitespace
+    }
+
+    #[test]
+    fn test_parse_retry_after_invalid() {
+        // Test invalid values
+        assert_eq!(ChatError::parse_retry_after("invalid"), None);
+        assert_eq!(ChatError::parse_retry_after(""), None);
+        assert_eq!(ChatError::parse_retry_after("-10"), None); // negative not supported
+    }
+
+    #[test]
+    fn test_parse_retry_after_http_date() {
+        // Test parsing HTTP-date format
+        // Note: This will return a duration from now, so we can only test it's Some
+        let result = ChatError::parse_retry_after("Wed, 21 Oct 2099 07:28:00 GMT");
+        assert!(result.is_some(), "Should parse valid HTTP-date");
+    }
+
+    #[test]
+    fn test_from_http_response_with_various_retry_after() {
+        // Test with integer retry-after
+        let err1 = ChatError::from_http_response(429, "Rate limited", Some("45"));
+        assert_eq!(err1.retry_after_secs(), Some(45));
+
+        // Test without retry-after
+        let err2 = ChatError::from_http_response(429, "Rate limited", None);
+        assert_eq!(err2.retry_after_secs(), Some(60)); // default
+
+        // Test with invalid retry-after (should use default)
+        let err3 = ChatError::from_http_response(429, "Rate limited", Some("invalid"));
+        assert_eq!(err3.retry_after_secs(), Some(60)); // default
+
+        // Test 503 with retry-after
+        let err4 = ChatError::from_http_response(503, "Service unavailable", Some("30"));
+        match err4 {
+            ChatError::ApiTransientError(_) => { /* expected */ }
+            _ => panic!("Expected ApiTransientError for 503"),
+        }
+    }
+
+    #[test]
+    fn test_api_rate_limit_friendly_message() {
+        let err = ChatError::ApiRateLimitExceeded(90);
+        let msg = err.friendly_message();
+        assert!(msg.contains("rate limit"), "Should mention rate limit");
+        assert!(msg.contains("90"), "Should show wait time");
+    }
+
+    #[test]
+    fn test_api_rate_limit_suggested_action() {
+        let err = ChatError::ApiRateLimitExceeded(120);
+        let action = err.suggested_action();
+        assert!(action.contains("rate limit") || action.contains("retry"),
+                "Should mention rate limit or retry");
     }
 }
