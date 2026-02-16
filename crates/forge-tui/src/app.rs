@@ -52,7 +52,10 @@ use std::time::{Duration, Instant};
 use crossterm::event::{self, Event, KeyEvent};
 use forge_chat::{ChatBackend, ChatConfig, ChatResponse};
 use forge_core::types::WorkerTier;
-use forge_worker::{LaunchConfig, SpawnRequest, WorkerLauncher, discovery::DiscoveredWorker};
+use forge_worker::{
+    CrashRecoveryManager, LaunchConfig, SpawnRequest, WorkerLauncher,
+    discovery::DiscoveredWorker,
+};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
@@ -219,6 +222,8 @@ pub struct App {
     last_failed_query: Option<String>,
     /// Whether retry is available (set when network error occurs)
     retry_available: bool,
+    /// Crash recovery manager for handling worker crashes
+    crash_recovery: CrashRecoveryManager,
 }
 
 /// Temporary storage for chat exchange data during streaming display.
@@ -546,6 +551,7 @@ impl App {
             last_successful_data_fetch: None,
             last_failed_query: None,
             retry_available: false,
+            crash_recovery: CrashRecoveryManager::new(),
         }
     }
 
@@ -618,6 +624,7 @@ impl App {
             last_successful_data_fetch: None,
             last_failed_query: None,
             retry_available: false,
+            crash_recovery: CrashRecoveryManager::new(),
         }
     }
 
