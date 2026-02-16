@@ -19,7 +19,7 @@ const SCHEMA_VERSION: i32 = 3;
 const DB_LOCK_MAX_RETRIES: u32 = 5;
 
 /// Initial delay for database lock retry (in milliseconds).
-const DB_LOCK_INITIAL_DELAY_MS: u64 = 50;
+const DB_LOCK_INITIAL_DELAY_MS: u64 = 100;
 
 /// Maximum delay for database lock retry.
 const DB_LOCK_MAX_DELAY: Duration = Duration::from_secs(5);
@@ -497,16 +497,18 @@ impl CostDatabase {
             return Ok(0);
         }
 
-        let mut conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("insert_api_calls", || {
+            let mut conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let tx = conn.transaction()?;
-        let count = self.insert_calls_in_tx(&tx, calls)?;
-        tx.commit()?;
+            let tx = conn.transaction()?;
+            let count = self.insert_calls_in_tx(&tx, calls)?;
+            tx.commit()?;
 
-        debug!(count, "Inserted API calls");
-        Ok(count)
+            debug!(count, "Inserted API calls");
+            Ok(count)
+        })
     }
 
     /// Insert calls within a transaction.
@@ -639,75 +641,79 @@ impl CostDatabase {
 
     /// Get daily costs from the aggregation table.
     pub fn get_daily_cost(&self, date: NaiveDate) -> Result<Option<DailyCost>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_daily_cost", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let date_str = date.format("%Y-%m-%d").to_string();
+            let date_str = date.format("%Y-%m-%d").to_string();
 
-        // Get daily aggregate
-        let daily_result: Option<(f64, i64, i64)> = conn
-            .query_row(
-                "SELECT total_cost_usd, call_count,
-                        total_input_tokens + total_output_tokens +
-                        total_cache_creation_tokens + total_cache_read_tokens
-                 FROM daily_costs WHERE date = ?1",
-                params![date_str],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .ok();
+            // Get daily aggregate
+            let daily_result: Option<(f64, i64, i64)> = conn
+                .query_row(
+                    "SELECT total_cost_usd, call_count,
+                            total_input_tokens + total_output_tokens +
+                            total_cache_creation_tokens + total_cache_read_tokens
+                     FROM daily_costs WHERE date = ?1",
+                    params![date_str],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .ok();
 
-        let (total_cost_usd, call_count, total_tokens) = match daily_result {
-            Some(r) => r,
-            None => return Ok(None),
-        };
+            let (total_cost_usd, call_count, total_tokens) = match daily_result {
+                Some(r) => r,
+                None => return Ok(None),
+            };
 
-        // Get model breakdown
-        let mut stmt = conn.prepare(
-            "SELECT model, cost_usd, call_count, input_tokens, output_tokens,
-                    cache_creation_tokens, cache_read_tokens
-             FROM model_costs WHERE date = ?1",
-        )?;
+            // Get model breakdown
+            let mut stmt = conn.prepare(
+                "SELECT model, cost_usd, call_count, input_tokens, output_tokens,
+                        cache_creation_tokens, cache_read_tokens
+                 FROM model_costs WHERE date = ?1",
+            )?;
 
-        let by_model: Vec<CostBreakdown> = stmt
-            .query_map(params![date_str], |row| {
-                Ok(CostBreakdown {
-                    model: row.get(0)?,
-                    total_cost_usd: row.get(1)?,
-                    call_count: row.get(2)?,
-                    input_tokens: row.get(3)?,
-                    output_tokens: row.get(4)?,
-                    cache_creation_tokens: row.get(5)?,
-                    cache_read_tokens: row.get(6)?,
-                })
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
+            let by_model: Vec<CostBreakdown> = stmt
+                .query_map(params![date_str], |row| {
+                    Ok(CostBreakdown {
+                        model: row.get(0)?,
+                        total_cost_usd: row.get(1)?,
+                        call_count: row.get(2)?,
+                        input_tokens: row.get(3)?,
+                        output_tokens: row.get(4)?,
+                        cache_creation_tokens: row.get(5)?,
+                        cache_read_tokens: row.get(6)?,
+                    })
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
 
-        Ok(Some(DailyCost {
-            date,
-            total_cost_usd,
-            call_count,
-            total_tokens,
-            by_model,
-        }))
+            Ok(Some(DailyCost {
+                date,
+                total_cost_usd,
+                call_count,
+                total_tokens,
+                by_model,
+            }))
+        })
     }
 
     /// Get the last processed timestamp for a worker.
     pub fn get_last_timestamp(&self, worker_id: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_last_timestamp", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let result = conn
-            .query_row(
-                "SELECT MAX(timestamp) FROM api_calls WHERE worker_id = ?1",
-                params![worker_id],
-                |row| row.get(0),
-            )
-            .ok();
+            let result = conn
+                .query_row(
+                    "SELECT MAX(timestamp) FROM api_calls WHERE worker_id = ?1",
+                    params![worker_id],
+                    |row| row.get(0),
+                )
+                .ok();
 
-        Ok(result)
+            Ok(result)
+        })
     }
 
     /// Check if an API call already exists (for deduplication).
@@ -717,18 +723,20 @@ impl CostDatabase {
         timestamp: &str,
         session_id: Option<&str>,
     ) -> Result<bool> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("exists", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM api_calls
-             WHERE worker_id = ?1 AND timestamp = ?2 AND session_id IS ?3",
-            params![worker_id, timestamp, session_id],
-            |row| row.get(0),
-        )?;
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM api_calls
+                 WHERE worker_id = ?1 AND timestamp = ?2 AND session_id IS ?3",
+                params![worker_id, timestamp, session_id],
+                |row| row.get(0),
+            )?;
 
-        Ok(count > 0)
+            Ok(count > 0)
+        })
     }
 
     /// Get raw database connection for advanced queries.
@@ -740,149 +748,161 @@ impl CostDatabase {
 
     /// Insert or update a subscription.
     pub fn upsert_subscription(&self, subscription: &Subscription) -> Result<i64> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("upsert_subscription", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let subscription_type = match subscription.subscription_type {
-            SubscriptionType::FixedQuota => "fixed_quota",
-            SubscriptionType::Unlimited => "unlimited",
-            SubscriptionType::PayPerUse => "pay_per_use",
-        };
+            let subscription_type = match subscription.subscription_type {
+                SubscriptionType::FixedQuota => "fixed_quota",
+                SubscriptionType::Unlimited => "unlimited",
+                SubscriptionType::PayPerUse => "pay_per_use",
+            };
 
-        conn.execute(
-            "INSERT INTO subscriptions
-             (name, model, subscription_type, monthly_cost, quota_limit, quota_used,
-              billing_start, billing_end, active, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-             ON CONFLICT(name) DO UPDATE SET
-                model = excluded.model,
-                subscription_type = excluded.subscription_type,
-                monthly_cost = excluded.monthly_cost,
-                quota_limit = excluded.quota_limit,
-                quota_used = excluded.quota_used,
-                billing_start = excluded.billing_start,
-                billing_end = excluded.billing_end,
-                active = excluded.active,
-                updated_at = excluded.updated_at",
-            params![
-                subscription.name,
-                subscription.model,
-                subscription_type,
-                subscription.monthly_cost,
-                subscription.quota_limit,
-                subscription.quota_used,
-                subscription.billing_start.to_rfc3339(),
-                subscription.billing_end.to_rfc3339(),
-                subscription.active,
-                Utc::now().to_rfc3339(),
-            ],
-        )?;
+            conn.execute(
+                "INSERT INTO subscriptions
+                 (name, model, subscription_type, monthly_cost, quota_limit, quota_used,
+                  billing_start, billing_end, active, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                 ON CONFLICT(name) DO UPDATE SET
+                    model = excluded.model,
+                    subscription_type = excluded.subscription_type,
+                    monthly_cost = excluded.monthly_cost,
+                    quota_limit = excluded.quota_limit,
+                    quota_used = excluded.quota_used,
+                    billing_start = excluded.billing_start,
+                    billing_end = excluded.billing_end,
+                    active = excluded.active,
+                    updated_at = excluded.updated_at",
+                params![
+                    subscription.name,
+                    subscription.model,
+                    subscription_type,
+                    subscription.monthly_cost,
+                    subscription.quota_limit,
+                    subscription.quota_used,
+                    subscription.billing_start.to_rfc3339(),
+                    subscription.billing_end.to_rfc3339(),
+                    subscription.active,
+                    Utc::now().to_rfc3339(),
+                ],
+            )?;
 
-        let id = conn.last_insert_rowid();
-        debug!(id, name = %subscription.name, "Upserted subscription");
-        Ok(id)
+            let id = conn.last_insert_rowid();
+            debug!(id, name = %subscription.name, "Upserted subscription");
+            Ok(id)
+        })
     }
 
     /// Get a subscription by name.
     pub fn get_subscription(&self, name: &str) -> Result<Option<Subscription>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_subscription", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let result = conn.query_row(
-            "SELECT id, name, model, subscription_type, monthly_cost, quota_limit,
-                    quota_used, billing_start, billing_end, active, updated_at
-             FROM subscriptions WHERE name = ?1",
-            params![name],
-            Self::row_to_subscription,
-        );
+            let result = conn.query_row(
+                "SELECT id, name, model, subscription_type, monthly_cost, quota_limit,
+                        quota_used, billing_start, billing_end, active, updated_at
+                 FROM subscriptions WHERE name = ?1",
+                params![name],
+                Self::row_to_subscription,
+            );
 
-        match result {
-            Ok(sub) => Ok(Some(sub)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(CostError::Database(e)),
-        }
+            match result {
+                Ok(sub) => Ok(Some(sub)),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                Err(e) => Err(CostError::Database(e)),
+            }
+        })
     }
 
     /// Get all active subscriptions.
     pub fn get_active_subscriptions(&self) -> Result<Vec<Subscription>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_active_subscriptions", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let mut stmt = conn.prepare(
-            "SELECT id, name, model, subscription_type, monthly_cost, quota_limit,
-                    quota_used, billing_start, billing_end, active, updated_at
-             FROM subscriptions WHERE active = 1
-             ORDER BY name",
-        )?;
+            let mut stmt = conn.prepare(
+                "SELECT id, name, model, subscription_type, monthly_cost, quota_limit,
+                        quota_used, billing_start, billing_end, active, updated_at
+                 FROM subscriptions WHERE active = 1
+                 ORDER BY name",
+            )?;
 
-        let subscriptions: Vec<Subscription> = stmt
-            .query_map([], Self::row_to_subscription)?
-            .filter_map(|r| r.ok())
-            .collect();
+            let subscriptions: Vec<Subscription> = stmt
+                .query_map([], Self::row_to_subscription)?
+                .filter_map(|r| r.ok())
+                .collect();
 
-        Ok(subscriptions)
+            Ok(subscriptions)
+        })
     }
 
     /// Get all subscriptions (including inactive).
     pub fn get_all_subscriptions(&self) -> Result<Vec<Subscription>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_all_subscriptions", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let mut stmt = conn.prepare(
-            "SELECT id, name, model, subscription_type, monthly_cost, quota_limit,
-                    quota_used, billing_start, billing_end, active, updated_at
-             FROM subscriptions ORDER BY active DESC, name",
-        )?;
+            let mut stmt = conn.prepare(
+                "SELECT id, name, model, subscription_type, monthly_cost, quota_limit,
+                        quota_used, billing_start, billing_end, active, updated_at
+                 FROM subscriptions ORDER BY active DESC, name",
+            )?;
 
-        let subscriptions: Vec<Subscription> = stmt
-            .query_map([], Self::row_to_subscription)?
-            .filter_map(|r| r.ok())
-            .collect();
+            let subscriptions: Vec<Subscription> = stmt
+                .query_map([], Self::row_to_subscription)?
+                .filter_map(|r| r.ok())
+                .collect();
 
-        Ok(subscriptions)
+            Ok(subscriptions)
+        })
     }
 
     /// Update subscription quota usage.
     pub fn update_subscription_usage(&self, name: &str, quota_used: i64) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("update_subscription_usage", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        conn.execute(
-            "UPDATE subscriptions SET quota_used = ?1, updated_at = ?2 WHERE name = ?3",
-            params![quota_used, Utc::now().to_rfc3339(), name],
-        )?;
+            conn.execute(
+                "UPDATE subscriptions SET quota_used = ?1, updated_at = ?2 WHERE name = ?3",
+                params![quota_used, Utc::now().to_rfc3339(), name],
+            )?;
 
-        debug!(name, quota_used, "Updated subscription usage");
-        Ok(())
+            debug!(name, quota_used, "Updated subscription usage");
+            Ok(())
+        })
     }
 
     /// Increment subscription quota usage.
     pub fn increment_subscription_usage(&self, name: &str, units: i64) -> Result<i64> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("increment_subscription_usage", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        conn.execute(
-            "UPDATE subscriptions
-             SET quota_used = quota_used + ?1, updated_at = ?2
-             WHERE name = ?3",
-            params![units, Utc::now().to_rfc3339(), name],
-        )?;
+            conn.execute(
+                "UPDATE subscriptions
+                 SET quota_used = quota_used + ?1, updated_at = ?2
+                 WHERE name = ?3",
+                params![units, Utc::now().to_rfc3339(), name],
+            )?;
 
-        // Get the new quota_used value
-        let new_usage: i64 = conn.query_row(
-            "SELECT quota_used FROM subscriptions WHERE name = ?1",
-            params![name],
-            |row| row.get(0),
-        )?;
+            // Get the new quota_used value
+            let new_usage: i64 = conn.query_row(
+                "SELECT quota_used FROM subscriptions WHERE name = ?1",
+                params![name],
+                |row| row.get(0),
+            )?;
 
-        debug!(name, units, new_usage, "Incremented subscription usage");
-        Ok(new_usage)
+            debug!(name, units, new_usage, "Incremented subscription usage");
+            Ok(new_usage)
+        })
     }
 
     /// Reset subscription billing period.
@@ -914,32 +934,34 @@ impl CostDatabase {
 
     /// Record subscription usage.
     pub fn record_subscription_usage(&self, record: &SubscriptionUsageRecord) -> Result<i64> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("record_subscription_usage", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        conn.execute(
-            "INSERT INTO subscription_usage
-             (subscription_id, timestamp, units, worker_id, bead_id, api_call_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                record.subscription_id,
-                record.timestamp.to_rfc3339(),
-                record.units,
-                record.worker_id,
-                record.bead_id,
-                record.api_call_id,
-            ],
-        )?;
+            conn.execute(
+                "INSERT INTO subscription_usage
+                 (subscription_id, timestamp, units, worker_id, bead_id, api_call_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    record.subscription_id,
+                    record.timestamp.to_rfc3339(),
+                    record.units,
+                    record.worker_id,
+                    record.bead_id,
+                    record.api_call_id,
+                ],
+            )?;
 
-        let id = conn.last_insert_rowid();
-        debug!(
-            id,
-            subscription_id = record.subscription_id,
-            units = record.units,
-            "Recorded usage"
-        );
-        Ok(id)
+            let id = conn.last_insert_rowid();
+            debug!(
+                id,
+                subscription_id = record.subscription_id,
+                units = record.units,
+                "Recorded usage"
+            );
+            Ok(id)
+        })
     }
 
     /// Get usage records for a subscription within a date range.
@@ -949,82 +971,88 @@ impl CostDatabase {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> Result<Vec<SubscriptionUsageRecord>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_subscription_usage", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let mut stmt = conn.prepare(
-            "SELECT id, subscription_id, timestamp, units, worker_id, bead_id, api_call_id
-             FROM subscription_usage
-             WHERE subscription_id = ?1 AND timestamp BETWEEN ?2 AND ?3
-             ORDER BY timestamp DESC",
-        )?;
+            let mut stmt = conn.prepare(
+                "SELECT id, subscription_id, timestamp, units, worker_id, bead_id, api_call_id
+                 FROM subscription_usage
+                 WHERE subscription_id = ?1 AND timestamp BETWEEN ?2 AND ?3
+                 ORDER BY timestamp DESC",
+            )?;
 
-        let records: Vec<SubscriptionUsageRecord> = stmt
-            .query_map(
-                params![subscription_id, start.to_rfc3339(), end.to_rfc3339()],
-                |row| {
-                    let timestamp_str: String = row.get(2)?;
-                    let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now());
+            let records: Vec<SubscriptionUsageRecord> = stmt
+                .query_map(
+                    params![subscription_id, start.to_rfc3339(), end.to_rfc3339()],
+                    |row| {
+                        let timestamp_str: String = row.get(2)?;
+                        let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)
+                            .map(|dt| dt.with_timezone(&Utc))
+                            .unwrap_or_else(|_| Utc::now());
 
-                    Ok(SubscriptionUsageRecord {
-                        id: Some(row.get(0)?),
-                        subscription_id: row.get(1)?,
-                        timestamp,
-                        units: row.get(3)?,
-                        worker_id: row.get(4)?,
-                        bead_id: row.get(5)?,
-                        api_call_id: row.get(6)?,
-                    })
-                },
-            )?
-            .filter_map(|r| r.ok())
-            .collect();
+                        Ok(SubscriptionUsageRecord {
+                            id: Some(row.get(0)?),
+                            subscription_id: row.get(1)?,
+                            timestamp,
+                            units: row.get(3)?,
+                            worker_id: row.get(4)?,
+                            bead_id: row.get(5)?,
+                            api_call_id: row.get(6)?,
+                        })
+                    },
+                )?
+                .filter_map(|r| r.ok())
+                .collect();
 
-        Ok(records)
+            Ok(records)
+        })
     }
 
     /// Get total usage for a subscription in current billing period.
     pub fn get_subscription_period_usage(&self, subscription_id: i64) -> Result<i64> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_subscription_period_usage", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        // Get the billing period from subscriptions table
-        let (billing_start, billing_end): (String, String) = conn.query_row(
-            "SELECT billing_start, billing_end FROM subscriptions WHERE id = ?1",
-            params![subscription_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
+            // Get the billing period from subscriptions table
+            let (billing_start, billing_end): (String, String) = conn.query_row(
+                "SELECT billing_start, billing_end FROM subscriptions WHERE id = ?1",
+                params![subscription_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
 
-        // Sum usage in the billing period
-        let total: i64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(units), 0) FROM subscription_usage
-                 WHERE subscription_id = ?1 AND timestamp BETWEEN ?2 AND ?3",
-                params![subscription_id, billing_start, billing_end],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
+            // Sum usage in the billing period
+            let total: i64 = conn
+                .query_row(
+                    "SELECT COALESCE(SUM(units), 0) FROM subscription_usage
+                     WHERE subscription_id = ?1 AND timestamp BETWEEN ?2 AND ?3",
+                    params![subscription_id, billing_start, billing_end],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
 
-        Ok(total)
+            Ok(total)
+        })
     }
 
     /// Delete a subscription (soft delete - sets active = 0).
     pub fn deactivate_subscription(&self, name: &str) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("deactivate_subscription", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        conn.execute(
-            "UPDATE subscriptions SET active = 0, updated_at = ?1 WHERE name = ?2",
-            params![Utc::now().to_rfc3339(), name],
-        )?;
+            conn.execute(
+                "UPDATE subscriptions SET active = 0, updated_at = ?1 WHERE name = ?2",
+                params![Utc::now().to_rfc3339(), name],
+            )?;
 
-        info!(name, "Deactivated subscription");
-        Ok(())
+            info!(name, "Deactivated subscription");
+            Ok(())
+        })
     }
 
     /// Helper to convert a database row to a Subscription.
@@ -1079,29 +1107,31 @@ impl CostDatabase {
         tokens_used: i64,
         error_message: Option<&str>,
     ) -> Result<i64> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("record_task_event", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        conn.execute(
-            "INSERT INTO task_events
-             (bead_id, event_type, timestamp, worker_id, model, cost_usd, tokens_used, error_message)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
-                bead_id,
-                event_type,
-                Utc::now().to_rfc3339(),
-                worker_id,
-                model,
-                cost_usd,
-                tokens_used,
-                error_message,
-            ],
-        )?;
+            conn.execute(
+                "INSERT INTO task_events
+                 (bead_id, event_type, timestamp, worker_id, model, cost_usd, tokens_used, error_message)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    bead_id,
+                    event_type,
+                    Utc::now().to_rfc3339(),
+                    worker_id,
+                    model,
+                    cost_usd,
+                    tokens_used,
+                    error_message,
+                ],
+            )?;
 
-        let id = conn.last_insert_rowid();
-        debug!(id, bead_id, event_type, "Recorded task event");
-        Ok(id)
+            let id = conn.last_insert_rowid();
+            debug!(id, bead_id, event_type, "Recorded task event");
+            Ok(id)
+        })
     }
 
     /// Aggregate hourly statistics from api_calls table.
@@ -1109,84 +1139,103 @@ impl CostDatabase {
     /// This should be called periodically (e.g., every 10 minutes) to update
     /// the hourly_stats table with aggregated data.
     pub fn aggregate_hourly_stats(&self, hour: DateTime<Utc>) -> Result<HourlyStat> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("aggregate_hourly_stats", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        // Truncate to hour
-        let hour_str = hour.format("%Y-%m-%dT%H:00:00Z").to_string();
-        let hour_start = format!("{}:00:00", hour.format("%Y-%m-%dT%H"));
-        let hour_end = format!("{}:59:59", hour.format("%Y-%m-%dT%H"));
+            // Truncate to hour
+            let hour_str = hour.format("%Y-%m-%dT%H:00:00Z").to_string();
+            let hour_start = format!("{}:00:00", hour.format("%Y-%m-%dT%H"));
+            let hour_end = format!("{}:59:59", hour.format("%Y-%m-%dT%H"));
 
-        // Get aggregated API call stats for this hour
-        let (total_calls, total_cost_usd, total_input_tokens, total_output_tokens): (
-            i64,
-            f64,
-            i64,
-            i64,
-        ) = conn
-            .query_row(
-                "SELECT COUNT(*),
-                        COALESCE(SUM(cost_usd), 0),
-                        COALESCE(SUM(input_tokens), 0),
-                        COALESCE(SUM(output_tokens), 0)
-                 FROM api_calls
-                 WHERE timestamp BETWEEN ?1 AND ?2",
-                params![hour_start, hour_end],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )
-            .unwrap_or((0, 0.0, 0, 0));
+            // Get aggregated API call stats for this hour
+            let (total_calls, total_cost_usd, total_input_tokens, total_output_tokens): (
+                i64,
+                f64,
+                i64,
+                i64,
+            ) = conn
+                .query_row(
+                    "SELECT COUNT(*),
+                            COALESCE(SUM(cost_usd), 0),
+                            COALESCE(SUM(input_tokens), 0),
+                            COALESCE(SUM(output_tokens), 0)
+                     FROM api_calls
+                     WHERE timestamp BETWEEN ?1 AND ?2",
+                    params![hour_start, hour_end],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .unwrap_or((0, 0.0, 0, 0));
 
-        // Get task events for this hour
-        let (tasks_started, tasks_completed, tasks_failed): (i64, i64, i64) = conn
-            .query_row(
-                "SELECT
-                    COALESCE(SUM(CASE WHEN event_type = 'started' THEN 1 ELSE 0 END), 0),
-                    COALESCE(SUM(CASE WHEN event_type = 'completed' THEN 1 ELSE 0 END), 0),
-                    COALESCE(SUM(CASE WHEN event_type = 'failed' THEN 1 ELSE 0 END), 0)
-                 FROM task_events
-                 WHERE timestamp BETWEEN ?1 AND ?2",
-                params![hour_start, hour_end],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap_or((0, 0, 0));
+            // Get task events for this hour
+            let (tasks_started, tasks_completed, tasks_failed): (i64, i64, i64) = conn
+                .query_row(
+                    "SELECT
+                        COALESCE(SUM(CASE WHEN event_type = 'started' THEN 1 ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN event_type = 'completed' THEN 1 ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN event_type = 'failed' THEN 1 ELSE 0 END), 0)
+                     FROM task_events
+                     WHERE timestamp BETWEEN ?1 AND ?2",
+                    params![hour_start, hour_end],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap_or((0, 0, 0));
 
-        // Get unique workers count
-        let active_workers: i64 = conn
-            .query_row(
-                "SELECT COUNT(DISTINCT worker_id)
-                 FROM api_calls
-                 WHERE timestamp BETWEEN ?1 AND ?2",
-                params![hour_start, hour_end],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
+            // Get unique workers count
+            let active_workers: i64 = conn
+                .query_row(
+                    "SELECT COUNT(DISTINCT worker_id)
+                     FROM api_calls
+                     WHERE timestamp BETWEEN ?1 AND ?2",
+                    params![hour_start, hour_end],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
 
-        // Calculate tokens per minute
-        let tokens_per_minute = (total_input_tokens + total_output_tokens) as f64 / 60.0;
+            // Calculate tokens per minute
+            let tokens_per_minute = (total_input_tokens + total_output_tokens) as f64 / 60.0;
 
-        let now = Utc::now().to_rfc3339();
+            let now = Utc::now().to_rfc3339();
 
-        // Upsert hourly stats
-        conn.execute(
-            "INSERT INTO hourly_stats
-             (hour, total_calls, total_cost_usd, total_input_tokens, total_output_tokens,
-              tasks_started, tasks_completed, tasks_failed, active_workers,
-              tokens_per_minute, last_updated)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-             ON CONFLICT(hour) DO UPDATE SET
-                total_calls = excluded.total_calls,
-                total_cost_usd = excluded.total_cost_usd,
-                total_input_tokens = excluded.total_input_tokens,
-                total_output_tokens = excluded.total_output_tokens,
-                tasks_started = excluded.tasks_started,
-                tasks_completed = excluded.tasks_completed,
-                tasks_failed = excluded.tasks_failed,
-                active_workers = excluded.active_workers,
-                tokens_per_minute = excluded.tokens_per_minute,
-                last_updated = excluded.last_updated",
-            params![
-                hour_str,
+            // Upsert hourly stats
+            conn.execute(
+                "INSERT INTO hourly_stats
+                 (hour, total_calls, total_cost_usd, total_input_tokens, total_output_tokens,
+                  tasks_started, tasks_completed, tasks_failed, active_workers,
+                  tokens_per_minute, last_updated)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 ON CONFLICT(hour) DO UPDATE SET
+                    total_calls = excluded.total_calls,
+                    total_cost_usd = excluded.total_cost_usd,
+                    total_input_tokens = excluded.total_input_tokens,
+                    total_output_tokens = excluded.total_output_tokens,
+                    tasks_started = excluded.tasks_started,
+                    tasks_completed = excluded.tasks_completed,
+                    tasks_failed = excluded.tasks_failed,
+                    active_workers = excluded.active_workers,
+                    tokens_per_minute = excluded.tokens_per_minute,
+                    last_updated = excluded.last_updated",
+                params![
+                    hour_str,
+                    total_calls,
+                    total_cost_usd,
+                    total_input_tokens,
+                    total_output_tokens,
+                    tasks_started,
+                    tasks_completed,
+                    tasks_failed,
+                    active_workers,
+                    tokens_per_minute,
+                    now,
+                ],
+            )?;
+
+            debug!(hour = %hour_str, total_calls, "Aggregated hourly stats");
+
+            Ok(HourlyStat {
+                id: None,
+                hour,
                 total_calls,
                 total_cost_usd,
                 total_input_tokens,
@@ -1195,144 +1244,150 @@ impl CostDatabase {
                 tasks_completed,
                 tasks_failed,
                 active_workers,
+                avg_response_time_ms: None,
                 tokens_per_minute,
-                now,
-            ],
-        )?;
-
-        debug!(hour = %hour_str, total_calls, "Aggregated hourly stats");
-
-        Ok(HourlyStat {
-            id: None,
-            hour,
-            total_calls,
-            total_cost_usd,
-            total_input_tokens,
-            total_output_tokens,
-            tasks_started,
-            tasks_completed,
-            tasks_failed,
-            active_workers,
-            avg_response_time_ms: None,
-            tokens_per_minute,
-            last_updated: Utc::now(),
+                last_updated: Utc::now(),
+            })
         })
     }
 
     /// Aggregate daily statistics from hourly_stats and api_calls tables.
     pub fn aggregate_daily_stats(&self, date: NaiveDate) -> Result<DailyStat> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("aggregate_daily_stats", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let date_str = date.format("%Y-%m-%d").to_string();
-        let date_start = format!("{}T00:00:00", date_str);
-        let date_end = format!("{}T23:59:59", date_str);
+            let date_str = date.format("%Y-%m-%d").to_string();
+            let date_start = format!("{}T00:00:00", date_str);
+            let date_end = format!("{}T23:59:59", date_str);
 
-        // Get aggregated API call stats
-        let (
-            total_calls,
-            total_cost_usd,
-            total_input_tokens,
-            total_output_tokens,
-            total_cache_creation_tokens,
-            total_cache_read_tokens,
-        ): (i64, f64, i64, i64, i64, i64) = conn
-            .query_row(
-                "SELECT COUNT(*),
-                        COALESCE(SUM(cost_usd), 0),
-                        COALESCE(SUM(input_tokens), 0),
-                        COALESCE(SUM(output_tokens), 0),
-                        COALESCE(SUM(cache_creation_tokens), 0),
-                        COALESCE(SUM(cache_read_tokens), 0)
-                 FROM api_calls
-                 WHERE timestamp BETWEEN ?1 AND ?2",
-                params![date_start, date_end],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                    ))
-                },
-            )
-            .unwrap_or((0, 0.0, 0, 0, 0, 0));
+            // Get aggregated API call stats
+            let (
+                total_calls,
+                total_cost_usd,
+                total_input_tokens,
+                total_output_tokens,
+                total_cache_creation_tokens,
+                total_cache_read_tokens,
+            ): (i64, f64, i64, i64, i64, i64) = conn
+                .query_row(
+                    "SELECT COUNT(*),
+                            COALESCE(SUM(cost_usd), 0),
+                            COALESCE(SUM(input_tokens), 0),
+                            COALESCE(SUM(output_tokens), 0),
+                            COALESCE(SUM(cache_creation_tokens), 0),
+                            COALESCE(SUM(cache_read_tokens), 0)
+                     FROM api_calls
+                     WHERE timestamp BETWEEN ?1 AND ?2",
+                    params![date_start, date_end],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                        ))
+                    },
+                )
+                .unwrap_or((0, 0.0, 0, 0, 0, 0));
 
-        // Get task events
-        let (tasks_started, tasks_completed, tasks_failed): (i64, i64, i64) = conn
-            .query_row(
-                "SELECT
-                    COALESCE(SUM(CASE WHEN event_type = 'started' THEN 1 ELSE 0 END), 0),
-                    COALESCE(SUM(CASE WHEN event_type = 'completed' THEN 1 ELSE 0 END), 0),
-                    COALESCE(SUM(CASE WHEN event_type = 'failed' THEN 1 ELSE 0 END), 0)
-                 FROM task_events
-                 WHERE timestamp BETWEEN ?1 AND ?2",
-                params![date_start, date_end],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap_or((0, 0, 0));
+            // Get task events
+            let (tasks_started, tasks_completed, tasks_failed): (i64, i64, i64) = conn
+                .query_row(
+                    "SELECT
+                        COALESCE(SUM(CASE WHEN event_type = 'started' THEN 1 ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN event_type = 'completed' THEN 1 ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN event_type = 'failed' THEN 1 ELSE 0 END), 0)
+                     FROM task_events
+                     WHERE timestamp BETWEEN ?1 AND ?2",
+                    params![date_start, date_end],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap_or((0, 0, 0));
 
-        // Get peak workers from hourly stats
-        let peak_workers: i64 = conn
-            .query_row(
-                "SELECT COALESCE(MAX(active_workers), 0)
-                 FROM hourly_stats
-                 WHERE hour LIKE ?1 || '%'",
-                params![date_str],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
+            // Get peak workers from hourly stats
+            let peak_workers: i64 = conn
+                .query_row(
+                    "SELECT COALESCE(MAX(active_workers), 0)
+                     FROM hourly_stats
+                     WHERE hour LIKE ?1 || '%'",
+                    params![date_str],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
 
-        // Calculate derived metrics
-        let total_tokens = total_input_tokens
-            + total_output_tokens
-            + total_cache_creation_tokens
-            + total_cache_read_tokens;
-        let avg_tokens_per_minute = total_tokens as f64 / 1440.0; // 24 * 60 minutes
+            // Calculate derived metrics
+            let total_tokens = total_input_tokens
+                + total_output_tokens
+                + total_cache_creation_tokens
+                + total_cache_read_tokens;
+            let avg_tokens_per_minute = total_tokens as f64 / 1440.0; // 24 * 60 minutes
 
-        let total_tasks = tasks_completed + tasks_failed;
-        let success_rate = if total_tasks == 0 {
-            1.0
-        } else {
-            tasks_completed as f64 / total_tasks as f64
-        };
+            let total_tasks = tasks_completed + tasks_failed;
+            let success_rate = if total_tasks == 0 {
+                1.0
+            } else {
+                tasks_completed as f64 / total_tasks as f64
+            };
 
-        let avg_cost_per_task = if tasks_completed == 0 {
-            0.0
-        } else {
-            total_cost_usd / tasks_completed as f64
-        };
+            let avg_cost_per_task = if tasks_completed == 0 {
+                0.0
+            } else {
+                total_cost_usd / tasks_completed as f64
+            };
 
-        let now = Utc::now().to_rfc3339();
+            let now = Utc::now().to_rfc3339();
 
-        // Upsert daily stats
-        conn.execute(
-            "INSERT INTO daily_stats
-             (date, total_calls, total_cost_usd, total_input_tokens, total_output_tokens,
-              total_cache_creation_tokens, total_cache_read_tokens,
-              tasks_started, tasks_completed, tasks_failed, peak_workers,
-              avg_tokens_per_minute, success_rate, avg_cost_per_task, last_updated)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
-             ON CONFLICT(date) DO UPDATE SET
-                total_calls = excluded.total_calls,
-                total_cost_usd = excluded.total_cost_usd,
-                total_input_tokens = excluded.total_input_tokens,
-                total_output_tokens = excluded.total_output_tokens,
-                total_cache_creation_tokens = excluded.total_cache_creation_tokens,
-                total_cache_read_tokens = excluded.total_cache_read_tokens,
-                tasks_started = excluded.tasks_started,
-                tasks_completed = excluded.tasks_completed,
-                tasks_failed = excluded.tasks_failed,
-                peak_workers = excluded.peak_workers,
-                avg_tokens_per_minute = excluded.avg_tokens_per_minute,
-                success_rate = excluded.success_rate,
-                avg_cost_per_task = excluded.avg_cost_per_task,
-                last_updated = excluded.last_updated",
-            params![
-                date_str,
+            // Upsert daily stats
+            conn.execute(
+                "INSERT INTO daily_stats
+                 (date, total_calls, total_cost_usd, total_input_tokens, total_output_tokens,
+                  total_cache_creation_tokens, total_cache_read_tokens,
+                  tasks_started, tasks_completed, tasks_failed, peak_workers,
+                  avg_tokens_per_minute, success_rate, avg_cost_per_task, last_updated)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                 ON CONFLICT(date) DO UPDATE SET
+                    total_calls = excluded.total_calls,
+                    total_cost_usd = excluded.total_cost_usd,
+                    total_input_tokens = excluded.total_input_tokens,
+                    total_output_tokens = excluded.total_output_tokens,
+                    total_cache_creation_tokens = excluded.total_cache_creation_tokens,
+                    total_cache_read_tokens = excluded.total_cache_read_tokens,
+                    tasks_started = excluded.tasks_started,
+                    tasks_completed = excluded.tasks_completed,
+                    tasks_failed = excluded.tasks_failed,
+                    peak_workers = excluded.peak_workers,
+                    avg_tokens_per_minute = excluded.avg_tokens_per_minute,
+                    success_rate = excluded.success_rate,
+                    avg_cost_per_task = excluded.avg_cost_per_task,
+                    last_updated = excluded.last_updated",
+                params![
+                    date_str,
+                    total_calls,
+                    total_cost_usd,
+                    total_input_tokens,
+                    total_output_tokens,
+                    total_cache_creation_tokens,
+                    total_cache_read_tokens,
+                    tasks_started,
+                    tasks_completed,
+                    tasks_failed,
+                    peak_workers,
+                    avg_tokens_per_minute,
+                    success_rate,
+                    avg_cost_per_task,
+                    now,
+                ],
+            )?;
+
+            debug!(date = %date_str, total_calls, "Aggregated daily stats");
+
+            Ok(DailyStat {
+                id: None,
+                date,
                 total_calls,
                 total_cost_usd,
                 total_input_tokens,
@@ -1346,246 +1401,229 @@ impl CostDatabase {
                 avg_tokens_per_minute,
                 success_rate,
                 avg_cost_per_task,
-                now,
-            ],
-        )?;
-
-        debug!(date = %date_str, total_calls, "Aggregated daily stats");
-
-        Ok(DailyStat {
-            id: None,
-            date,
-            total_calls,
-            total_cost_usd,
-            total_input_tokens,
-            total_output_tokens,
-            total_cache_creation_tokens,
-            total_cache_read_tokens,
-            tasks_started,
-            tasks_completed,
-            tasks_failed,
-            peak_workers,
-            avg_tokens_per_minute,
-            success_rate,
-            avg_cost_per_task,
-            last_updated: Utc::now(),
+                last_updated: Utc::now(),
+            })
         })
     }
 
     /// Aggregate worker efficiency stats for a specific date.
     pub fn aggregate_worker_efficiency(&self, date: NaiveDate) -> Result<Vec<WorkerEfficiency>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("aggregate_worker_efficiency", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let date_str = date.format("%Y-%m-%d").to_string();
-        let date_start = format!("{}T00:00:00", date_str);
-        let date_end = format!("{}T23:59:59", date_str);
+            let date_str = date.format("%Y-%m-%d").to_string();
+            let date_start = format!("{}T00:00:00", date_str);
+            let date_end = format!("{}T23:59:59", date_str);
 
-        // Get per-worker API call stats
-        let mut stmt = conn.prepare(
-            "SELECT worker_id,
-                    COUNT(*) as total_calls,
-                    COALESCE(SUM(cost_usd), 0) as total_cost,
-                    COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as total_tokens,
-                    MAX(model) as model
-             FROM api_calls
-             WHERE timestamp BETWEEN ?1 AND ?2
-             GROUP BY worker_id",
-        )?;
-
-        let mut workers: Vec<WorkerEfficiency> = stmt
-            .query_map(params![date_start, date_end], |row| {
-                Ok(WorkerEfficiency {
-                    worker_id: row.get(0)?,
-                    date,
-                    total_calls: row.get(1)?,
-                    total_cost_usd: row.get(2)?,
-                    total_tokens: row.get(3)?,
-                    tasks_completed: 0,
-                    tasks_failed: 0,
-                    avg_cost_per_task: 0.0,
-                    success_rate: 1.0,
-                    model: row.get(4)?,
-                    active_time_secs: 0,
-                })
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        // Get task events per worker
-        for worker in &mut workers {
-            let (completed, failed): (i64, i64) = conn
-                .query_row(
-                    "SELECT
-                        COALESCE(SUM(CASE WHEN event_type = 'completed' THEN 1 ELSE 0 END), 0),
-                        COALESCE(SUM(CASE WHEN event_type = 'failed' THEN 1 ELSE 0 END), 0)
-                     FROM task_events
-                     WHERE worker_id = ?1 AND timestamp BETWEEN ?2 AND ?3",
-                    params![worker.worker_id, date_start, date_end],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .unwrap_or((0, 0));
-
-            worker.tasks_completed = completed;
-            worker.tasks_failed = failed;
-            worker.calculate_derived_metrics();
-        }
-
-        let now = Utc::now().to_rfc3339();
-
-        // Upsert worker efficiency records
-        for worker in &workers {
-            conn.execute(
-                "INSERT INTO worker_efficiency
-                 (worker_id, date, total_calls, total_cost_usd, total_tokens,
-                  tasks_completed, tasks_failed, avg_cost_per_task, success_rate,
-                  model, active_time_secs, last_updated)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
-                 ON CONFLICT(worker_id, date) DO UPDATE SET
-                    total_calls = excluded.total_calls,
-                    total_cost_usd = excluded.total_cost_usd,
-                    total_tokens = excluded.total_tokens,
-                    tasks_completed = excluded.tasks_completed,
-                    tasks_failed = excluded.tasks_failed,
-                    avg_cost_per_task = excluded.avg_cost_per_task,
-                    success_rate = excluded.success_rate,
-                    model = excluded.model,
-                    active_time_secs = excluded.active_time_secs,
-                    last_updated = excluded.last_updated",
-                params![
-                    worker.worker_id,
-                    date_str,
-                    worker.total_calls,
-                    worker.total_cost_usd,
-                    worker.total_tokens,
-                    worker.tasks_completed,
-                    worker.tasks_failed,
-                    worker.avg_cost_per_task,
-                    worker.success_rate,
-                    worker.model,
-                    worker.active_time_secs,
-                    now,
-                ],
+            // Get per-worker API call stats
+            let mut stmt = conn.prepare(
+                "SELECT worker_id,
+                        COUNT(*) as total_calls,
+                        COALESCE(SUM(cost_usd), 0) as total_cost,
+                        COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as total_tokens,
+                        MAX(model) as model
+                 FROM api_calls
+                 WHERE timestamp BETWEEN ?1 AND ?2
+                 GROUP BY worker_id",
             )?;
-        }
 
-        debug!(date = %date_str, count = workers.len(), "Aggregated worker efficiency");
-        Ok(workers)
+            let mut workers: Vec<WorkerEfficiency> = stmt
+                .query_map(params![date_start, date_end], |row| {
+                    Ok(WorkerEfficiency {
+                        worker_id: row.get(0)?,
+                        date,
+                        total_calls: row.get(1)?,
+                        total_cost_usd: row.get(2)?,
+                        total_tokens: row.get(3)?,
+                        tasks_completed: 0,
+                        tasks_failed: 0,
+                        avg_cost_per_task: 0.0,
+                        success_rate: 1.0,
+                        model: row.get(4)?,
+                        active_time_secs: 0,
+                    })
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            // Get task events per worker
+            for worker in &mut workers {
+                let (completed, failed): (i64, i64) = conn
+                    .query_row(
+                        "SELECT
+                            COALESCE(SUM(CASE WHEN event_type = 'completed' THEN 1 ELSE 0 END), 0),
+                            COALESCE(SUM(CASE WHEN event_type = 'failed' THEN 1 ELSE 0 END), 0)
+                         FROM task_events
+                         WHERE worker_id = ?1 AND timestamp BETWEEN ?2 AND ?3",
+                        params![worker.worker_id, date_start, date_end],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .unwrap_or((0, 0));
+
+                worker.tasks_completed = completed;
+                worker.tasks_failed = failed;
+                worker.calculate_derived_metrics();
+            }
+
+            let now = Utc::now().to_rfc3339();
+
+            // Upsert worker efficiency records
+            for worker in &workers {
+                conn.execute(
+                    "INSERT INTO worker_efficiency
+                     (worker_id, date, total_calls, total_cost_usd, total_tokens,
+                      tasks_completed, tasks_failed, avg_cost_per_task, success_rate,
+                      model, active_time_secs, last_updated)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                     ON CONFLICT(worker_id, date) DO UPDATE SET
+                        total_calls = excluded.total_calls,
+                        total_cost_usd = excluded.total_cost_usd,
+                        total_tokens = excluded.total_tokens,
+                        tasks_completed = excluded.tasks_completed,
+                        tasks_failed = excluded.tasks_failed,
+                        avg_cost_per_task = excluded.avg_cost_per_task,
+                        success_rate = excluded.success_rate,
+                        model = excluded.model,
+                        active_time_secs = excluded.active_time_secs,
+                        last_updated = excluded.last_updated",
+                    params![
+                        worker.worker_id,
+                        date_str,
+                        worker.total_calls,
+                        worker.total_cost_usd,
+                        worker.total_tokens,
+                        worker.tasks_completed,
+                        worker.tasks_failed,
+                        worker.avg_cost_per_task,
+                        worker.success_rate,
+                        worker.model,
+                        worker.active_time_secs,
+                        now,
+                    ],
+                )?;
+            }
+
+            debug!(date = %date_str, count = workers.len(), "Aggregated worker efficiency");
+            Ok(workers)
+        })
     }
 
     /// Aggregate model performance stats for a specific date.
     pub fn aggregate_model_performance(&self, date: NaiveDate) -> Result<Vec<ModelPerformance>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("aggregate_model_performance", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let date_str = date.format("%Y-%m-%d").to_string();
-        let date_start = format!("{}T00:00:00", date_str);
-        let date_end = format!("{}T23:59:59", date_str);
+            let date_str = date.format("%Y-%m-%d").to_string();
+            let date_start = format!("{}T00:00:00", date_str);
+            let date_end = format!("{}T23:59:59", date_str);
 
-        // Get per-model API call stats
-        let mut stmt = conn.prepare(
-            "SELECT model,
-                    COUNT(*) as total_calls,
-                    COALESCE(SUM(cost_usd), 0) as total_cost,
-                    COALESCE(SUM(input_tokens), 0) as input_tokens,
-                    COALESCE(SUM(output_tokens), 0) as output_tokens,
-                    COALESCE(SUM(cache_creation_tokens), 0) as cache_creation,
-                    COALESCE(SUM(cache_read_tokens), 0) as cache_read
-             FROM api_calls
-             WHERE timestamp BETWEEN ?1 AND ?2
-             GROUP BY model",
-        )?;
-
-        let mut models: Vec<ModelPerformance> = stmt
-            .query_map(params![date_start, date_end], |row| {
-                Ok(ModelPerformance {
-                    model: row.get(0)?,
-                    date,
-                    total_calls: row.get(1)?,
-                    total_cost_usd: row.get(2)?,
-                    total_input_tokens: row.get(3)?,
-                    total_output_tokens: row.get(4)?,
-                    total_cache_creation_tokens: row.get(5)?,
-                    total_cache_read_tokens: row.get(6)?,
-                    tasks_completed: 0,
-                    tasks_failed: 0,
-                    avg_cost_per_task: 0.0,
-                    success_rate: 1.0,
-                    avg_tokens_per_call: 0.0,
-                    cache_hit_rate: 0.0,
-                })
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        // Get task events per model
-        for model in &mut models {
-            let (completed, failed): (i64, i64) = conn
-                .query_row(
-                    "SELECT
-                        COALESCE(SUM(CASE WHEN event_type = 'completed' THEN 1 ELSE 0 END), 0),
-                        COALESCE(SUM(CASE WHEN event_type = 'failed' THEN 1 ELSE 0 END), 0)
-                     FROM task_events
-                     WHERE model = ?1 AND timestamp BETWEEN ?2 AND ?3",
-                    params![model.model, date_start, date_end],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .unwrap_or((0, 0));
-
-            model.tasks_completed = completed;
-            model.tasks_failed = failed;
-            model.calculate_derived_metrics();
-        }
-
-        let now = Utc::now().to_rfc3339();
-
-        // Upsert model performance records
-        for model in &models {
-            conn.execute(
-                "INSERT INTO model_performance
-                 (model, date, total_calls, total_cost_usd, total_input_tokens,
-                  total_output_tokens, total_cache_creation_tokens, total_cache_read_tokens,
-                  tasks_completed, tasks_failed, avg_cost_per_task, success_rate,
-                  avg_tokens_per_call, cache_hit_rate, last_updated)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
-                 ON CONFLICT(model, date) DO UPDATE SET
-                    total_calls = excluded.total_calls,
-                    total_cost_usd = excluded.total_cost_usd,
-                    total_input_tokens = excluded.total_input_tokens,
-                    total_output_tokens = excluded.total_output_tokens,
-                    total_cache_creation_tokens = excluded.total_cache_creation_tokens,
-                    total_cache_read_tokens = excluded.total_cache_read_tokens,
-                    tasks_completed = excluded.tasks_completed,
-                    tasks_failed = excluded.tasks_failed,
-                    avg_cost_per_task = excluded.avg_cost_per_task,
-                    success_rate = excluded.success_rate,
-                    avg_tokens_per_call = excluded.avg_tokens_per_call,
-                    cache_hit_rate = excluded.cache_hit_rate,
-                    last_updated = excluded.last_updated",
-                params![
-                    model.model,
-                    date_str,
-                    model.total_calls,
-                    model.total_cost_usd,
-                    model.total_input_tokens,
-                    model.total_output_tokens,
-                    model.total_cache_creation_tokens,
-                    model.total_cache_read_tokens,
-                    model.tasks_completed,
-                    model.tasks_failed,
-                    model.avg_cost_per_task,
-                    model.success_rate,
-                    model.avg_tokens_per_call,
-                    model.cache_hit_rate,
-                    now,
-                ],
+            // Get per-model API call stats
+            let mut stmt = conn.prepare(
+                "SELECT model,
+                        COUNT(*) as total_calls,
+                        COALESCE(SUM(cost_usd), 0) as total_cost,
+                        COALESCE(SUM(input_tokens), 0) as input_tokens,
+                        COALESCE(SUM(output_tokens), 0) as output_tokens,
+                        COALESCE(SUM(cache_creation_tokens), 0) as cache_creation,
+                        COALESCE(SUM(cache_read_tokens), 0) as cache_read
+                 FROM api_calls
+                 WHERE timestamp BETWEEN ?1 AND ?2
+                 GROUP BY model",
             )?;
-        }
 
-        debug!(date = %date_str, count = models.len(), "Aggregated model performance");
-        Ok(models)
+            let mut models: Vec<ModelPerformance> = stmt
+                .query_map(params![date_start, date_end], |row| {
+                    Ok(ModelPerformance {
+                        model: row.get(0)?,
+                        date,
+                        total_calls: row.get(1)?,
+                        total_cost_usd: row.get(2)?,
+                        total_input_tokens: row.get(3)?,
+                        total_output_tokens: row.get(4)?,
+                        total_cache_creation_tokens: row.get(5)?,
+                        total_cache_read_tokens: row.get(6)?,
+                        tasks_completed: 0,
+                        tasks_failed: 0,
+                        avg_cost_per_task: 0.0,
+                        success_rate: 1.0,
+                        avg_tokens_per_call: 0.0,
+                        cache_hit_rate: 0.0,
+                    })
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            // Get task events per model
+            for model in &mut models {
+                let (completed, failed): (i64, i64) = conn
+                    .query_row(
+                        "SELECT
+                            COALESCE(SUM(CASE WHEN event_type = 'completed' THEN 1 ELSE 0 END), 0),
+                            COALESCE(SUM(CASE WHEN event_type = 'failed' THEN 1 ELSE 0 END), 0)
+                         FROM task_events
+                         WHERE model = ?1 AND timestamp BETWEEN ?2 AND ?3",
+                        params![model.model, date_start, date_end],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .unwrap_or((0, 0));
+
+                model.tasks_completed = completed;
+                model.tasks_failed = failed;
+                model.calculate_derived_metrics();
+            }
+
+            let now = Utc::now().to_rfc3339();
+
+            // Upsert model performance records
+            for model in &models {
+                conn.execute(
+                    "INSERT INTO model_performance
+                     (model, date, total_calls, total_cost_usd, total_input_tokens,
+                      total_output_tokens, total_cache_creation_tokens, total_cache_read_tokens,
+                      tasks_completed, tasks_failed, avg_cost_per_task, success_rate,
+                      avg_tokens_per_call, cache_hit_rate, last_updated)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                     ON CONFLICT(model, date) DO UPDATE SET
+                        total_calls = excluded.total_calls,
+                        total_cost_usd = excluded.total_cost_usd,
+                        total_input_tokens = excluded.total_input_tokens,
+                        total_output_tokens = excluded.total_output_tokens,
+                        total_cache_creation_tokens = excluded.total_cache_creation_tokens,
+                        total_cache_read_tokens = excluded.total_cache_read_tokens,
+                        tasks_completed = excluded.tasks_completed,
+                        tasks_failed = excluded.tasks_failed,
+                        avg_cost_per_task = excluded.avg_cost_per_task,
+                        success_rate = excluded.success_rate,
+                        avg_tokens_per_call = excluded.avg_tokens_per_call,
+                        cache_hit_rate = excluded.cache_hit_rate,
+                        last_updated = excluded.last_updated",
+                    params![
+                        model.model,
+                        date_str,
+                        model.total_calls,
+                        model.total_cost_usd,
+                        model.total_input_tokens,
+                        model.total_output_tokens,
+                        model.total_cache_creation_tokens,
+                        model.total_cache_read_tokens,
+                        model.tasks_completed,
+                        model.tasks_failed,
+                        model.avg_cost_per_task,
+                        model.success_rate,
+                        model.avg_tokens_per_call,
+                        model.cache_hit_rate,
+                        now,
+                    ],
+                )?;
+            }
+
+            debug!(date = %date_str, count = models.len(), "Aggregated model performance");
+            Ok(models)
+        })
     }
 
     /// Run all aggregations for current hour and day.
@@ -1620,300 +1658,312 @@ impl CostDatabase {
 
     /// Get hourly stats for a specific hour.
     pub fn get_hourly_stat(&self, hour: DateTime<Utc>) -> Result<Option<HourlyStat>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_hourly_stat", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let hour_str = hour.format("%Y-%m-%dT%H:00:00Z").to_string();
+            let hour_str = hour.format("%Y-%m-%dT%H:00:00Z").to_string();
 
-        let result = conn.query_row(
-            "SELECT id, hour, total_calls, total_cost_usd, total_input_tokens,
-                    total_output_tokens, tasks_started, tasks_completed, tasks_failed,
-                    active_workers, avg_response_time_ms, tokens_per_minute, last_updated
-             FROM hourly_stats WHERE hour = ?1",
-            params![hour_str],
-            |row| {
-                let hour_str: String = row.get(1)?;
-                let last_updated_str: String = row.get(12)?;
+            let result = conn.query_row(
+                "SELECT id, hour, total_calls, total_cost_usd, total_input_tokens,
+                        total_output_tokens, tasks_started, tasks_completed, tasks_failed,
+                        active_workers, avg_response_time_ms, tokens_per_minute, last_updated
+                 FROM hourly_stats WHERE hour = ?1",
+                params![hour_str],
+                |row| {
+                    let hour_str: String = row.get(1)?;
+                    let last_updated_str: String = row.get(12)?;
 
-                let hour = DateTime::parse_from_rfc3339(&hour_str)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or(Utc::now());
-                let last_updated = DateTime::parse_from_rfc3339(&last_updated_str)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or(Utc::now());
+                    let hour = DateTime::parse_from_rfc3339(&hour_str)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or(Utc::now());
+                    let last_updated = DateTime::parse_from_rfc3339(&last_updated_str)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or(Utc::now());
 
-                Ok(HourlyStat {
-                    id: Some(row.get(0)?),
-                    hour,
-                    total_calls: row.get(2)?,
-                    total_cost_usd: row.get(3)?,
-                    total_input_tokens: row.get(4)?,
-                    total_output_tokens: row.get(5)?,
-                    tasks_started: row.get(6)?,
-                    tasks_completed: row.get(7)?,
-                    tasks_failed: row.get(8)?,
-                    active_workers: row.get(9)?,
-                    avg_response_time_ms: row.get(10)?,
-                    tokens_per_minute: row.get(11)?,
-                    last_updated,
-                })
-            },
-        );
+                    Ok(HourlyStat {
+                        id: Some(row.get(0)?),
+                        hour,
+                        total_calls: row.get(2)?,
+                        total_cost_usd: row.get(3)?,
+                        total_input_tokens: row.get(4)?,
+                        total_output_tokens: row.get(5)?,
+                        tasks_started: row.get(6)?,
+                        tasks_completed: row.get(7)?,
+                        tasks_failed: row.get(8)?,
+                        active_workers: row.get(9)?,
+                        avg_response_time_ms: row.get(10)?,
+                        tokens_per_minute: row.get(11)?,
+                        last_updated,
+                    })
+                },
+            );
 
-        match result {
-            Ok(stat) => Ok(Some(stat)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(CostError::Database(e)),
-        }
+            match result {
+                Ok(stat) => Ok(Some(stat)),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                Err(e) => Err(CostError::Database(e)),
+            }
+        })
     }
 
     /// Get daily stats for a specific date.
     pub fn get_daily_stat(&self, date: NaiveDate) -> Result<Option<DailyStat>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_daily_stat", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let date_str = date.format("%Y-%m-%d").to_string();
+            let date_str = date.format("%Y-%m-%d").to_string();
 
-        let result = conn.query_row(
-            "SELECT id, date, total_calls, total_cost_usd, total_input_tokens,
-                    total_output_tokens, total_cache_creation_tokens, total_cache_read_tokens,
-                    tasks_started, tasks_completed, tasks_failed, peak_workers,
-                    avg_tokens_per_minute, success_rate, avg_cost_per_task, last_updated
-             FROM daily_stats WHERE date = ?1",
-            params![date_str],
-            |row| {
-                let date_str: String = row.get(1)?;
-                let last_updated_str: String = row.get(15)?;
+            let result = conn.query_row(
+                "SELECT id, date, total_calls, total_cost_usd, total_input_tokens,
+                        total_output_tokens, total_cache_creation_tokens, total_cache_read_tokens,
+                        tasks_started, tasks_completed, tasks_failed, peak_workers,
+                        avg_tokens_per_minute, success_rate, avg_cost_per_task, last_updated
+                 FROM daily_stats WHERE date = ?1",
+                params![date_str],
+                |row| {
+                    let date_str: String = row.get(1)?;
+                    let last_updated_str: String = row.get(15)?;
 
-                let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
-                    .unwrap_or(Utc::now().date_naive());
-                let last_updated = DateTime::parse_from_rfc3339(&last_updated_str)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or(Utc::now());
+                    let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
+                        .unwrap_or(Utc::now().date_naive());
+                    let last_updated = DateTime::parse_from_rfc3339(&last_updated_str)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or(Utc::now());
 
-                Ok(DailyStat {
-                    id: Some(row.get(0)?),
-                    date,
-                    total_calls: row.get(2)?,
-                    total_cost_usd: row.get(3)?,
-                    total_input_tokens: row.get(4)?,
-                    total_output_tokens: row.get(5)?,
-                    total_cache_creation_tokens: row.get(6)?,
-                    total_cache_read_tokens: row.get(7)?,
-                    tasks_started: row.get(8)?,
-                    tasks_completed: row.get(9)?,
-                    tasks_failed: row.get(10)?,
-                    peak_workers: row.get(11)?,
-                    avg_tokens_per_minute: row.get(12)?,
-                    success_rate: row.get(13)?,
-                    avg_cost_per_task: row.get(14)?,
-                    last_updated,
-                })
-            },
-        );
+                    Ok(DailyStat {
+                        id: Some(row.get(0)?),
+                        date,
+                        total_calls: row.get(2)?,
+                        total_cost_usd: row.get(3)?,
+                        total_input_tokens: row.get(4)?,
+                        total_output_tokens: row.get(5)?,
+                        total_cache_creation_tokens: row.get(6)?,
+                        total_cache_read_tokens: row.get(7)?,
+                        tasks_started: row.get(8)?,
+                        tasks_completed: row.get(9)?,
+                        tasks_failed: row.get(10)?,
+                        peak_workers: row.get(11)?,
+                        avg_tokens_per_minute: row.get(12)?,
+                        success_rate: row.get(13)?,
+                        avg_cost_per_task: row.get(14)?,
+                        last_updated,
+                    })
+                },
+            );
 
-        match result {
-            Ok(stat) => Ok(Some(stat)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(CostError::Database(e)),
-        }
+            match result {
+                Ok(stat) => Ok(Some(stat)),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                Err(e) => Err(CostError::Database(e)),
+            }
+        })
     }
 
     /// Get worker efficiency stats for a specific date.
     pub fn get_worker_efficiency(&self, date: NaiveDate) -> Result<Vec<WorkerEfficiency>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_worker_efficiency", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let date_str = date.format("%Y-%m-%d").to_string();
+            let date_str = date.format("%Y-%m-%d").to_string();
 
-        let mut stmt = conn.prepare(
-            "SELECT id, worker_id, date, total_calls, total_cost_usd, total_tokens,
-                    tasks_completed, tasks_failed, avg_cost_per_task, success_rate,
-                    model, active_time_secs
-             FROM worker_efficiency WHERE date = ?1
-             ORDER BY total_cost_usd DESC",
-        )?;
+            let mut stmt = conn.prepare(
+                "SELECT id, worker_id, date, total_calls, total_cost_usd, total_tokens,
+                        tasks_completed, tasks_failed, avg_cost_per_task, success_rate,
+                        model, active_time_secs
+                 FROM worker_efficiency WHERE date = ?1
+                 ORDER BY total_cost_usd DESC",
+            )?;
 
-        let workers: Vec<WorkerEfficiency> = stmt
-            .query_map(params![date_str], |row| {
-                let date_str: String = row.get(2)?;
-                let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
-                    .unwrap_or(Utc::now().date_naive());
+            let workers: Vec<WorkerEfficiency> = stmt
+                .query_map(params![date_str], |row| {
+                    let date_str: String = row.get(2)?;
+                    let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
+                        .unwrap_or(Utc::now().date_naive());
 
-                Ok(WorkerEfficiency {
-                    worker_id: row.get(1)?,
-                    date,
-                    total_calls: row.get(3)?,
-                    total_cost_usd: row.get(4)?,
-                    total_tokens: row.get(5)?,
-                    tasks_completed: row.get(6)?,
-                    tasks_failed: row.get(7)?,
-                    avg_cost_per_task: row.get(8)?,
-                    success_rate: row.get(9)?,
-                    model: row.get(10)?,
-                    active_time_secs: row.get(11)?,
-                })
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
+                    Ok(WorkerEfficiency {
+                        worker_id: row.get(1)?,
+                        date,
+                        total_calls: row.get(3)?,
+                        total_cost_usd: row.get(4)?,
+                        total_tokens: row.get(5)?,
+                        tasks_completed: row.get(6)?,
+                        tasks_failed: row.get(7)?,
+                        avg_cost_per_task: row.get(8)?,
+                        success_rate: row.get(9)?,
+                        model: row.get(10)?,
+                        active_time_secs: row.get(11)?,
+                    })
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
 
-        Ok(workers)
+            Ok(workers)
+        })
     }
 
     /// Get model performance stats for a specific date.
     pub fn get_model_performance(&self, date: NaiveDate) -> Result<Vec<ModelPerformance>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_model_performance", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let date_str = date.format("%Y-%m-%d").to_string();
+            let date_str = date.format("%Y-%m-%d").to_string();
 
-        let mut stmt = conn.prepare(
-            "SELECT id, model, date, total_calls, total_cost_usd, total_input_tokens,
-                    total_output_tokens, total_cache_creation_tokens, total_cache_read_tokens,
-                    tasks_completed, tasks_failed, avg_cost_per_task, success_rate,
-                    avg_tokens_per_call, cache_hit_rate
-             FROM model_performance WHERE date = ?1
-             ORDER BY total_cost_usd DESC",
-        )?;
+            let mut stmt = conn.prepare(
+                "SELECT id, model, date, total_calls, total_cost_usd, total_input_tokens,
+                        total_output_tokens, total_cache_creation_tokens, total_cache_read_tokens,
+                        tasks_completed, tasks_failed, avg_cost_per_task, success_rate,
+                        avg_tokens_per_call, cache_hit_rate
+                 FROM model_performance WHERE date = ?1
+                 ORDER BY total_cost_usd DESC",
+            )?;
 
-        let models: Vec<ModelPerformance> = stmt
-            .query_map(params![date_str], |row| {
-                let date_str: String = row.get(2)?;
-                let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
-                    .unwrap_or(Utc::now().date_naive());
+            let models: Vec<ModelPerformance> = stmt
+                .query_map(params![date_str], |row| {
+                    let date_str: String = row.get(2)?;
+                    let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
+                        .unwrap_or(Utc::now().date_naive());
 
-                Ok(ModelPerformance {
-                    model: row.get(1)?,
-                    date,
-                    total_calls: row.get(3)?,
-                    total_cost_usd: row.get(4)?,
-                    total_input_tokens: row.get(5)?,
-                    total_output_tokens: row.get(6)?,
-                    total_cache_creation_tokens: row.get(7)?,
-                    total_cache_read_tokens: row.get(8)?,
-                    tasks_completed: row.get(9)?,
-                    tasks_failed: row.get(10)?,
-                    avg_cost_per_task: row.get(11)?,
-                    success_rate: row.get(12)?,
-                    avg_tokens_per_call: row.get(13)?,
-                    cache_hit_rate: row.get(14)?,
-                })
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
+                    Ok(ModelPerformance {
+                        model: row.get(1)?,
+                        date,
+                        total_calls: row.get(3)?,
+                        total_cost_usd: row.get(4)?,
+                        total_input_tokens: row.get(5)?,
+                        total_output_tokens: row.get(6)?,
+                        total_cache_creation_tokens: row.get(7)?,
+                        total_cache_read_tokens: row.get(8)?,
+                        tasks_completed: row.get(9)?,
+                        tasks_failed: row.get(10)?,
+                        avg_cost_per_task: row.get(11)?,
+                        success_rate: row.get(12)?,
+                        avg_tokens_per_call: row.get(13)?,
+                        cache_hit_rate: row.get(14)?,
+                    })
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
 
-        Ok(models)
+            Ok(models)
+        })
     }
 
     /// Get hourly stats for the last N hours.
     pub fn get_recent_hourly_stats(&self, hours: i32) -> Result<Vec<HourlyStat>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_recent_hourly_stats", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let cutoff = Utc::now() - chrono::Duration::hours(hours as i64);
-        let cutoff_str = cutoff.format("%Y-%m-%dT%H:00:00Z").to_string();
+            let cutoff = Utc::now() - chrono::Duration::hours(hours as i64);
+            let cutoff_str = cutoff.format("%Y-%m-%dT%H:00:00Z").to_string();
 
-        let mut stmt = conn.prepare(
-            "SELECT id, hour, total_calls, total_cost_usd, total_input_tokens,
-                    total_output_tokens, tasks_started, tasks_completed, tasks_failed,
-                    active_workers, avg_response_time_ms, tokens_per_minute, last_updated
-             FROM hourly_stats
-             WHERE hour >= ?1
-             ORDER BY hour DESC",
-        )?;
+            let mut stmt = conn.prepare(
+                "SELECT id, hour, total_calls, total_cost_usd, total_input_tokens,
+                        total_output_tokens, tasks_started, tasks_completed, tasks_failed,
+                        active_workers, avg_response_time_ms, tokens_per_minute, last_updated
+                 FROM hourly_stats
+                 WHERE hour >= ?1
+                 ORDER BY hour DESC",
+            )?;
 
-        let stats: Vec<HourlyStat> = stmt
-            .query_map(params![cutoff_str], |row| {
-                let hour_str: String = row.get(1)?;
-                let last_updated_str: String = row.get(12)?;
+            let stats: Vec<HourlyStat> = stmt
+                .query_map(params![cutoff_str], |row| {
+                    let hour_str: String = row.get(1)?;
+                    let last_updated_str: String = row.get(12)?;
 
-                let hour = DateTime::parse_from_rfc3339(&hour_str)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or(Utc::now());
-                let last_updated = DateTime::parse_from_rfc3339(&last_updated_str)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or(Utc::now());
+                    let hour = DateTime::parse_from_rfc3339(&hour_str)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or(Utc::now());
+                    let last_updated = DateTime::parse_from_rfc3339(&last_updated_str)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or(Utc::now());
 
-                Ok(HourlyStat {
-                    id: Some(row.get(0)?),
-                    hour,
-                    total_calls: row.get(2)?,
-                    total_cost_usd: row.get(3)?,
-                    total_input_tokens: row.get(4)?,
-                    total_output_tokens: row.get(5)?,
-                    tasks_started: row.get(6)?,
-                    tasks_completed: row.get(7)?,
-                    tasks_failed: row.get(8)?,
-                    active_workers: row.get(9)?,
-                    avg_response_time_ms: row.get(10)?,
-                    tokens_per_minute: row.get(11)?,
-                    last_updated,
-                })
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
+                    Ok(HourlyStat {
+                        id: Some(row.get(0)?),
+                        hour,
+                        total_calls: row.get(2)?,
+                        total_cost_usd: row.get(3)?,
+                        total_input_tokens: row.get(4)?,
+                        total_output_tokens: row.get(5)?,
+                        tasks_started: row.get(6)?,
+                        tasks_completed: row.get(7)?,
+                        tasks_failed: row.get(8)?,
+                        active_workers: row.get(9)?,
+                        avg_response_time_ms: row.get(10)?,
+                        tokens_per_minute: row.get(11)?,
+                        last_updated,
+                    })
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
 
-        Ok(stats)
+            Ok(stats)
+        })
     }
 
     /// Get daily stats for the last N days.
     pub fn get_recent_daily_stats(&self, days: i32) -> Result<Vec<DailyStat>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_recent_daily_stats", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let cutoff = Utc::now().date_naive() - chrono::Days::new(days as u64);
-        let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
+            let cutoff = Utc::now().date_naive() - chrono::Days::new(days as u64);
+            let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
 
-        let mut stmt = conn.prepare(
-            "SELECT id, date, total_calls, total_cost_usd, total_input_tokens,
-                    total_output_tokens, total_cache_creation_tokens, total_cache_read_tokens,
-                    tasks_started, tasks_completed, tasks_failed, peak_workers,
-                    avg_tokens_per_minute, success_rate, avg_cost_per_task, last_updated
-             FROM daily_stats
-             WHERE date >= ?1
-             ORDER BY date DESC",
-        )?;
+            let mut stmt = conn.prepare(
+                "SELECT id, date, total_calls, total_cost_usd, total_input_tokens,
+                        total_output_tokens, total_cache_creation_tokens, total_cache_read_tokens,
+                        tasks_started, tasks_completed, tasks_failed, peak_workers,
+                        avg_tokens_per_minute, success_rate, avg_cost_per_task, last_updated
+                 FROM daily_stats
+                 WHERE date >= ?1
+                 ORDER BY date DESC",
+            )?;
 
-        let stats: Vec<DailyStat> = stmt
-            .query_map(params![cutoff_str], |row| {
-                let date_str: String = row.get(1)?;
-                let last_updated_str: String = row.get(15)?;
+            let stats: Vec<DailyStat> = stmt
+                .query_map(params![cutoff_str], |row| {
+                    let date_str: String = row.get(1)?;
+                    let last_updated_str: String = row.get(15)?;
 
-                let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
-                    .unwrap_or(Utc::now().date_naive());
-                let last_updated = DateTime::parse_from_rfc3339(&last_updated_str)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or(Utc::now());
+                    let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
+                        .unwrap_or(Utc::now().date_naive());
+                    let last_updated = DateTime::parse_from_rfc3339(&last_updated_str)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or(Utc::now());
 
-                Ok(DailyStat {
-                    id: Some(row.get(0)?),
-                    date,
-                    total_calls: row.get(2)?,
-                    total_cost_usd: row.get(3)?,
-                    total_input_tokens: row.get(4)?,
-                    total_output_tokens: row.get(5)?,
-                    total_cache_creation_tokens: row.get(6)?,
-                    total_cache_read_tokens: row.get(7)?,
-                    tasks_started: row.get(8)?,
-                    tasks_completed: row.get(9)?,
-                    tasks_failed: row.get(10)?,
-                    peak_workers: row.get(11)?,
-                    avg_tokens_per_minute: row.get(12)?,
-                    success_rate: row.get(13)?,
-                    avg_cost_per_task: row.get(14)?,
-                    last_updated,
-                })
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
+                    Ok(DailyStat {
+                        id: Some(row.get(0)?),
+                        date,
+                        total_calls: row.get(2)?,
+                        total_cost_usd: row.get(3)?,
+                        total_input_tokens: row.get(4)?,
+                        total_output_tokens: row.get(5)?,
+                        total_cache_creation_tokens: row.get(6)?,
+                        total_cache_read_tokens: row.get(7)?,
+                        tasks_started: row.get(8)?,
+                        tasks_completed: row.get(9)?,
+                        tasks_failed: row.get(10)?,
+                        peak_workers: row.get(11)?,
+                        avg_tokens_per_minute: row.get(12)?,
+                        success_rate: row.get(13)?,
+                        avg_cost_per_task: row.get(14)?,
+                        last_updated,
+                    })
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
 
-        Ok(stats)
+            Ok(stats)
+        })
     }
 
     /// Get 7-day trend data for sparklines.
@@ -1921,338 +1971,354 @@ impl CostDatabase {
     /// Returns a vector of daily task counts for the last 7 days,
     /// suitable for rendering sparkline visualizations.
     pub fn get_7day_task_trend(&self) -> Result<Vec<i64>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_7day_task_trend", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let today = Utc::now().date_naive();
-        let start_date = today - chrono::Days::new(6);
+            let today = Utc::now().date_naive();
+            let start_date = today - chrono::Days::new(6);
 
-        // Fill in missing days with zeros
-        let mut trend = Vec::with_capacity(7);
-        for i in 0..7 {
-            let date = start_date + chrono::Days::new(i);
-            let date_str = date.format("%Y-%m-%d").to_string();
+            // Fill in missing days with zeros
+            let mut trend = Vec::with_capacity(7);
+            for i in 0..7 {
+                let date = start_date + chrono::Days::new(i);
+                let date_str = date.format("%Y-%m-%d").to_string();
 
-            // Check if we have data for this date
-            let count: i64 = conn
-                .query_row(
-                    "SELECT COALESCE(tasks_completed, 0) FROM daily_stats WHERE date = ?1",
-                    params![date_str],
-                    |row| row.get(0),
-                )
-                .unwrap_or(0);
+                // Check if we have data for this date
+                let count: i64 = conn
+                    .query_row(
+                        "SELECT COALESCE(tasks_completed, 0) FROM daily_stats WHERE date = ?1",
+                        params![date_str],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(0);
 
-            trend.push(count);
-        }
+                trend.push(count);
+            }
 
-        Ok(trend)
+            Ok(trend)
+        })
     }
 
     /// Get 7-day cost trend data for sparklines.
     pub fn get_7day_cost_trend(&self) -> Result<Vec<f64>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_7day_cost_trend", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let today = Utc::now().date_naive();
-        let start_date = today - chrono::Days::new(6);
+            let today = Utc::now().date_naive();
+            let start_date = today - chrono::Days::new(6);
 
-        let mut trend = Vec::with_capacity(7);
-        for i in 0..7 {
-            let date = start_date + chrono::Days::new(i);
-            let date_str = date.format("%Y-%m-%d").to_string();
+            let mut trend = Vec::with_capacity(7);
+            for i in 0..7 {
+                let date = start_date + chrono::Days::new(i);
+                let date_str = date.format("%Y-%m-%d").to_string();
 
-            let cost: f64 = conn
-                .query_row(
-                    "SELECT COALESCE(total_cost_usd, 0.0) FROM daily_stats WHERE date = ?1",
-                    params![date_str],
-                    |row| row.get(0),
-                )
-                .unwrap_or(0.0);
+                let cost: f64 = conn
+                    .query_row(
+                        "SELECT COALESCE(total_cost_usd, 0.0) FROM daily_stats WHERE date = ?1",
+                        params![date_str],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(0.0);
 
-            trend.push(cost);
-        }
+                trend.push(cost);
+            }
 
-        Ok(trend)
+            Ok(trend)
+        })
     }
 
     /// Get tasks per hour for the last 24 hours (for histogram).
     pub fn get_tasks_per_hour(&self) -> Result<Vec<i64>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_tasks_per_hour", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let cutoff = Utc::now() - chrono::Duration::hours(24);
+            let cutoff = Utc::now() - chrono::Duration::hours(24);
 
-        let mut result = vec![0i64; 24];
+            let mut result = vec![0i64; 24];
 
-        let mut stmt = conn.prepare(
-            "SELECT hour, tasks_completed
-             FROM hourly_stats
-             WHERE hour >= ?1
-             ORDER BY hour ASC",
-        )?;
+            let mut stmt = conn.prepare(
+                "SELECT hour, tasks_completed
+                 FROM hourly_stats
+                 WHERE hour >= ?1
+                 ORDER BY hour ASC",
+            )?;
 
-        let cutoff_str = cutoff.format("%Y-%m-%dT%H:00:00Z").to_string();
+            let cutoff_str = cutoff.format("%Y-%m-%dT%H:00:00Z").to_string();
 
-        let rows: Vec<(String, i64)> = stmt
-            .query_map(params![cutoff_str], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .filter_map(|r| r.ok())
-            .collect();
+            let rows: Vec<(String, i64)> = stmt
+                .query_map(params![cutoff_str], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .filter_map(|r| r.ok())
+                .collect();
 
-        for (hour_str, tasks) in rows {
-            if let Ok(hour_dt) = DateTime::parse_from_rfc3339(&hour_str) {
-                let hour_utc = hour_dt.with_timezone(&Utc);
-                let hours_ago = (Utc::now() - hour_utc).num_hours() as usize;
-                if hours_ago < 24 {
-                    result[23 - hours_ago] = tasks;
+            for (hour_str, tasks) in rows {
+                if let Ok(hour_dt) = DateTime::parse_from_rfc3339(&hour_str) {
+                    let hour_utc = hour_dt.with_timezone(&Utc);
+                    let hours_ago = (Utc::now() - hour_utc).num_hours() as usize;
+                    if hours_ago < 24 {
+                        result[23 - hours_ago] = tasks;
+                    }
                 }
             }
-        }
 
-        Ok(result)
+            Ok(result)
+        })
     }
 
     /// Get model performance aggregated over the last 7 days with extended metrics.
     pub fn get_model_performance_7day(&self) -> Result<Vec<ModelPerformance>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_model_performance_7day", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let start_date = Utc::now().date_naive() - chrono::Days::new(6);
-        let start_str = start_date.format("%Y-%m-%d").to_string();
+            let start_date = Utc::now().date_naive() - chrono::Days::new(6);
+            let start_str = start_date.format("%Y-%m-%d").to_string();
 
-        let mut stmt = conn.prepare(
-            "SELECT model,
-                    SUM(total_calls) as total_calls,
-                    SUM(total_cost_usd) as total_cost,
-                    SUM(total_input_tokens) as input_tokens,
-                    SUM(total_output_tokens) as output_tokens,
-                    SUM(total_cache_creation_tokens) as cache_creation,
-                    SUM(total_cache_read_tokens) as cache_read,
-                    SUM(tasks_completed) as tasks_completed,
-                    SUM(tasks_failed) as tasks_failed
-             FROM model_performance
-             WHERE date >= ?1
-             GROUP BY model
-             ORDER BY total_cost DESC",
-        )?;
+            let mut stmt = conn.prepare(
+                "SELECT model,
+                        SUM(total_calls) as total_calls,
+                        SUM(total_cost_usd) as total_cost,
+                        SUM(total_input_tokens) as input_tokens,
+                        SUM(total_output_tokens) as output_tokens,
+                        SUM(total_cache_creation_tokens) as cache_creation,
+                        SUM(total_cache_read_tokens) as cache_read,
+                        SUM(tasks_completed) as tasks_completed,
+                        SUM(tasks_failed) as tasks_failed
+                 FROM model_performance
+                 WHERE date >= ?1
+                 GROUP BY model
+                 ORDER BY total_cost DESC",
+            )?;
 
-        let models: Vec<ModelPerformance> = stmt
-            .query_map(params![start_str], |row| {
-                let model: String = row.get(0)?;
-                let total_calls: i64 = row.get(1)?;
-                let total_cost: f64 = row.get(2)?;
-                let input_tokens: i64 = row.get(3)?;
-                let output_tokens: i64 = row.get(4)?;
-                let cache_creation: i64 = row.get(5)?;
-                let cache_read: i64 = row.get(6)?;
-                let tasks_completed: i64 = row.get(7)?;
-                let tasks_failed: i64 = row.get(8)?;
+            let models: Vec<ModelPerformance> = stmt
+                .query_map(params![start_str], |row| {
+                    let model: String = row.get(0)?;
+                    let total_calls: i64 = row.get(1)?;
+                    let total_cost: f64 = row.get(2)?;
+                    let input_tokens: i64 = row.get(3)?;
+                    let output_tokens: i64 = row.get(4)?;
+                    let cache_creation: i64 = row.get(5)?;
+                    let cache_read: i64 = row.get(6)?;
+                    let tasks_completed: i64 = row.get(7)?;
+                    let tasks_failed: i64 = row.get(8)?;
 
-                let total_tasks = tasks_completed + tasks_failed;
-                let success_rate = if total_tasks == 0 {
-                    1.0
-                } else {
-                    tasks_completed as f64 / total_tasks as f64
-                };
+                    let total_tasks = tasks_completed + tasks_failed;
+                    let success_rate = if total_tasks == 0 {
+                        1.0
+                    } else {
+                        tasks_completed as f64 / total_tasks as f64
+                    };
 
-                let avg_cost_per_task = if tasks_completed == 0 {
-                    0.0
-                } else {
-                    total_cost / tasks_completed as f64
-                };
+                    let avg_cost_per_task = if tasks_completed == 0 {
+                        0.0
+                    } else {
+                        total_cost / tasks_completed as f64
+                    };
 
-                let total_tokens = input_tokens + output_tokens + cache_creation + cache_read;
-                let avg_tokens_per_call = if total_calls == 0 {
-                    0.0
-                } else {
-                    total_tokens as f64 / total_calls as f64
-                };
+                    let total_tokens = input_tokens + output_tokens + cache_creation + cache_read;
+                    let avg_tokens_per_call = if total_calls == 0 {
+                        0.0
+                    } else {
+                        total_tokens as f64 / total_calls as f64
+                    };
 
-                let total_input = input_tokens + cache_read;
-                let cache_hit_rate = if total_input == 0 {
-                    0.0
-                } else {
-                    cache_read as f64 / total_input as f64
-                };
+                    let total_input = input_tokens + cache_read;
+                    let cache_hit_rate = if total_input == 0 {
+                        0.0
+                    } else {
+                        cache_read as f64 / total_input as f64
+                    };
 
-                Ok(ModelPerformance {
-                    model,
-                    date: start_date, // Representing the period start
-                    total_calls,
-                    total_cost_usd: total_cost,
-                    total_input_tokens: input_tokens,
-                    total_output_tokens: output_tokens,
-                    total_cache_creation_tokens: cache_creation,
-                    total_cache_read_tokens: cache_read,
-                    tasks_completed,
-                    tasks_failed,
-                    avg_cost_per_task,
-                    success_rate,
-                    avg_tokens_per_call,
-                    cache_hit_rate,
-                })
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
+                    Ok(ModelPerformance {
+                        model,
+                        date: start_date, // Representing the period start
+                        total_calls,
+                        total_cost_usd: total_cost,
+                        total_input_tokens: input_tokens,
+                        total_output_tokens: output_tokens,
+                        total_cache_creation_tokens: cache_creation,
+                        total_cache_read_tokens: cache_read,
+                        tasks_completed,
+                        tasks_failed,
+                        avg_cost_per_task,
+                        success_rate,
+                        avg_tokens_per_call,
+                        cache_hit_rate,
+                    })
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
 
-        Ok(models)
+            Ok(models)
+        })
     }
 
     /// Get worker efficiency aggregated over the last 7 days.
     pub fn get_worker_efficiency_7day(&self) -> Result<Vec<WorkerEfficiency>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_worker_efficiency_7day", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let start_date = Utc::now().date_naive() - chrono::Days::new(6);
-        let start_str = start_date.format("%Y-%m-%d").to_string();
+            let start_date = Utc::now().date_naive() - chrono::Days::new(6);
+            let start_str = start_date.format("%Y-%m-%d").to_string();
 
-        let mut stmt = conn.prepare(
-            "SELECT worker_id,
-                    SUM(total_calls) as total_calls,
-                    SUM(total_cost_usd) as total_cost,
-                    SUM(total_tokens) as total_tokens,
-                    SUM(tasks_completed) as tasks_completed,
-                    SUM(tasks_failed) as tasks_failed,
-                    SUM(active_time_secs) as active_time,
-                    model
-             FROM worker_efficiency
-             WHERE date >= ?1
-             GROUP BY worker_id
-             ORDER BY tasks_completed DESC",
-        )?;
+            let mut stmt = conn.prepare(
+                "SELECT worker_id,
+                        SUM(total_calls) as total_calls,
+                        SUM(total_cost_usd) as total_cost,
+                        SUM(total_tokens) as total_tokens,
+                        SUM(tasks_completed) as tasks_completed,
+                        SUM(tasks_failed) as tasks_failed,
+                        SUM(active_time_secs) as active_time,
+                        model
+                 FROM worker_efficiency
+                 WHERE date >= ?1
+                 GROUP BY worker_id
+                 ORDER BY tasks_completed DESC",
+            )?;
 
-        let workers: Vec<WorkerEfficiency> = stmt
-            .query_map(params![start_str], |row| {
-                let worker_id: String = row.get(0)?;
-                let total_calls: i64 = row.get(1)?;
-                let total_cost: f64 = row.get(2)?;
-                let total_tokens: i64 = row.get(3)?;
-                let tasks_completed: i64 = row.get(4)?;
-                let tasks_failed: i64 = row.get(5)?;
-                let active_time: i64 = row.get(6)?;
-                let model: Option<String> = row.get(7)?;
+            let workers: Vec<WorkerEfficiency> = stmt
+                .query_map(params![start_str], |row| {
+                    let worker_id: String = row.get(0)?;
+                    let total_calls: i64 = row.get(1)?;
+                    let total_cost: f64 = row.get(2)?;
+                    let total_tokens: i64 = row.get(3)?;
+                    let tasks_completed: i64 = row.get(4)?;
+                    let tasks_failed: i64 = row.get(5)?;
+                    let active_time: i64 = row.get(6)?;
+                    let model: Option<String> = row.get(7)?;
 
-                let total_tasks = tasks_completed + tasks_failed;
-                let success_rate = if total_tasks == 0 {
-                    1.0
-                } else {
-                    tasks_completed as f64 / total_tasks as f64
-                };
+                    let total_tasks = tasks_completed + tasks_failed;
+                    let success_rate = if total_tasks == 0 {
+                        1.0
+                    } else {
+                        tasks_completed as f64 / total_tasks as f64
+                    };
 
-                let avg_cost_per_task = if tasks_completed == 0 {
-                    0.0
-                } else {
-                    total_cost / tasks_completed as f64
-                };
+                    let avg_cost_per_task = if tasks_completed == 0 {
+                        0.0
+                    } else {
+                        total_cost / tasks_completed as f64
+                    };
 
-                Ok(WorkerEfficiency {
-                    worker_id,
-                    date: start_date,
-                    total_calls,
-                    total_cost_usd: total_cost,
-                    total_tokens,
-                    tasks_completed,
-                    tasks_failed,
-                    avg_cost_per_task,
-                    success_rate,
-                    model,
-                    active_time_secs: active_time,
-                })
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
+                    Ok(WorkerEfficiency {
+                        worker_id,
+                        date: start_date,
+                        total_calls,
+                        total_cost_usd: total_cost,
+                        total_tokens,
+                        tasks_completed,
+                        tasks_failed,
+                        avg_cost_per_task,
+                        success_rate,
+                        model,
+                        active_time_secs: active_time,
+                    })
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
 
-        Ok(workers)
+            Ok(workers)
+        })
     }
 
     /// Get average cost per task by model.
     pub fn get_avg_cost_per_task_by_model(&self) -> Result<Vec<(String, f64)>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_avg_cost_per_task_by_model", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let today = Utc::now().date_naive();
-        let start_date = today - chrono::Days::new(6);
-        let start_str = start_date.format("%Y-%m-%d").to_string();
+            let today = Utc::now().date_naive();
+            let start_date = today - chrono::Days::new(6);
+            let start_str = start_date.format("%Y-%m-%d").to_string();
 
-        let mut stmt = conn.prepare(
-            "SELECT model,
-                    SUM(total_cost_usd) / NULLIF(SUM(tasks_completed), 0) as avg_cost
-             FROM model_performance
-             WHERE date >= ?1 AND tasks_completed > 0
-             GROUP BY model
-             ORDER BY avg_cost DESC",
-        )?;
+            let mut stmt = conn.prepare(
+                "SELECT model,
+                        SUM(total_cost_usd) / NULLIF(SUM(tasks_completed), 0) as avg_cost
+                 FROM model_performance
+                 WHERE date >= ?1 AND tasks_completed > 0
+                 GROUP BY model
+                 ORDER BY avg_cost DESC",
+            )?;
 
-        let results: Vec<(String, f64)> = stmt
-            .query_map(params![start_str], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .filter_map(|r| r.ok())
-            .collect();
+            let results: Vec<(String, f64)> = stmt
+                .query_map(params![start_str], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .filter_map(|r| r.ok())
+                .collect();
 
-        Ok(results)
+            Ok(results)
+        })
     }
 
     /// Get API calls since a specific timestamp.
     pub fn get_api_calls_since(&self, since: DateTime<Utc>) -> Result<Vec<ApiCall>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_api_calls_since", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let since_str = since.to_rfc3339();
-        let mut stmt = conn.prepare_cached(
-            "SELECT id, timestamp, worker_id, session_id, model,
-                    input_tokens, output_tokens,
-                    cache_creation_tokens, cache_read_tokens,
-                    cost_usd, bead_id, event_type
-             FROM api_calls
-             WHERE timestamp >= ?1
-             ORDER BY timestamp DESC"
-        )?;
+            let since_str = since.to_rfc3339();
+            let mut stmt = conn.prepare_cached(
+                "SELECT id, timestamp, worker_id, session_id, model,
+                        input_tokens, output_tokens,
+                        cache_creation_tokens, cache_read_tokens,
+                        cost_usd, bead_id, event_type
+                 FROM api_calls
+                 WHERE timestamp >= ?1
+                 ORDER BY timestamp DESC"
+            )?;
 
-        let calls: Vec<ApiCall> = stmt
-            .query_map(params![since_str], |row| {
-                Ok(ApiCall {
-                    id: Some(row.get(0)?),
-                    timestamp: DateTime::parse_from_rfc3339(&row.get::<_, String>(1)?)
-                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))?
-                        .with_timezone(&Utc),
-                    worker_id: row.get(2)?,
-                    session_id: row.get(3)?,
-                    model: row.get(4)?,
-                    input_tokens: row.get(5)?,
-                    output_tokens: row.get(6)?,
-                    cache_creation_tokens: row.get(7)?,
-                    cache_read_tokens: row.get(8)?,
-                    cost_usd: row.get(9)?,
-                    bead_id: row.get(10)?,
-                    event_type: row.get(11)?,
-                })
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
+            let calls: Vec<ApiCall> = stmt
+                .query_map(params![since_str], |row| {
+                    Ok(ApiCall {
+                        id: Some(row.get(0)?),
+                        timestamp: DateTime::parse_from_rfc3339(&row.get::<_, String>(1)?)
+                            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))?
+                            .with_timezone(&Utc),
+                        worker_id: row.get(2)?,
+                        session_id: row.get(3)?,
+                        model: row.get(4)?,
+                        input_tokens: row.get(5)?,
+                        output_tokens: row.get(6)?,
+                        cache_creation_tokens: row.get(7)?,
+                        cache_read_tokens: row.get(8)?,
+                        cost_usd: row.get(9)?,
+                        bead_id: row.get(10)?,
+                        event_type: row.get(11)?,
+                    })
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
 
-        Ok(calls)
+            Ok(calls)
+        })
     }
 
     /// Get subscription ID by name.
     pub fn get_subscription_id(&self, name: &str) -> Result<Option<i64>> {
-        let conn = self.conn.lock().map_err(|e| {
-            CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
-        })?;
+        self.with_retry("get_subscription_id", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
 
-        let mut stmt = conn.prepare_cached(
-            "SELECT id FROM subscriptions WHERE name = ?1"
-        )?;
+            let mut stmt = conn.prepare_cached(
+                "SELECT id FROM subscriptions WHERE name = ?1"
+            )?;
 
-        match stmt.query_row(params![name], |row| row.get(0)) {
-            Ok(id) => Ok(Some(id)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(CostError::Database(e)),
-        }
+            match stmt.query_row(params![name], |row| row.get(0)) {
+                Ok(id) => Ok(Some(id)),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                Err(e) => Err(CostError::Database(e)),
+            }
+        })
     }
 }
 
