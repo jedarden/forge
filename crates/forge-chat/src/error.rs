@@ -25,6 +25,14 @@ pub enum ChatError {
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
 
+    /// DNS resolution failed
+    #[error("DNS resolution failed for {host}: {message}")]
+    DnsResolutionFailed { host: String, message: String },
+
+    /// Network unreachable (no internet connection)
+    #[error("Network unreachable: {0}")]
+    NetworkUnreachable(String),
+
     /// Tool not found
     #[error("Tool not found: {0}")]
     ToolNotFound(String),
@@ -79,6 +87,7 @@ impl ChatError {
                 | ChatError::Timeout(_, _)
                 | ChatError::ConnectionFailed(_)
                 | ChatError::RateLimitExceeded(_, _)
+                | ChatError::DnsResolutionFailed { .. }
         )
     }
 
@@ -90,6 +99,8 @@ impl ChatError {
                 | ChatError::Timeout(_, _)
                 | ChatError::ConnectionFailed(_)
                 | ChatError::HttpError(_)
+                | ChatError::DnsResolutionFailed { .. }
+                | ChatError::NetworkUnreachable(_)
         )
     }
 
@@ -116,6 +127,12 @@ impl ChatError {
             ChatError::ConnectionFailed(msg) => {
                 format!("Connection failed: {}. Check your network.", msg)
             }
+            ChatError::DnsResolutionFailed { host, message } => {
+                format!("Cannot resolve hostname '{}': {}. Check DNS settings.", host, message)
+            }
+            ChatError::NetworkUnreachable(msg) => {
+                format!("Network unreachable: {}. Check your internet connection.", msg)
+            }
             ChatError::ApiError(msg) => msg.clone(),
             ChatError::ConfigError(msg) => {
                 format!("Configuration error: {}", msg)
@@ -131,6 +148,8 @@ impl ChatError {
             ChatError::ApiTransientError(_) => "Try again in a few seconds.",
             ChatError::Timeout(_, _) => "Check your internet connection and try again.",
             ChatError::ConnectionFailed(_) => "Verify network connectivity and API availability.",
+            ChatError::DnsResolutionFailed { .. } => "Check DNS settings. Try using a different DNS server (e.g., 8.8.8.8).",
+            ChatError::NetworkUnreachable(_) => "Check your internet connection. Try again once network is available.",
             ChatError::ConfigError(_) => "Check your configuration file at ~/.forge/config.yaml.",
             ChatError::ApiError(msg) if msg.contains("401") || msg.contains("unauthorized") => {
                 "Check your API key configuration."

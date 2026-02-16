@@ -211,6 +211,14 @@ pub struct App {
     selected_worker_index: usize,
     /// Error recovery manager for tracking and recovering from errors
     error_recovery: SharedErrorRecoveryManager,
+    /// Last known good chat backend status (for graceful degradation)
+    last_known_chat_available: bool,
+    /// Timestamp of last successful data fetch
+    last_successful_data_fetch: Option<Instant>,
+    /// Last failed chat query (for retry functionality)
+    last_failed_query: Option<String>,
+    /// Whether retry is available (set when network error occurs)
+    retry_available: bool,
 }
 
 /// Temporary storage for chat exchange data during streaming display.
@@ -322,9 +330,24 @@ fn get_error_guidance(error_message: &str) -> Option<String> {
         return Some("Wait a moment before sending more commands. Rate limits reset automatically.".to_string());
     }
 
-    // Network/connection errors
-    if error_lower.contains("connection") || error_lower.contains("network") || error_lower.contains("timeout") {
-        return Some("Check your internet connection. The API server may be temporarily unavailable.".to_string());
+    // Network unreachable (no internet)
+    if error_lower.contains("network unreachable") || error_lower.contains("no route to host") {
+        return Some("⚠️  Network unreachable. Check your internet connection and try again when online. Last known state is cached.".to_string());
+    }
+
+    // DNS resolution failures
+    if error_lower.contains("dns") || error_lower.contains("failed to lookup address") || error_lower.contains("name or service not known") {
+        return Some("⚠️  DNS resolution failed. Check DNS settings or try using 8.8.8.8 as your DNS server. Click 'r' to retry.".to_string());
+    }
+
+    // Connection timeout
+    if error_lower.contains("timeout") {
+        return Some("⏱️  Request timed out. The server may be slow or unreachable. Click 'r' to retry or check status.".to_string());
+    }
+
+    // Generic connection/network errors
+    if error_lower.contains("connection") || error_lower.contains("network") {
+        return Some("⚠️  Connection failed. Check your internet connection. The API server may be temporarily unavailable. Click 'r' to retry.".to_string());
     }
 
     // Provider errors
@@ -429,6 +452,7 @@ impl App {
         let chat_start = Instant::now();
         info!("⏱️ Initializing chat backend...");
         let chat_backend = Self::init_chat_backend().map(Arc::new);
+        let last_known_chat_available = chat_backend.is_some();
         info!("⏱️ Chat backend initialized in {:?}", chat_start.elapsed());
 
         // Initialize worker launcher and runtime
@@ -518,6 +542,10 @@ impl App {
             paused_workers: std::collections::HashSet::new(),
             selected_worker_index: 0,
             error_recovery: SharedErrorRecoveryManager::new(),
+            last_known_chat_available,
+            last_successful_data_fetch: None,
+            last_failed_query: None,
+            retry_available: false,
         }
     }
 
@@ -552,6 +580,7 @@ impl App {
             chat_backend: None, // Don't initialize in test mode
             chat_response_tx: None,
             chat_response_rx: None,
+            last_known_chat_available: false, // No chat backend in test mode
             chat_pending: false,
             streaming_response: String::new(),
             streaming_position: 0,
@@ -586,6 +615,9 @@ impl App {
             paused_workers: std::collections::HashSet::new(),
             selected_worker_index: 0,
             error_recovery: SharedErrorRecoveryManager::new(),
+            last_successful_data_fetch: None,
+            last_failed_query: None,
+            retry_available: false,
         }
     }
 
@@ -990,6 +1022,14 @@ impl App {
                     info!("❌ Error response: {}", e);
                     let error_msg = format!("Error: {}", e);
                     let guidance = get_error_guidance(&error_msg);
+
+                    // Check if this is a network error that's retryable
+                    let is_retryable = e.is_network_error() || e.is_retryable();
+                    if is_retryable {
+                        self.last_failed_query = Some(query.clone());
+                        self.retry_available = true;
+                    }
+
                     self.chat_history.push(ChatExchange {
                         user_query: query,
                         assistant_response: error_msg,
@@ -1001,7 +1041,12 @@ impl App {
                         metadata: ResponseMetadata::default(),
                         error_guidance: guidance,
                     });
-                    self.status_message = Some(format!("❌ Chat error: {}", e));
+
+                    if is_retryable {
+                        self.status_message = Some(format!("❌ {}: {} | Press 'r' to retry", e, e.suggested_action()));
+                    } else {
+                        self.status_message = Some(format!("❌ Chat error: {}", e));
+                    }
                 }
             }
 
@@ -1342,7 +1387,57 @@ impl App {
             AppEvent::Quit => self.should_quit = true,
             AppEvent::ForceQuit => self.should_quit = true,
             AppEvent::Refresh => {
-                self.status_message = Some("Refreshed".to_string());
+                // In Chat view, if retry is available, retry the last failed query
+                if self.current_view == View::Chat && self.retry_available {
+                    if let Some(query) = self.last_failed_query.clone() {
+                        self.retry_available = false;
+                        self.last_failed_query = None;
+                        self.status_message = Some(format!("🔄 Retrying: {}...", query));
+                        self.chat_pending = true;
+
+                        // Process chat request in background thread
+                        if let Some(backend) = &self.chat_backend {
+                            let backend_clone = Arc::clone(backend);
+                            let query_clone = query.clone();
+
+                            // Create channel if not already created
+                            if self.chat_response_rx.is_none() {
+                                let (tx, rx) = mpsc::channel();
+                                self.chat_response_tx = Some(tx);
+                                self.chat_response_rx = Some(rx);
+                            }
+
+                            let tx = self.chat_response_tx.as_ref().unwrap().clone();
+
+                            // Spawn background thread to process request
+                            std::thread::spawn(move || {
+                                use tracing::info;
+
+                                info!("Chat retry thread started for query: {}", query_clone);
+
+                                let result = match tokio::runtime::Runtime::new() {
+                                    Ok(rt) => rt.block_on(backend_clone.process_command(&query_clone)),
+                                    Err(e) => Err(forge_chat::ChatError::ApiError(format!(
+                                        "Runtime error: {}",
+                                        e
+                                    ))),
+                                };
+
+                                info!("Chat retry completed, result: {:?}", result.is_ok());
+
+                                // Send result back to UI thread
+                                match tx.send((query_clone, result)) {
+                                    Ok(_) => info!("✅ Sent retry response to UI thread via channel"),
+                                    Err(e) => info!("❌ Failed to send retry response: {:?}", e),
+                                }
+                            });
+                        } else {
+                            self.status_message = Some("Chat backend not available for retry".to_string());
+                        }
+                    }
+                } else {
+                    self.status_message = Some("Refreshed".to_string());
+                }
                 self.mark_dirty();
             }
             AppEvent::Cancel => {
