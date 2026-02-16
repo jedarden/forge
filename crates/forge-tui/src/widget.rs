@@ -6,7 +6,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget},
+    widgets::{Block, BorderType, Borders, Paragraph, Widget},
 };
 
 /// Action type for quick actions panel.
@@ -237,30 +237,39 @@ impl<'a> Default for QuickActionsPanel<'a> {
 
 impl<'a> Widget for QuickActionsPanel<'a> {
     fn render(self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
-        // Focus indicator icon: "◆" for focused, "◇" for unfocused
-        let focus_icon = if self.focused { "◆" } else { "◇" };
+        // Enhanced focus indicator: "▶" arrow for focused (clearer than diamond), "▪" for unfocused
+        let focus_icon = if self.focused { "▶" } else { "▪" };
 
-        // Border style: bright cyan for focused, dim for unfocused
-        let border_style = if self.focused {
-            Style::default().fg(Color::LightCyan)
+        // Border type: Double border for focused (highly visible), Normal for unfocused
+        let border_type = if self.focused {
+            BorderType::Double
         } else {
-            Style::default().fg(Color::DarkGray)
+            BorderType::Plain
         };
 
-        // Title style: bold + bright for focused, dim for unfocused
-        let title_style = if self.focused {
+        // Border style: bright cyan with bold for focused, dim for unfocused
+        let border_style = if self.focused {
             Style::default()
-                .fg(Color::LightCyan)
+                .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::DarkGray)
         };
 
-        // Content style: normal for focused, dim for unfocused
+        // Title style: bold + underlined for focused, dim for unfocused
+        let title_style = if self.focused {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+        } else {
+            Style::default().fg(Color::Rgb(80, 80, 80))
+        };
+
+        // Content style: normal for focused, significantly dimmed for unfocused
         let content_style = if self.focused {
             Style::default().fg(Color::White)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(Color::Rgb(80, 80, 80))
         };
 
         // Build legend line
@@ -294,6 +303,7 @@ impl<'a> Widget for QuickActionsPanel<'a> {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(border_type)
                     .border_style(border_style)
                     .title(Span::styled(
                         format!(" {} Quick Actions ", focus_icon),
