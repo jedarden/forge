@@ -59,7 +59,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
 
 use crate::config_watcher::{ConfigEvent, ConfigWatcher, ForgeConfig};
@@ -3579,26 +3579,35 @@ impl App {
     fn draw_panel(&self, frame: &mut Frame, area: Rect, title: &str, content: &str, focused: bool) {
         let theme = self.theme_manager.current();
 
-        // Focus indicator icon: "◆" for focused, "◇" for unfocused
-        let focus_icon = if focused { "◆" } else { "◇" };
+        // Enhanced focus indicator: "▶" arrow for focused (clearer than diamond), "▪" for unfocused
+        let focus_icon = if focused { "▶" } else { "▪" };
 
-        // Border style: use bright focus_highlight for focused, dim for unfocused
-        let border_style = if focused {
-            Style::default().fg(theme.colors.focus_highlight)
+        // Border type: Double border for focused (highly visible), Normal for unfocused
+        let border_type = if focused {
+            BorderType::Double
         } else {
-            Style::default().fg(theme.colors.border_dim)
+            BorderType::Plain
         };
 
-        // Title style: bold + bright for focused, dim for unfocused
-        let title_style = if focused {
+        // Border style: bright focus_highlight for focused, very dim for unfocused
+        let border_style = if focused {
             Style::default()
                 .fg(theme.colors.focus_highlight)
                 .add_modifier(Modifier::BOLD)
         } else {
+            Style::default().fg(theme.colors.border_dim)
+        };
+
+        // Title style: bold + bright + underlined for focused, dim for unfocused
+        let title_style = if focused {
+            Style::default()
+                .fg(theme.colors.focus_highlight)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+        } else {
             Style::default().fg(theme.colors.unfocused_text)
         };
 
-        // Content style: bright for focused panels, dimmed for unfocused
+        // Content style: bright for focused panels, significantly dimmed for unfocused
         let content_style = if focused {
             Style::default().fg(theme.colors.text)
         } else {
@@ -3610,6 +3619,7 @@ impl App {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(border_type)
                     .border_style(border_style)
                     .title(Span::styled(format!(" {} {} ", focus_icon, title), title_style)),
             )

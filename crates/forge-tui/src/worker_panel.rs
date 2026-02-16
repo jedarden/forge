@@ -8,7 +8,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget},
+    widgets::{Block, BorderType, Borders, Paragraph, Widget},
 };
 use std::collections::HashSet;
 
@@ -250,29 +250,39 @@ impl<'a> WorkerPanel<'a> {
 
 impl Widget for WorkerPanel<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // Focus indicator icon: "◆" for focused, "◇" for unfocused
-        let focus_icon = if self.focused { "◆" } else { "◇" };
+        // Enhanced focus indicator: "▶" arrow for focused (clearer than diamond), "▪" for unfocused
+        let focus_icon = if self.focused { "▶" } else { "▪" };
 
-        // Border style: bright cyan for focused, dim for unfocused
+        // Border type: Double border for focused (highly visible), Normal for unfocused
+        let border_type = if self.focused {
+            BorderType::Double
+        } else {
+            BorderType::Plain
+        };
+
+        // Border style: bright cyan with bold for focused, dim for unfocused
         let border_style = if self.focused {
-            Style::default().fg(Color::LightCyan)
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::DarkGray)
         };
 
-        // Title style: bold + bright for focused, dim for unfocused
+        // Title style: bold + underlined for focused, dim for unfocused
         let title_style = if self.focused {
             Style::default()
-                .fg(Color::LightCyan)
-                .add_modifier(Modifier::BOLD)
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(Color::Rgb(80, 80, 80))
         };
 
         let lines = self.build_lines();
         let paragraph = Paragraph::new(lines).block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(border_type)
                 .border_style(border_style)
                 .title(Span::styled(
                     format!(" {} Worker Pool Management ", focus_icon),

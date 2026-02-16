@@ -116,8 +116,10 @@ impl Theme {
                 text: Color::White,
                 text_dim: Color::Gray,
                 border_dim: Color::DarkGray,
-                focus_highlight: Color::LightGreen,
-                unfocused_text: Color::DarkGray,
+                // Enhanced: Bright cyan for maximum visibility
+                focus_highlight: Color::Cyan,
+                // Enhanced: More dimmed unfocused text (RGB for precise control)
+                unfocused_text: Color::Rgb(80, 80, 80),
                 status_healthy: Color::Green,
                 status_warning: Color::Yellow,
                 status_error: Color::Red,
@@ -140,8 +142,10 @@ impl Theme {
                 text: Color::White,
                 text_dim: Color::DarkGray,
                 border_dim: Color::Black,
-                focus_highlight: Color::LightGreen,
-                unfocused_text: Color::DarkGray,
+                // Enhanced: Bright yellow for strong contrast on dark
+                focus_highlight: Color::LightYellow,
+                // Enhanced: Very dim unfocused text
+                unfocused_text: Color::Rgb(60, 60, 60),
                 status_healthy: Color::LightGreen,
                 status_warning: Color::LightYellow,
                 status_error: Color::LightRed,
@@ -164,8 +168,10 @@ impl Theme {
                 text: Color::Black,
                 text_dim: Color::DarkGray,
                 border_dim: Color::Gray,
-                focus_highlight: Color::Blue,
-                unfocused_text: Color::Gray,
+                // Enhanced: Deep blue for visibility on light background
+                focus_highlight: Color::Rgb(0, 100, 255),
+                // Enhanced: Light gray for subdued unfocused
+                unfocused_text: Color::Rgb(160, 160, 160),
                 status_healthy: Color::Green,
                 status_warning: Color::Yellow,
                 status_error: Color::Red,
@@ -188,8 +194,10 @@ impl Theme {
                 text: Color::White,
                 text_dim: Color::LightMagenta,
                 border_dim: Color::DarkGray,
-                focus_highlight: Color::LightMagenta,
-                unfocused_text: Color::DarkGray,
+                // Enhanced: Neon cyan for cyberpunk aesthetic
+                focus_highlight: Color::Rgb(0, 255, 255),
+                // Enhanced: Very dim for strong neon contrast
+                unfocused_text: Color::Rgb(70, 70, 80),
                 status_healthy: Color::Green,
                 status_warning: Color::Yellow,
                 status_error: Color::Red,
