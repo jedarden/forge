@@ -39,6 +39,7 @@ pub mod activity_panel;
 pub mod alert;
 pub mod app;
 pub mod bead;
+pub mod config_error_handler;
 pub mod config_watcher;
 pub mod cost_panel;
 pub mod data;
@@ -58,7 +59,7 @@ pub mod view;
 pub mod widget;
 pub mod worker_panel;
 
-pub use config_watcher::{ConfigEvent, ConfigWatcher, ForgeConfig};
+pub use config_watcher::{ConfigEvent, ConfigLoadError, ConfigWatcher, ForgeConfig};
 pub use widget::{
     HotkeyHints, ProgressBar, ProgressColorMode, ProgressFillStyle, QuickAction, QuickActionType,
     QuickActionsPanel, SparklineDirection, SparklineWidget, StatusIndicator, render_sparkline,
