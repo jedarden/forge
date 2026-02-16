@@ -209,16 +209,7 @@ impl ClaudeApiProvider {
             .send()
             .await
             .map_err(|e| {
-                if e.is_timeout() {
-                    ChatError::Timeout(
-                        self.config.timeout_secs,
-                        "API request timed out".to_string(),
-                    )
-                } else if e.is_connect() {
-                    ChatError::ConnectionFailed(format!("Could not connect to API: {}", e))
-                } else {
-                    ChatError::HttpError(e)
-                }
+                Self::classify_network_error(e, &self.base_url, self.config.timeout_secs)
             })?;
 
         let status = response.status();
@@ -241,6 +232,70 @@ impl ClaudeApiProvider {
         response.json().await.map_err(|e| {
             ChatError::ApiError(format!("Failed to parse API response: {}", e))
         })
+    }
+
+    /// Classify a reqwest error into a specific ChatError variant.
+    ///
+    /// This function provides detailed error classification for better user guidance:
+    /// - Timeout errors: Connection or read timeouts
+    /// - DNS resolution failures: Cannot resolve hostname
+    /// - Network unreachable: No internet connection
+    /// - Connection failures: Generic connection issues
+    fn classify_network_error(error: reqwest::Error, base_url: &str, timeout_secs: u64) -> ChatError {
+        let error_string = error.to_string().to_lowercase();
+
+        // Check for timeout first
+        if error.is_timeout() {
+            return ChatError::Timeout(
+                timeout_secs,
+                format!("Request to {} timed out after {}s", base_url, timeout_secs),
+            );
+        }
+
+        // Check for DNS resolution failures
+        // reqwest error messages include "dns error" or "failed to lookup address"
+        if error_string.contains("dns")
+            || error_string.contains("failed to lookup address")
+            || error_string.contains("name or service not known")
+            || error_string.contains("nodename nor servname provided")
+        {
+            // Extract hostname from base_url
+            let host = base_url
+                .strip_prefix("https://")
+                .or_else(|| base_url.strip_prefix("http://"))
+                .unwrap_or(base_url)
+                .split('/')
+                .next()
+                .unwrap_or(base_url);
+
+            return ChatError::DnsResolutionFailed {
+                host: host.to_string(),
+                message: error.to_string(),
+            };
+        }
+
+        // Check for network unreachable (no internet)
+        // Common patterns: "network unreachable", "host unreachable", "no route to host"
+        if error_string.contains("network unreachable")
+            || error_string.contains("no route to host")
+            || error_string.contains("host unreachable")
+        {
+            return ChatError::NetworkUnreachable(format!(
+                "Cannot reach {}. Check your internet connection.",
+                base_url
+            ));
+        }
+
+        // Check for connection failures (refused, reset, etc.)
+        if error.is_connect() {
+            return ChatError::ConnectionFailed(format!(
+                "Could not connect to {}: {}",
+                base_url, error
+            ));
+        }
+
+        // Fallback to generic HTTP error
+        ChatError::HttpError(error)
     }
 
     /// Parse the API response into text and tool calls.
@@ -308,16 +363,7 @@ impl ClaudeApiProvider {
             .send()
             .await
             .map_err(|e| {
-                if e.is_timeout() {
-                    ChatError::Timeout(
-                        self.config.timeout_secs,
-                        "API request timed out".to_string(),
-                    )
-                } else if e.is_connect() {
-                    ChatError::ConnectionFailed(format!("Could not connect to API: {}", e))
-                } else {
-                    ChatError::HttpError(e)
-                }
+                Self::classify_network_error(e, &self.base_url, self.config.timeout_secs)
             })?;
 
         let status = response.status();
