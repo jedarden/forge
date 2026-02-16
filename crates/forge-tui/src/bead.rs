@@ -24,6 +24,9 @@ use tracing::debug;
 // Re-export TaskScorer for use in TUI
 pub use forge_worker::scorer::{ScoredBead, ScoreComponents, TaskScorer};
 
+// Re-export stuck detection for use in TUI
+pub use forge_core::stuck_detection::{ActivityChecks, StuckDetectionConfig, StuckTask, StuckTaskDetector};
+
 /// Default polling interval in seconds for bead updates.
 const DEFAULT_POLL_INTERVAL_SECS: u64 = 30; // Increased from 5 to reduce blocking
 
@@ -375,6 +378,12 @@ pub struct BeadManager {
 
     /// Whether br CLI is available
     br_available: Option<bool>,
+
+    /// Stuck task detector
+    stuck_detector: StuckTaskDetector,
+
+    /// Cached stuck tasks
+    stuck_tasks: Vec<StuckTask>,
 }
 
 impl Default for BeadManager {
@@ -392,6 +401,8 @@ impl BeadManager {
             last_poll: None,
             poll_interval: Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS),
             br_available: None,
+            stuck_detector: StuckTaskDetector::with_defaults(),
+            stuck_tasks: Vec::new(),
         }
     }
 
@@ -400,7 +411,8 @@ impl BeadManager {
         let path = path.into();
         if !self.workspaces.contains(&path) {
             self.workspaces.push(path.clone());
-            self.cache.insert(path.clone(), WorkspaceBeads::new(path));
+            self.cache.insert(path.clone(), WorkspaceBeads::new(path.clone()));
+            self.stuck_detector.add_workspace(path);
         }
     }
 
@@ -472,6 +484,14 @@ impl BeadManager {
         // Poll each workspace
         for workspace in self.workspaces.clone() {
             if self.poll_workspace(&workspace) {
+                changed = true;
+            }
+        }
+
+        // Detect stuck tasks
+        if let Ok(stuck) = self.stuck_detector.detect_stuck_tasks() {
+            if stuck != self.stuck_tasks {
+                self.stuck_tasks = stuck;
                 changed = true;
             }
         }
@@ -924,6 +944,28 @@ impl BeadManager {
         self.format_task_queue_full_filtered_with_search(priority_filter, "")
     }
 
+    /// Get stuck tasks detected by the stuck task detector.
+    pub fn get_stuck_tasks(&self) -> &[StuckTask] {
+        &self.stuck_tasks
+    }
+
+    /// Timeout a stuck task, making it available for reassignment.
+    pub fn timeout_stuck_task(&self, task: &StuckTask) -> Result<(), String> {
+        self.stuck_detector
+            .timeout_task(&task.workspace, &task.bead_id)
+            .map_err(|e| format!("Failed to timeout task: {}", e))
+    }
+
+    /// Check if a bead is marked as stuck.
+    pub fn is_bead_stuck(&self, bead_id: &str) -> bool {
+        self.stuck_tasks.iter().any(|t| t.bead_id == bead_id)
+    }
+
+    /// Get activity information for a bead.
+    pub fn get_bead_activity(&self, bead_id: &str) -> Option<&ActivityChecks> {
+        self.stuck_detector.get_cached_activity(bead_id)
+    }
+
     /// Format full task queue for the Tasks view with optional priority filter and search query.
     ///
     /// When `priority_filter` is Some(p), only beads with priority == p are shown.
@@ -981,15 +1023,50 @@ impl BeadManager {
             for (_ws, bead) in &data.in_progress {
                 let assignee = bead.assignee.as_deref().unwrap_or("-");
                 let score = bead.score();
+
+                // Check if task is stuck
+                let stuck_indicator = if self.is_bead_stuck(&bead.id) {
+                    " ⚠️ STUCK"
+                } else {
+                    ""
+                };
+
                 lines.push(format!(
-                    "{} {:8} {} | {:3} | {} [{}]",
+                    "{} {:8} {} | {:3} | {} [{}]{}",
                     bead.priority_indicator(),
                     bead.id,
                     bead.priority_str(),
                     score,
                     truncate_str(&bead.title, 25),
-                    truncate_str(assignee, 10)
+                    truncate_str(assignee, 10),
+                    stuck_indicator
                 ));
+            }
+            lines.push(String::new());
+        }
+
+        // Stuck tasks section
+        if !self.stuck_tasks.is_empty() {
+            lines.push("⚠️  STUCK TASKS (Timeout Available)".to_string());
+            lines.push("─────────────────────────────────────────────────────".to_string());
+            for task in &self.stuck_tasks {
+                let duration_mins = task.in_progress_duration.as_secs() / 60;
+                lines.push(format!(
+                    "⚠️  {:8} | {}m | {}",
+                    task.bead_id,
+                    duration_mins,
+                    truncate_str(&task.title, 30)
+                ));
+                lines.push(format!(
+                    "    Reason: {}",
+                    truncate_str(&task.reason, 50)
+                ));
+                if let Some(activity) = self.get_bead_activity(&task.bead_id) {
+                    lines.push(format!(
+                        "    Activity: {}",
+                        activity.summary()
+                    ));
+                }
             }
             lines.push(String::new());
         }

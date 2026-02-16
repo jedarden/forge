@@ -34,6 +34,7 @@ pub mod recovery;
 #[cfg(feature = "self-update")]
 pub mod self_update;
 pub mod status;
+pub mod stuck_detection;
 pub mod types;
 pub mod watcher;
 pub mod worker_perf;
@@ -41,6 +42,11 @@ pub mod worker_perf;
 // Re-export worker performance types
 pub use worker_perf::{
     TaskEvent, TaskPerfMetrics, WorkerPerfSummary, WorkerPerfTracker,
+};
+
+// Re-export stuck detection types
+pub use stuck_detection::{
+    ActivityChecks, StuckDetectionConfig, StuckTask, StuckTaskDetector,
 };
 
 // Re-export main types for convenience
