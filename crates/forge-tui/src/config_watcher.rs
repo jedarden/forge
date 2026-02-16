@@ -19,12 +19,14 @@
 //! - Graceful degradation on invalid config (keeps old config)
 //! - Emits events for UI updates
 
+use std::io;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Deserialize;
+use thiserror::Error;
 use tracing::{debug, info, warn};
 
 /// Default debounce duration for config changes (50ms).
@@ -33,6 +35,89 @@ pub const DEFAULT_DEBOUNCE_MS: u64 = 50;
 /// Config file path (typically ~/.forge/config.yaml).
 pub fn config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".forge/config.yaml"))
+}
+
+/// Format a YAML parse error with line/column information if available.
+fn format_yaml_error(error: &serde_yaml::Error) -> String {
+    if let Some(location) = error.location() {
+        format!(
+            "YAML parse error at line {}, column {}: {}",
+            location.line(),
+            location.column(),
+            error
+        )
+    } else {
+        format!("YAML parse error: {}", error)
+    }
+}
+
+/// Errors that can occur when loading configuration.
+#[derive(Debug, Error)]
+pub enum ConfigLoadError {
+    /// Could not determine home directory
+    #[error("Could not determine home directory")]
+    NoHomePath,
+
+    /// Config file not found
+    #[error("Config file not found: {0}")]
+    NotFound(PathBuf),
+
+    /// Error reading config file
+    #[error("Failed to read config file {path}: {error}")]
+    ReadError {
+        path: PathBuf,
+        #[source]
+        error: io::Error,
+    },
+
+    /// Error parsing YAML
+    #[error("Failed to parse config YAML in {path}: {}", format_yaml_error(error))]
+    ParseError {
+        path: PathBuf,
+        error: serde_yaml::Error,
+    },
+
+    /// Config validation failed
+    #[error("Config validation failed: {0}")]
+    ValidationError(String),
+}
+
+impl From<String> for ConfigLoadError {
+    fn from(s: String) -> Self {
+        ConfigLoadError::ValidationError(s)
+    }
+}
+
+impl ConfigLoadError {
+    /// Get the line number where the error occurred (if available).
+    pub fn line_number(&self) -> Option<usize> {
+        match self {
+            ConfigLoadError::ParseError { error, .. } => {
+                error.location().map(|loc| loc.line())
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the column number where the error occurred (if available).
+    pub fn column_number(&self) -> Option<usize> {
+        match self {
+            ConfigLoadError::ParseError { error, .. } => {
+                error.location().map(|loc| loc.column())
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the config file path (if applicable).
+    pub fn path(&self) -> Option<&PathBuf> {
+        match self {
+            ConfigLoadError::NotFound(path)
+            | ConfigLoadError::ReadError { path, .. }
+            | ConfigLoadError::ParseError { path, .. } => Some(path),
+            _ => None,
+        }
+    }
 }
 
 /// Configuration events emitted when config changes.
@@ -93,6 +178,14 @@ impl ForgeConfig {
         Self::load_from(&path)
     }
 
+    /// Load configuration from the default path with detailed error reporting.
+    ///
+    /// Returns a Result with detailed error information for display to users.
+    pub fn load_with_error() -> Result<Self, ConfigLoadError> {
+        let path = config_path().ok_or(ConfigLoadError::NoHomePath)?;
+        Self::load_from_with_error(&path)
+    }
+
     /// Load configuration from a specific path with graceful fallback.
     ///
     /// This method attempts to load and parse the config file. If the file
@@ -123,6 +216,35 @@ impl ForgeConfig {
         Self::parse_with_fallback(&content)
     }
 
+    /// Load configuration from a specific path with detailed error reporting.
+    ///
+    /// Returns a Result with detailed error information for display to users.
+    pub fn load_from_with_error(path: &PathBuf) -> Result<Self, ConfigLoadError> {
+        if !path.exists() {
+            return Err(ConfigLoadError::NotFound(path.clone()));
+        }
+
+        // Try to read the file
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| ConfigLoadError::ReadError {
+                path: path.clone(),
+                error: e,
+            })?;
+
+        // Try to parse as full YAML
+        match serde_yaml::from_str::<ForgeConfig>(&content) {
+            Ok(config) => {
+                // Validate and return errors if invalid
+                config.validate()?;
+                Ok(config)
+            }
+            Err(e) => Err(ConfigLoadError::ParseError {
+                path: path.clone(),
+                error: e,
+            }),
+        }
+    }
+
     /// Parse configuration from YAML string.
     ///
     /// Returns None if parsing fails completely.
@@ -151,8 +273,10 @@ impl ForgeConfig {
                 Some(config)
             }
             Err(e) => {
+                // Format detailed error message with line/column information
+                let error_msg = format_yaml_error(&e);
                 warn!(
-                    error = %e,
+                    error = %error_msg,
                     "Failed to parse config YAML - attempting partial parse"
                 );
 
@@ -723,5 +847,98 @@ dashboard:
                 println!("Received event: {:?}", other);
             }
         }
+    }
+
+    #[test]
+    fn test_load_with_error_invalid_yaml() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.yaml");
+
+        // Write invalid YAML
+        let invalid_content = "invalid: [yaml";
+        fs::write(&config_path, invalid_content).unwrap();
+
+        let result = ForgeConfig::load_from_with_error(&config_path);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        match err {
+            ConfigLoadError::ParseError { path, error: _ } => {
+                assert_eq!(path, config_path);
+            }
+            other => panic!("Expected ParseError, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_load_with_error_missing_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("missing.yaml");
+
+        let result = ForgeConfig::load_from_with_error(&config_path);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        match err {
+            ConfigLoadError::NotFound(path) => {
+                assert_eq!(path, config_path);
+            }
+            other => panic!("Expected NotFound, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_load_with_error_invalid_values() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.yaml");
+
+        // Write config with invalid values
+        let invalid_content = r#"
+dashboard:
+  refresh_interval_ms: 50  # Too low
+  max_fps: 200  # Too high
+"#;
+        fs::write(&config_path, invalid_content).unwrap();
+
+        let result = ForgeConfig::load_from_with_error(&config_path);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        match err {
+            ConfigLoadError::ValidationError(msg) => {
+                assert!(msg.contains("refresh_interval_ms") || msg.contains("max_fps"));
+            }
+            other => panic!("Expected ValidationError, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_config_error_line_column_extraction() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.yaml");
+
+        // Write invalid YAML with syntax error
+        let invalid_content = r#"
+dashboard:
+  refresh_interval_ms: [invalid
+"#;
+        fs::write(&config_path, invalid_content).unwrap();
+
+        let result = ForgeConfig::load_from_with_error(&config_path);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        // Should have line number from YAML parser
+        assert!(err.line_number().is_some() || err.column_number().is_some());
+    }
+
+    #[test]
+    fn test_format_yaml_error_with_location() {
+        let yaml_str = "invalid: [syntax";
+        let err: serde_yaml::Error = serde_yaml::from_str::<serde_yaml::Value>(yaml_str).unwrap_err();
+
+        let formatted = format_yaml_error(&err);
+        // Should include "line" or "YAML parse error"
+        assert!(formatted.contains("line") || formatted.contains("YAML parse error"));
     }
 }

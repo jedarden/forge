@@ -28,7 +28,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use forge_core::{LogGuard, init_logging};
 use forge_init::{detection, generator};
-use forge_tui::App;
+use forge_tui::{App, ForgeConfig};
 use tracing::{error, info};
 
 /// FORGE Agent Orchestration Dashboard
@@ -173,6 +173,14 @@ fn main() -> ExitCode {
         }
 
         eprintln!("\n✅ Setup complete! Starting FORGE dashboard...\n");
+    }
+
+    // Validate config file if it exists
+    if !needs_onboarding() {
+        if let Err(e) = validate_config() {
+            eprintln!("\n{}", e);
+            return ExitCode::from(1);
+        }
     }
 
     info!("Starting FORGE dashboard");
@@ -347,6 +355,118 @@ fn run_onboarding() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("   Config: {}", config_path.display());
     eprintln!("   Launcher: {}", launcher_path.display());
 
+    Ok(())
+}
+
+/// Validate the config file and offer recovery if invalid.
+fn validate_config() -> Result<(), String> {
+    use std::io::{self, Write};
+
+    match ForgeConfig::load_with_error() {
+        Ok(_config) => {
+            info!("Configuration validated successfully");
+            Ok(())
+        }
+        Err(e) => {
+            // Format the error with line/column information
+            eprintln!("❌ Configuration Error");
+            eprintln!();
+
+            let path_str = e.path().map(|p| p.display().to_string())
+                .unwrap_or_else(|| "~/.forge/config.yaml".to_string());
+
+            if let (Some(line), Some(col)) = (e.line_number(), e.column_number()) {
+                eprintln!("  File: {}", path_str);
+                eprintln!("  Line: {}, Column: {}", line, col);
+                eprintln!("  Error: {}", e);
+            } else {
+                eprintln!("  {}", e);
+            }
+            eprintln!();
+
+            // Offer recovery options
+            eprintln!("Recovery options:");
+            eprintln!("  1) Reset to default configuration (creates backup)");
+            eprintln!("  2) Use defaults without modifying file (temporary)");
+            eprintln!("  3) Exit and fix manually");
+            eprintln!();
+            eprint!("Choose option [1-3]: ");
+            io::stdout().flush().map_err(|e| e.to_string())?;
+
+            let mut choice = String::new();
+            io::stdin().read_line(&mut choice).map_err(|e| e.to_string())?;
+
+            match choice.trim() {
+                "1" => {
+                    if let Err(e) = reset_config_to_defaults() {
+                        return Err(format!("Failed to reset config: {}", e));
+                    }
+                    eprintln!("✅ Configuration reset to defaults");
+                    eprintln!("   Previous config backed up");
+                    eprintln!();
+                    Ok(())
+                }
+                "2" => {
+                    eprintln!("⚠️  Using default configuration (file not modified)");
+                    eprintln!("   Fix the config file manually or delete it to regenerate");
+                    eprintln!();
+                    Ok(())
+                }
+                "3" | "" => {
+                    Err("Exiting. Please fix the config file and try again.".to_string())
+                }
+                _ => {
+                    Err("Invalid choice. Exiting.".to_string())
+                }
+            }
+        }
+    }
+}
+
+/// Reset config file to defaults with backup.
+fn reset_config_to_defaults() -> Result<(), Box<dyn std::error::Error>> {
+    let forge_dir = get_forge_dir();
+    let config_path = forge_dir.join("config.yaml");
+
+    // Create backup
+    if config_path.exists() {
+        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+        let backup_path = forge_dir.join(format!("config.yaml.backup.{}", timestamp));
+        std::fs::copy(&config_path, &backup_path)?;
+        info!("Created config backup: {}", backup_path.display());
+    }
+
+    // Generate default config
+    let default_config = r#"# FORGE Configuration
+# This file was automatically generated after a config error.
+
+dashboard:
+  refresh_interval_ms: 1000
+  max_fps: 60
+  default_layout: overview
+
+theme:
+  name: default
+
+cost_tracking:
+  enabled: true
+  budget_warning_threshold: 70
+  budget_critical_threshold: 90
+  # monthly_budget_usd: 100.0
+
+# Chat backend configuration (optional)
+# Uncomment and configure if using the chat feature:
+# chat_backend:
+#   command: claude-code
+#   args:
+#     - --headless
+#     - --model
+#     - sonnet
+#   model: sonnet
+"#;
+
+    std::fs::write(&config_path, default_config)?;
+    info!("Reset config to defaults: {}", config_path.display());
     Ok(())
 }
 

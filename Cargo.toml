@@ -19,6 +19,7 @@ forge-init = { path = "crates/forge-init" }
 clap.workspace = true
 crossterm.workspace = true
 tracing.workspace = true
+chrono.workspace = true
 dirs = "5.0"
 
 [workspace]
