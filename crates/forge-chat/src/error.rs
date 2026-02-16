@@ -5,9 +5,13 @@ use thiserror::Error;
 /// Chat backend errors.
 #[derive(Debug, Error)]
 pub enum ChatError {
-    /// Rate limit exceeded
+    /// Rate limit exceeded (local rate limiter)
     #[error("Rate limit exceeded: {0} commands/minute. Try again in {1}s")]
     RateLimitExceeded(u32, u64),
+
+    /// API rate limit exceeded (from 429 response)
+    #[error("API rate limited. Retry after {0}s")]
+    ApiRateLimitExceeded(u64),
 
     /// API request failed (transient, retryable)
     #[error("API request failed (transient): {0}")]
@@ -87,6 +91,7 @@ impl ChatError {
                 | ChatError::Timeout(_, _)
                 | ChatError::ConnectionFailed(_)
                 | ChatError::RateLimitExceeded(_, _)
+                | ChatError::ApiRateLimitExceeded(_)
                 | ChatError::DnsResolutionFailed { .. }
         )
     }
@@ -106,7 +111,16 @@ impl ChatError {
 
     /// Check if this error is a rate limit error.
     pub fn is_rate_limit(&self) -> bool {
-        matches!(self, ChatError::RateLimitExceeded(_, _))
+        matches!(self, ChatError::RateLimitExceeded(_, _) | ChatError::ApiRateLimitExceeded(_))
+    }
+
+    /// Get the retry-after duration for rate limit errors.
+    pub fn retry_after_secs(&self) -> Option<u64> {
+        match self {
+            ChatError::RateLimitExceeded(_, wait) => Some(*wait),
+            ChatError::ApiRateLimitExceeded(wait) => Some(*wait),
+            _ => None,
+        }
     }
 
     /// Get a user-friendly error message.
@@ -116,6 +130,12 @@ impl ChatError {
                 format!(
                     "Too many requests ({}/min). Please wait {} seconds.",
                     limit, wait
+                )
+            }
+            ChatError::ApiRateLimitExceeded(wait) => {
+                format!(
+                    "API rate limit exceeded. Please wait {} seconds before retrying.",
+                    wait
                 )
             }
             ChatError::ApiTransientError(msg) => {
@@ -145,6 +165,7 @@ impl ChatError {
     pub fn suggested_action(&self) -> &'static str {
         match self {
             ChatError::RateLimitExceeded(_, _) => "Wait a moment before sending more commands.",
+            ChatError::ApiRateLimitExceeded(_) => "Wait for the API rate limit to reset. This will retry automatically.",
             ChatError::ApiTransientError(_) => "Try again in a few seconds.",
             ChatError::Timeout(_, _) => "Check your internet connection and try again.",
             ChatError::ConnectionFailed(_) => "Verify network connectivity and API availability.",
@@ -164,8 +185,53 @@ impl ChatError {
     pub fn from_http_status(status: u16, body: &str) -> Self {
         match status {
             429 => {
-                // Parse retry-after if available
-                ChatError::RateLimitExceeded(10, 60) // Default values
+                // Use default retry-after of 60 seconds
+                // Note: retry-after header is parsed separately in parse_http_status_with_headers
+                ChatError::ApiRateLimitExceeded(60)
+            }
+            408 => ChatError::Timeout(30, "Request timeout".to_string()),
+            500 | 502 | 503 | 504 => {
+                ChatError::ApiTransientError(format!("Server error ({}): {}", status, body))
+            }
+            401 | 403 => ChatError::ApiError(format!("Authentication error ({}): {}", status, body)),
+            _ => ChatError::ApiError(format!("HTTP {}: {}", status, body)),
+        }
+    }
+
+    /// Parse retry-after header from a 429 response.
+    ///
+    /// The retry-after header can be either:
+    /// - An integer (seconds to wait)
+    /// - An HTTP-date (absolute time)
+    ///
+    /// This function returns the number of seconds to wait.
+    pub fn parse_retry_after(header_value: &str) -> Option<u64> {
+        // Try parsing as integer (seconds)
+        if let Ok(seconds) = header_value.trim().parse::<u64>() {
+            return Some(seconds);
+        }
+
+        // Try parsing as HTTP-date
+        // Format: "Wed, 21 Oct 2015 07:28:00 GMT"
+        if let Ok(retry_time) = chrono::DateTime::parse_from_rfc2822(header_value) {
+            let now = chrono::Utc::now();
+            let duration = retry_time.signed_duration_since(now);
+            if duration.num_seconds() > 0 {
+                return Some(duration.num_seconds() as u64);
+            }
+        }
+
+        None
+    }
+
+    /// Classify an HTTP response into appropriate error type with retry-after parsing.
+    pub fn from_http_response(status: u16, body: &str, retry_after: Option<&str>) -> Self {
+        match status {
+            429 => {
+                let wait_secs = retry_after
+                    .and_then(Self::parse_retry_after)
+                    .unwrap_or(60);
+                ChatError::ApiRateLimitExceeded(wait_secs)
             }
             408 => ChatError::Timeout(30, "Request timeout".to_string()),
             500 | 502 | 503 | 504 => {

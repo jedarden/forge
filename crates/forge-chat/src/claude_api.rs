@@ -149,7 +149,7 @@ impl ClaudeApiProvider {
     /// - Network timeouts
     /// - Connection failures
     /// - 5xx server errors
-    /// - Rate limit (429) responses
+    /// - Rate limit (429) responses (with retry-after header)
     async fn send_request_with_retry(&self, request: &ApiRequest) -> Result<ApiResponse> {
         let mut attempt = 0;
         let mut delay = Duration::from_millis(INITIAL_RETRY_DELAY_MS);
@@ -168,18 +168,40 @@ impl ClaudeApiProvider {
                     return Ok(response);
                 }
                 Err(ref e) if e.is_retryable() && attempt <= MAX_RETRIES => {
+                    // For rate limit errors, use the retry-after duration
+                    let wait_duration = if let Some(retry_after_secs) = e.retry_after_secs() {
+                        let retry_after = Duration::from_secs(retry_after_secs);
+
+                        // Telemetry: Log rate limit event
+                        info!(
+                            event = "api_rate_limited",
+                            attempt,
+                            retry_after_secs,
+                            model = %self.config.model,
+                            "API rate limit encountered (429), waiting for retry-after duration"
+                        );
+
+                        retry_after
+                    } else {
+                        delay
+                    };
+
                     warn!(
+                        event = "api_retry",
                         attempt,
                         max_retries = MAX_RETRIES,
-                        delay_ms = delay.as_millis(),
+                        delay_ms = wait_duration.as_millis(),
                         error = %e,
+                        is_rate_limit = e.is_rate_limit(),
                         "API request failed, retrying with backoff"
                     );
 
-                    tokio::time::sleep(delay).await;
+                    tokio::time::sleep(wait_duration).await;
 
-                    // Exponential backoff with cap
-                    delay = std::cmp::min(delay * 2, MAX_RETRY_DELAY);
+                    // Exponential backoff with cap (only for non-rate-limit errors)
+                    if e.retry_after_secs().is_none() {
+                        delay = std::cmp::min(delay * 2, MAX_RETRY_DELAY);
+                    }
                 }
                 Err(e) => {
                     if attempt > 1 {
@@ -215,12 +237,20 @@ impl ClaudeApiProvider {
         let status = response.status();
 
         if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
             let status_code = status.as_u16();
+
+            // Extract retry-after header if present (convert to owned String)
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+
+            let body = response.text().await.unwrap_or_default();
 
             // Check if this is a retryable error
             if matches!(status_code, 429 | 500 | 502 | 503 | 504) {
-                return Err(ChatError::from_http_status(status_code, &body));
+                return Err(ChatError::from_http_response(status_code, &body, retry_after.as_deref()));
             }
 
             return Err(ChatError::ApiError(format!(
@@ -369,8 +399,22 @@ impl ClaudeApiProvider {
         let status = response.status();
 
         if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
             let status_code = status.as_u16();
+
+            // Extract retry-after header if present (convert to owned String)
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+
+            let body = response.text().await.unwrap_or_default();
+
+            // Use from_http_response for proper error classification
+            if matches!(status_code, 429 | 500 | 502 | 503 | 504) {
+                return Err(ChatError::from_http_response(status_code, &body, retry_after.as_deref()));
+            }
+
             return Err(ChatError::ApiError(format!(
                 "API error ({}): {}",
                 status_code, body
