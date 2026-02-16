@@ -135,6 +135,7 @@
 //! - `FORGE_WORKSPACE`: Working directory path
 
 pub mod bead_queue;
+pub mod crash_recovery;
 pub mod discovery;
 pub mod health;
 pub mod launcher;
@@ -147,6 +148,10 @@ pub mod types;
 
 // Re-export main types for convenience
 pub use bead_queue::{BeadAllocation, BeadQueueManager, BeadQueueReader, QueuedBead};
+pub use crash_recovery::{
+    CrashAction, CrashRecord, CrashRecoveryConfig, CrashRecoveryManager, CRASH_WINDOW_SECS,
+    MAX_CRASHES_IN_WINDOW,
+};
 pub use discovery::{DiscoveredWorker, DiscoveryResult, WorkerType, discover_workers};
 pub use health::{
     HealthCheckResult, HealthCheckType, HealthErrorType, HealthLevel, HealthMonitor,
