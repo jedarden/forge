@@ -56,8 +56,8 @@ use forge_core::types::WorkerStatus;
 /// Default health check interval in seconds.
 pub const DEFAULT_CHECK_INTERVAL_SECS: u64 = 30;
 
-/// Default stale activity threshold in seconds (5 minutes).
-pub const DEFAULT_STALE_THRESHOLD_SECS: i64 = 300;
+/// Default stale activity threshold in seconds (15 minutes).
+pub const DEFAULT_STALE_THRESHOLD_SECS: i64 = 900;
 
 /// Default memory limit in MB (1GB).
 pub const DEFAULT_MEMORY_LIMIT_MB: u64 = 1024;
@@ -815,7 +815,7 @@ mod tests {
     fn test_health_monitor_config_default() {
         let config = HealthMonitorConfig::default();
         assert_eq!(config.check_interval_secs, 30);
-        assert_eq!(config.stale_activity_threshold_secs, 300);
+        assert_eq!(config.stale_activity_threshold_secs, 900); // 15 minutes
         assert!(config.enable_pid_check);
         assert!(config.enable_activity_check);
     }
@@ -971,7 +971,7 @@ mod tests {
     #[test]
     fn test_check_activity_fresh_recent() {
         let config = HealthMonitorConfig {
-            stale_activity_threshold_secs: 300,
+            stale_activity_threshold_secs: 900, // 15 minutes
             ..Default::default()
         };
         let temp_dir = TempDir::new().unwrap();
@@ -995,7 +995,7 @@ mod tests {
     #[test]
     fn test_check_activity_fresh_stale() {
         let config = HealthMonitorConfig {
-            stale_activity_threshold_secs: 300,
+            stale_activity_threshold_secs: 900, // 15 minutes
             ..Default::default()
         };
         let temp_dir = TempDir::new().unwrap();
@@ -1008,7 +1008,7 @@ mod tests {
         let worker = WorkerStatusInfo {
             worker_id: "test".to_string(),
             status: WorkerStatus::Active,
-            last_activity: Some(Utc::now() - chrono::Duration::seconds(600)),
+            last_activity: Some(Utc::now() - chrono::Duration::seconds(1000)), // 16+ minutes ago
             ..Default::default()
         };
 
