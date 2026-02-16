@@ -2945,7 +2945,7 @@ impl App {
         let content = self
             .data_manager
             .bead_manager
-            .format_task_queue_full_filtered(self.priority_filter);
+            .format_task_queue_full_filtered_with_search(self.priority_filter, search_query);
 
         // Update panel title with search indicator
         let title = if self.task_search_mode && !self.task_search_query.is_empty() {

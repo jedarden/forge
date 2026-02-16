@@ -921,6 +921,15 @@ impl BeadManager {
     /// When `priority_filter` is Some(p), only beads with priority == p are shown.
     /// When `priority_filter` is None, all beads are shown.
     pub fn format_task_queue_full_filtered(&self, priority_filter: Option<u8>) -> String {
+        self.format_task_queue_full_filtered_with_search(priority_filter, "")
+    }
+
+    /// Format full task queue for the Tasks view with optional priority filter and search query.
+    ///
+    /// When `priority_filter` is Some(p), only beads with priority == p are shown.
+    /// When `priority_filter` is None, all beads are shown.
+    /// When `search_query` is non-empty, only beads matching the query are shown.
+    pub fn format_task_queue_full_filtered_with_search(&self, priority_filter: Option<u8>, search_query: &str) -> String {
         if !self.has_br() {
             return "br CLI not available.\n\n\
                     Install beads_rust to enable task queue:\n\
@@ -942,13 +951,21 @@ impl BeadManager {
             return "Loading bead data...".to_string();
         }
 
-        let data = self.get_filtered_aggregated_data(priority_filter);
+        let data = self.get_filtered_aggregated_data_with_search(priority_filter, search_query);
         let mut lines = Vec::new();
 
-        // Filter indicator in header (priority)
-        let filter_text = match priority_filter {
-            Some(p) => format!(" [Filtered: P{}]", p),
-            None => String::new(),
+        // Filter indicator in header (priority and search)
+        let mut filter_parts = Vec::new();
+        if let Some(p) = priority_filter {
+            filter_parts.push(format!("P{}", p));
+        }
+        if !search_query.is_empty() {
+            filter_parts.push(format!("Search: \"{}\"", search_query));
+        }
+        let filter_text = if filter_parts.is_empty() {
+            String::new()
+        } else {
+            format!(" [Filtered: {}]", filter_parts.join(", "))
         };
 
         // Summary header
@@ -1022,8 +1039,11 @@ impl BeadManager {
         }
 
         // Show message if filter is active but no results
-        if let Some(p) = priority_filter {
-            if data.in_progress.is_empty() && data.ready.is_empty() && data.blocked.is_empty() {
+        if data.in_progress.is_empty() && data.ready.is_empty() && data.blocked.is_empty() {
+            if !search_query.is_empty() {
+                lines.push(format!("No tasks found matching \"{}\". Press Esc to clear search.", search_query));
+                lines.push(String::new());
+            } else if let Some(p) = priority_filter {
                 lines.push(format!("No P{p} tasks found. Press {p} to clear filter."));
                 lines.push(String::new());
             }
@@ -1120,6 +1140,45 @@ mod tests {
         let manager = BeadManager::new();
         assert_eq!(manager.workspace_count(), 0);
         assert!(!manager.is_loaded());
+    }
+
+    #[test]
+    fn test_bead_matches_search() {
+        let bead = Bead {
+            id: "fg-1m0v".to_string(),
+            title: "Implement task filtering and search".to_string(),
+            description: "Add fuzzy search for tasks".to_string(),
+            labels: vec!["feature".to_string(), "ui".to_string()],
+            issue_type: Some("task".to_string()),
+            ..Default::default()
+        };
+
+        // Empty query matches all
+        assert!(bead.matches_search(""));
+
+        // ID match
+        assert!(bead.matches_search("fg-1m0v"));
+        assert!(bead.matches_search("1m0v"));
+        assert!(bead.matches_search("FG-1M0V")); // Case insensitive
+
+        // Title match
+        assert!(bead.matches_search("filter"));
+        assert!(bead.matches_search("SEARCH"));
+        assert!(bead.matches_search("task"));
+
+        // Description match
+        assert!(bead.matches_search("fuzzy"));
+
+        // Label match
+        assert!(bead.matches_search("feature"));
+        assert!(bead.matches_search("ui"));
+
+        // Issue type match
+        assert!(bead.matches_search("task"));
+
+        // No match
+        assert!(!bead.matches_search("nonexistent"));
+        assert!(!bead.matches_search("xyz123"));
     }
 
     #[test]
