@@ -28,15 +28,26 @@ This test suite provides comprehensive automated testing of the FORGE TUI by:
 
 | Script | Description | Time |
 |--------|-------------|------|
+| `test-basic-launch.sh` | **Minimal viable test** - TUI launch, render, shutdown | ~3s |
 | `test-forge-views.sh` | View navigation, Tab cycling, help overlay | ~12s |
 | `test-forge-theme.sh` | Theme cycling, persistence, visual changes | ~8s |
 | `test-forge-workers.sh` | Worker spawn/kill, panel display, status updates | ~15s |
 | `test-forge-chat.sh` | Chat mode, query submission, response verification | ~45s |
 | `test-forge-e2e.sh` | End-to-end integration test at multiple terminal sizes | ~60s |
 
+### Choosing the Right Test
+
+- **Quick sanity check**: Use `test-basic-launch.sh` (~3 seconds) - verifies TUI launches and renders
+- **Feature-specific testing**: Use individual test scripts based on what you're working on
+- **Pre-release validation**: Use `test-forge-e2e.sh` for comprehensive multi-size testing
+- **Full CI validation**: Use `run-all-tests.sh` for the complete suite
+
 ## Quick Start
 
 ```bash
+# Quick sanity check (fastest - ~3 seconds)
+./tests/test-basic-launch.sh
+
 # Run all tests
 ./tests/run-all-tests.sh
 
@@ -47,6 +58,7 @@ This test suite provides comprehensive automated testing of the FORGE TUI by:
 ./tests/run-all-tests.sh --verbose
 
 # Run individual tests
+./tests/test-basic-launch.sh     # Minimal viable test
 ./tests/test-forge-views.sh
 ./tests/test-forge-workers.sh
 ./tests/test-forge-theme.sh
@@ -84,10 +96,12 @@ The `test-forge-e2e.sh` script performs comprehensive integration testing across
 tests/
 ├── README.md                 # This documentation
 ├── run-all-tests.sh          # Test suite runner with reporting
+├── test-basic-launch.sh      # Minimal viable TUI test (bd-1laz)
 ├── test-forge-chat.sh        # Chat functionality tests
 ├── test-forge-views.sh       # View navigation tests
 ├── test-forge-workers.sh     # Worker management tests
 ├── test-forge-theme.sh       # Theme switching tests
+├── test-forge-e2e.sh         # End-to-end multi-size integration test
 └── lib/
     └── test-helpers.sh       # Shared helper functions library
 ```
