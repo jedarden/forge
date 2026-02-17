@@ -501,6 +501,15 @@ impl App {
             forge_config.dashboard.refresh_interval_ms.min(DEFAULT_DATA_POLL_INTERVAL_MS)
         );
 
+        // Configure alert notifier from config
+        let mut data_manager = data_manager;
+        data_manager.configure_notifier(
+            forge_config.notifications.bell_on_critical,
+            forge_config.notifications.bell_on_warning,
+            forge_config.notifications.bell_interval_secs,
+            forge_config.notifications.visual_flash_on_critical,
+        );
+
         info!("⏱️ App::new() completed in {:?}", start.elapsed());
 
         Self {
@@ -1347,6 +1356,23 @@ impl App {
             info!("Budget critical threshold changed: {}% -> {}%", old_critical, config.cost_tracking.budget_critical_threshold);
         }
 
+        // Apply notification settings
+        self.data_manager.configure_notifier(
+            config.notifications.bell_on_critical,
+            config.notifications.bell_on_warning,
+            config.notifications.bell_interval_secs,
+            config.notifications.visual_flash_on_critical,
+        );
+        if config.notifications.bell_on_critical != self.forge_config.notifications.bell_on_critical
+            || config.notifications.bell_on_warning != self.forge_config.notifications.bell_on_warning
+        {
+            changes_applied.push(format!(
+                "notifications=bell_critical:{},bell_warning:{}",
+                config.notifications.bell_on_critical,
+                config.notifications.bell_on_warning
+            ));
+        }
+
         // Log config reload to activity panel
         if !changes_applied.is_empty() {
             let message = format!("Config reloaded: {}", changes_applied.join(", "));
@@ -1376,15 +1402,16 @@ impl App {
             return;
         }
 
-        // Handle kill dialog if active
-        if self.show_kill_dialog {
-            self.handle_kill_dialog_key(key);
+        // Handle confirmation dialog if active (must be checked before kill dialog
+        // since kill dialog can trigger confirmation)
+        if self.show_confirmation {
+            self.handle_confirmation_dialog_key(key);
             return;
         }
 
-        // Handle confirmation dialog if active
-        if self.show_confirmation {
-            self.handle_confirmation_dialog_key(key);
+        // Handle kill dialog if active
+        if self.show_kill_dialog {
+            self.handle_kill_dialog_key(key);
             return;
         }
 
@@ -2364,8 +2391,19 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                // Kill the selected worker
-                self.kill_selected_worker();
+                // Request confirmation before killing the selected worker
+                if self.kill_dialog_selected < self.kill_dialog_workers.len() {
+                    let worker = &self.kill_dialog_workers[self.kill_dialog_selected];
+                    let suffix = worker.suffix.clone();
+                    let worker_type = worker.worker_type.to_string();
+
+                    self.pending_action = Some(PendingAction::KillWorker {
+                        suffix,
+                        worker_type
+                    });
+                    self.show_confirmation = true;
+                    self.mark_dirty();
+                }
             }
             KeyCode::Esc | KeyCode::Char('q') => {
                 // Close dialog
@@ -2408,12 +2446,9 @@ impl App {
                 // Execute spawn logic
                 self.spawn_worker(executor);
             }
-            PendingAction::KillWorker { suffix, worker_type } => {
-                // Execute kill logic - this would be called from kill dialog
-                self.status_message = Some(format!(
-                    "Kill action confirmed for {} ({})",
-                    suffix, worker_type
-                ));
+            PendingAction::KillWorker { suffix: _, worker_type: _ } => {
+                // Execute kill logic - called from kill dialog after confirmation
+                self.kill_selected_worker();
             }
             PendingAction::PauseWorker { .. } => {
                 self.pause_selected_worker();
@@ -2697,6 +2732,11 @@ impl App {
                 // Mark dirty if data actually changed
                 if data_changed {
                     self.mark_dirty();
+                }
+
+                // Check for pending bell notifications and ring if needed
+                if self.data_manager.take_pending_bell() {
+                    crate::alert::AlertNotifier::ring_bell();
                 }
             }
 
@@ -4234,13 +4274,17 @@ Press any key to close this help.";
 
         lines.push(Line::raw("")); // Empty line
 
-        // Instructions
+        // Instructions with [y] Yes / [n] No / [Esc] Cancel format
         lines.push(Line::from(vec![
-            Span::styled("Press ", Style::default().fg(theme.colors.text_dim)),
-            Span::styled("Enter", Style::default().fg(theme.colors.hotkey).add_modifier(Modifier::BOLD)),
-            Span::styled(format!(" to {} or ", action_text), Style::default().fg(theme.colors.text_dim)),
+            Span::styled("[", Style::default().fg(theme.colors.text_dim)),
+            Span::styled("y", Style::default().fg(theme.colors.hotkey).add_modifier(Modifier::BOLD)),
+            Span::styled("] Yes  ", Style::default().fg(theme.colors.text_dim)),
+            Span::styled("[", Style::default().fg(theme.colors.text_dim)),
+            Span::styled("n", Style::default().fg(theme.colors.hotkey).add_modifier(Modifier::BOLD)),
+            Span::styled("] No  ", Style::default().fg(theme.colors.text_dim)),
+            Span::styled("[", Style::default().fg(theme.colors.text_dim)),
             Span::styled("Esc", Style::default().fg(theme.colors.hotkey).add_modifier(Modifier::BOLD)),
-            Span::styled(" to cancel", Style::default().fg(theme.colors.text_dim)),
+            Span::styled("] Cancel", Style::default().fg(theme.colors.text_dim)),
         ]));
 
         // Determine border color based on action type
