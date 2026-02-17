@@ -807,6 +807,7 @@ pub fn check_and_rollback() -> RollbackResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_version_comparison() {
@@ -843,6 +844,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_version_tracking() {
         // Test saving and reading version
         let test_version = "0.1.9";
@@ -855,6 +857,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_startup_marker() {
         // Clean up any existing marker
         let marker_path = get_startup_marker_path();
@@ -873,6 +876,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_rollback_not_needed() {
         // Clean up any existing marker
         let marker_path = get_startup_marker_path();
@@ -884,6 +888,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_rollback_no_backup() {
         // Create marker to simulate crash
         mark_startup_in_progress().unwrap();
