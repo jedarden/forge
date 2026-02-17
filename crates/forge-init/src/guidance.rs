@@ -285,6 +285,113 @@ pub fn generate_compact_guidance() -> String {
     output
 }
 
+/// Information about a detected tool needed to generate fix guidance.
+#[derive(Debug, Clone)]
+pub struct ToolFixInfo {
+    /// Tool name (e.g., "claude-code", "aider").
+    pub name: String,
+    /// Tool version if known.
+    pub version: Option<String>,
+    /// Whether the tool is missing an API key.
+    pub missing_api_key: bool,
+    /// Environment variable(s) needed for API key.
+    pub api_key_env_var: Option<String>,
+    /// Whether the tool has an incompatible version.
+    pub incompatible_version: bool,
+    /// The missing feature if incompatible.
+    pub missing_feature: Option<String>,
+}
+
+/// Generate guidance for tools found but not ready.
+///
+/// Shows tool-specific fix instructions for MissingApiKey and IncompatibleVersion statuses.
+pub fn generate_not_ready_guidance(tools: &[ToolFixInfo]) -> String {
+    let mut output = String::new();
+
+    // Header
+    writeln!(output, "\n⚠️  CLI tools found but not ready:").unwrap();
+    writeln!(output).unwrap();
+
+    for tool in tools {
+        let version_display = tool.version.as_deref().unwrap_or("unknown version");
+
+        if tool.missing_api_key {
+            // Show MissingApiKey guidance
+            writeln!(output, "  ⚠️  {} ({})", display_name(&tool.name), version_display).unwrap();
+            writeln!(output, "      Status: Missing API key").unwrap();
+            writeln!(output, "      Fix: {}", get_api_key_fix(&tool.name, tool.api_key_env_var.as_deref())).unwrap();
+            writeln!(output).unwrap();
+        } else if tool.incompatible_version {
+            // Show IncompatibleVersion guidance
+            writeln!(output, "  ❌ {} ({})", display_name(&tool.name), version_display).unwrap();
+            writeln!(output, "      Status: Incompatible version").unwrap();
+            if let Some(ref feature) = tool.missing_feature {
+                writeln!(output, "      Missing: {}", feature).unwrap();
+            }
+            writeln!(output, "      Fix: {}", get_upgrade_fix(&tool.name)).unwrap();
+            writeln!(output).unwrap();
+        }
+    }
+
+    // Footer with next steps
+    writeln!(output, "❌ Cannot proceed. Please fix the issues above and run: forge init").unwrap();
+    writeln!(output).unwrap();
+
+    output
+}
+
+/// Get display name for a tool.
+fn display_name(name: &str) -> &str {
+    match name {
+        "claude-code" => "Claude Code",
+        "opencode" => "OpenCode",
+        "aider" => "Aider",
+        _ => name,
+    }
+}
+
+/// Get the fix instructions for a missing API key.
+fn get_api_key_fix(tool_name: &str, env_var: Option<&str>) -> String {
+    match tool_name {
+        "claude-code" => {
+            "The Claude CLI handles authentication automatically.\n           Run: claude login".to_string()
+        }
+        "opencode" => {
+            "The OpenCode CLI handles authentication automatically.\n           Run: opencode login".to_string()
+        }
+        "aider" => {
+            let vars = env_var.unwrap_or("OPENAI_API_KEY or ANTHROPIC_API_KEY");
+            format!(
+                "Set one of these environment variables:\n           export OPENAI_API_KEY=sk-...\n           export ANTHROPIC_API_KEY=sk-...\n           (Aider accepts: {})",
+                vars
+            )
+        }
+        _ => {
+            if let Some(var) = env_var {
+                format!("Set the {} environment variable", var)
+            } else {
+                "Set the required API key environment variable".to_string()
+            }
+        }
+    }
+}
+
+/// Get the upgrade instructions for an incompatible version.
+fn get_upgrade_fix(tool_name: &str) -> String {
+    match tool_name {
+        "claude-code" => {
+            "Upgrade to latest:\n           npm update -g @anthropic-ai/claude-code".to_string()
+        }
+        "opencode" => {
+            "Upgrade to latest:\n           pip install --upgrade opencode-ai".to_string()
+        }
+        "aider" => {
+            "Upgrade to latest:\n           pip install --upgrade aider-chat".to_string()
+        }
+        _ => "Upgrade to the latest version".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -367,5 +474,78 @@ mod tests {
         assert!(compact.contains("npm install -g @anthropic-ai/claude-code"));
         assert!(compact.contains("pip install opencode-ai"));
         assert!(compact.contains("forge init --help"));
+    }
+
+    #[test]
+    fn test_generate_not_ready_guidance_missing_api_key() {
+        let tools = vec![ToolFixInfo {
+            name: "aider".to_string(),
+            version: Some("0.35.0".to_string()),
+            missing_api_key: true,
+            api_key_env_var: Some("OPENAI_API_KEY or ANTHROPIC_API_KEY".to_string()),
+            incompatible_version: false,
+            missing_feature: None,
+        }];
+
+        let guidance = generate_not_ready_guidance(&tools);
+
+        assert!(guidance.contains("CLI tools found but not ready"));
+        assert!(guidance.contains("Aider (0.35.0)"));
+        assert!(guidance.contains("Missing API key"));
+        assert!(guidance.contains("OPENAI_API_KEY"));
+        assert!(guidance.contains("ANTHROPIC_API_KEY"));
+        assert!(guidance.contains("forge init"));
+    }
+
+    #[test]
+    fn test_generate_not_ready_guidance_incompatible_version() {
+        let tools = vec![ToolFixInfo {
+            name: "claude-code".to_string(),
+            version: Some("0.5.0".to_string()),
+            missing_api_key: false,
+            api_key_env_var: None,
+            incompatible_version: true,
+            missing_feature: Some("headless mode (--output-format)".to_string()),
+        }];
+
+        let guidance = generate_not_ready_guidance(&tools);
+
+        assert!(guidance.contains("CLI tools found but not ready"));
+        assert!(guidance.contains("Claude Code (0.5.0)"));
+        assert!(guidance.contains("Incompatible version"));
+        assert!(guidance.contains("headless mode"));
+        assert!(guidance.contains("npm update"));
+        assert!(guidance.contains("forge init"));
+    }
+
+    #[test]
+    fn test_generate_not_ready_guidance_multiple_tools() {
+        let tools = vec![
+            ToolFixInfo {
+                name: "claude-code".to_string(),
+                version: Some("0.5.0".to_string()),
+                missing_api_key: false,
+                api_key_env_var: None,
+                incompatible_version: true,
+                missing_feature: Some("headless mode".to_string()),
+            },
+            ToolFixInfo {
+                name: "aider".to_string(),
+                version: Some("0.35.0".to_string()),
+                missing_api_key: true,
+                api_key_env_var: Some("OPENAI_API_KEY".to_string()),
+                incompatible_version: false,
+                missing_feature: None,
+            },
+        ];
+
+        let guidance = generate_not_ready_guidance(&tools);
+
+        // Check both tools are shown
+        assert!(guidance.contains("Claude Code"));
+        assert!(guidance.contains("Aider"));
+        // Check both fixes are shown
+        assert!(guidance.contains("npm update"));
+        assert!(guidance.contains("OPENAI_API_KEY"));
     }
 }
