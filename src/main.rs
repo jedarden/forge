@@ -68,6 +68,16 @@ enum Commands {
         /// Force re-initialization even if config exists
         #[arg(long)]
         force: bool,
+
+        /// Re-run setup on existing config (backs up config first)
+        /// Use this to change settings while preserving user data (logs, costs, status)
+        #[arg(long, conflicts_with = "force")]
+        reconfigure: bool,
+
+        /// Only detect available CLI tools and show results (dry run)
+        /// Does not modify any files
+        #[arg(long, conflicts_with_all = ["force", "reconfigure"])]
+        detect_tools: bool,
     },
 
     /// Update forge binary from a URL
@@ -216,8 +226,10 @@ fn main() -> ExitCode {
             Commands::Init {
                 non_interactive,
                 force,
+                reconfigure,
+                detect_tools,
             } => {
-                return handle_init_command(*non_interactive, *force);
+                return handle_init_command(*non_interactive, *force, *reconfigure, *detect_tools);
             }
             Commands::Worker { action } => {
                 return handle_worker_action(action);
@@ -539,23 +551,49 @@ fn normalize_backend_name(name: &str) -> String {
 }
 
 /// Handle the `forge init` command.
-fn handle_init_command(non_interactive: bool, force: bool) -> ExitCode {
+fn handle_init_command(non_interactive: bool, force: bool, reconfigure: bool, detect_tools: bool) -> ExitCode {
     info!(
-        "Handling init command (non_interactive={}, force={})",
-        non_interactive, force
+        "Handling init command (non_interactive={}, force={}, reconfigure={}, detect_tools={})",
+        non_interactive, force, reconfigure, detect_tools
     );
 
-    // Check if config already exists
-    if !force && !needs_onboarding() {
-        let forge_dir = get_forge_dir();
-        let config_path = forge_dir.join("config.yaml");
+    // Handle --detect-tools: dry run that only shows detection results
+    if detect_tools {
+        return handle_detect_tools_command();
+    }
 
+    let forge_dir = get_forge_dir();
+    let config_path = forge_dir.join("config.yaml");
+
+    // Handle --reconfigure: backup existing config before re-running setup
+    if reconfigure {
+        if !config_path.exists() {
+            if non_interactive {
+                eprintln!("error: No configuration found to reconfigure");
+                eprintln!("Use 'forge init' to create initial configuration");
+            } else {
+                eprintln!("No configuration found. Running first-time setup instead...\n");
+            }
+            // Fall through to normal setup since there's nothing to reconfigure
+        } else {
+            // Backup existing config before proceeding
+            if let Err(e) = backup_config(&forge_dir, &config_path) {
+                eprintln!("❌ Failed to backup config: {}", e);
+                return ExitCode::from(1);
+            }
+            if !non_interactive {
+                eprintln!("📦 Existing configuration backed up\n");
+            }
+        }
+    } else if !force && config_path.exists() {
+        // Neither --force nor --reconfigure: don't overwrite existing config
         if non_interactive {
             eprintln!(
                 "error: Configuration already exists at {}",
                 config_path.display()
             );
             eprintln!("Use --force to overwrite existing configuration");
+            eprintln!("Use --reconfigure to backup and re-run setup");
             return ExitCode::from(1);
         } else {
             eprintln!(
@@ -563,6 +601,7 @@ fn handle_init_command(non_interactive: bool, force: bool) -> ExitCode {
                 config_path.display()
             );
             eprintln!("Use --force to overwrite existing configuration");
+            eprintln!("Use --reconfigure to backup and re-run setup");
             return ExitCode::SUCCESS;
         }
     }
@@ -590,6 +629,131 @@ fn handle_init_command(non_interactive: bool, force: bool) -> ExitCode {
                 eprintln!("❌ Setup failed: {}", e);
                 ExitCode::from(1)
             }
+        }
+    }
+}
+
+/// Backup existing config.yaml before reconfiguration.
+///
+/// Creates a timestamped backup to preserve user's previous settings.
+/// Keeps logs, costs database, and status files intact.
+fn backup_config(forge_dir: &std::path::Path, config_path: &std::path::Path) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+    let backup_path = forge_dir.join(format!("config.yaml.backup.{}", timestamp));
+
+    std::fs::copy(config_path, &backup_path)?;
+    info!("Backed up config to: {}", backup_path.display());
+
+    // Check for launcher scripts that might have custom modifications
+    let launchers_dir = forge_dir.join("launchers");
+    if launchers_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&launchers_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    // Check if the file contains any comments that suggest custom modifications
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        if content.contains("# CUSTOM:") || content.contains("# USER:") || content.contains("# Modified by") {
+                            eprintln!("⚠️  Warning: {} may contain custom modifications", path.display());
+                            // Backup the launcher script too
+                            let launcher_backup = forge_dir.join(format!(
+                                "launchers/{}.backup.{}",
+                                entry.file_name().to_string_lossy(),
+                                timestamp
+                            ));
+                            let _ = std::fs::copy(&path, &launcher_backup);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(backup_path)
+}
+
+/// Handle the `forge init --detect-tools` command.
+///
+/// Runs CLI tool detection and displays results without modifying any files.
+fn handle_detect_tools_command() -> ExitCode {
+    info!("Running CLI tool detection (dry run)");
+
+    eprintln!("🔍 Detecting available CLI tools...\n");
+
+    match detection::detect_cli_tools_with_diagnostics() {
+        Ok((tools, diagnostics)) => {
+            // Display all detected tools
+            if tools.is_empty() {
+                eprintln!("No CLI tools found.\n");
+            } else {
+                eprintln!("Detected CLI tools:\n");
+                for tool in &tools {
+                    let status_icon = match tool.status {
+                        detection::ToolStatus::Ready => "✅",
+                        detection::ToolStatus::MissingApiKey => "⚠️ ",
+                        detection::ToolStatus::IncompatibleVersion => "❌",
+                        detection::ToolStatus::NotExecutable => "❌",
+                    };
+
+                    eprintln!("  {} {} ({})", status_icon, tool.name, tool.status_message());
+                    eprintln!("      Path: {}", tool.binary_path.display());
+                    if let Some(version) = &tool.version {
+                        eprintln!("      Version: {}", version);
+                    }
+                    eprintln!("      Headless: {} | Skip-Perms: {}",
+                        if tool.headless_support { "yes" } else { "no" },
+                        if tool.skip_permissions { "yes" } else { "no" }
+                    );
+                    if tool.api_key_required {
+                        let key_status = if tool.api_key_detected { "✅ found" } else { "❌ missing" };
+                        if let Some(env_var) = &tool.api_key_env_var {
+                            eprintln!("      API Key: {} ({})", key_status, env_var);
+                        } else {
+                            eprintln!("      API Key: {}", key_status);
+                        }
+                    }
+                    eprintln!();
+                }
+            }
+
+            // Display diagnostics about rejected/not-found tools
+            if !diagnostics.rejections.is_empty() {
+                eprintln!("Detection details:");
+                for rejection in &diagnostics.rejections {
+                    match &rejection.reason {
+                        guidance::RejectionReason::NotFound => {
+                            eprintln!("  • {} - not found in PATH", rejection.tool_name);
+                        }
+                        guidance::RejectionReason::MissingApiKey { env_var, .. } => {
+                            eprintln!("  • {} - missing API key ({})", rejection.tool_name, env_var);
+                        }
+                        guidance::RejectionReason::IncompatibleVersion { version, missing_feature, .. } => {
+                            let ver = version.as_deref().unwrap_or("unknown");
+                            eprintln!("  • {} {} - incompatible: {}", rejection.tool_name, ver, missing_feature);
+                        }
+                        guidance::RejectionReason::NotExecutable(_) => {
+                            eprintln!("  • {} - not executable", rejection.tool_name);
+                        }
+                    }
+                }
+                eprintln!();
+            }
+
+            // Summary
+            let ready_count = tools.iter().filter(|t| t.is_ready()).count();
+            if ready_count > 0 {
+                eprintln!("✅ {} tool(s) ready for use", ready_count);
+                eprintln!("   Run 'forge init' to configure");
+            } else {
+                eprintln!("❌ No compatible tools ready");
+                eprintln!("   Install Claude Code, OpenCode, or configure API keys");
+            }
+
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("❌ Detection failed: {}", e);
+            ExitCode::from(1)
         }
     }
 }
