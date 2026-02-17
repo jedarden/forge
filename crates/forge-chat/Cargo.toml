@@ -40,6 +40,9 @@ futures-util.workspace = true
 # Logging
 tracing.workspace = true
 
+# Directories
+dirs = "5.0"
+
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
