@@ -225,9 +225,10 @@ impl InputHandler {
             KeyCode::Char('k') => AppEvent::KillWorker,
 
             // Workers view: Pause/Resume controls
-            // 'p' = pause selected worker, 'P' = pause all workers
+            // 'p' = pause selected worker (in Workers view), 'P' = pause all workers
             // 'r' = resume selected worker, 'R' = resume all workers
             KeyCode::Char('p') if self.current_view == View::Workers => AppEvent::PauseWorker,
+            KeyCode::Char('p') if self.current_view != View::Workers => AppEvent::SwitchView(View::Perf),
             KeyCode::Char('P') if self.current_view == View::Workers => AppEvent::PauseAllWorkers,
             KeyCode::Char('r') if self.current_view == View::Workers => AppEvent::ResumeWorker,
             KeyCode::Char('R') if self.current_view == View::Workers => AppEvent::ResumeAllWorkers,
@@ -549,10 +550,10 @@ mod tests {
     fn test_pause_resume_keys_not_in_workers_view() {
         let mut handler = InputHandler::new();
 
-        // Default view is Overview, 'p' should do nothing
+        // Default view is Overview, 'p' should switch to Perf view
         assert_eq!(
             handler.handle_key(key_event(KeyCode::Char('p'))),
-            AppEvent::None
+            AppEvent::SwitchView(View::Perf)
         );
 
         // 'r' in non-Workers view should refresh
