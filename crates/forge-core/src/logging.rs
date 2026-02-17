@@ -226,19 +226,22 @@ macro_rules! log_cost_event {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
+    #[serial]
     fn test_default_log_dir() {
         // Set HOME for test (unsafe in Rust 2024 due to potential data races)
-        // SAFETY: We are in a test context and this is the only test modifying HOME
+        // SAFETY: We are in a test context and this test runs serially
         unsafe { std::env::set_var("HOME", "/tmp/test-home") };
         let dir = default_log_dir().unwrap();
         assert_eq!(dir, PathBuf::from("/tmp/test-home/.forge/logs"));
     }
 
     #[test]
+    #[serial]
     fn test_default_log_file() {
-        // SAFETY: We are in a test context
+        // SAFETY: We are in a test context and this test runs serially
         unsafe { std::env::set_var("HOME", "/tmp/test-home") };
         let file = default_log_file().unwrap();
         assert_eq!(file, PathBuf::from("/tmp/test-home/.forge/logs/forge.log"));
