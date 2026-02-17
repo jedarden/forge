@@ -286,6 +286,13 @@ pub enum ForgeError {
     UpdateVerification { message: String },
 
     // =========================================================================
+    // Timeout Errors
+    // =========================================================================
+    /// Generic timeout error for any operation
+    #[error("Operation '{operation}' timed out after {timeout_secs}s")]
+    Timeout { operation: String, timeout_secs: u64 },
+
+    // =========================================================================
     // Internal Errors
     // =========================================================================
     /// Internal error (bug in FORGE)
@@ -379,6 +386,7 @@ impl ForgeError {
                 | Self::BackendTimeout { .. }
                 | Self::ToolRateLimited { .. }
                 | Self::WatcherError { .. }
+                | Self::Timeout { .. }
         )
     }
 
