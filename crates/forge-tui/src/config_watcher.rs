@@ -166,6 +166,10 @@ pub struct ForgeConfig {
     /// Cost tracking configuration
     #[serde(default)]
     pub cost_tracking: CostTrackingConfig,
+
+    /// Auto-recovery configuration
+    #[serde(default)]
+    pub auto_recovery: AutoRecoveryConfig,
 }
 
 impl ForgeConfig {
@@ -318,12 +322,18 @@ impl ForgeConfig {
             .and_then(|v| serde_yaml::from_value(v.clone()).ok())
             .unwrap_or_default();
 
+        let auto_recovery = yaml
+            .get("auto_recovery")
+            .and_then(|v| serde_yaml::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
         info!("Loaded partial config - some sections may use defaults");
 
         Some(Self {
             dashboard,
             theme,
             cost_tracking,
+            auto_recovery,
         })
     }
 
@@ -522,6 +532,95 @@ impl Default for CostTrackingConfig {
             monthly_budget_usd: None,
         }
     }
+}
+
+/// Auto-recovery configuration.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct AutoRecoveryConfig {
+    /// Enable/disable auto-recovery.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// How often to run recovery checks (in seconds).
+    #[serde(default = "default_recovery_check_interval")]
+    pub check_interval_secs: u64,
+
+    /// Policy for dead worker restart: "disabled", "notify", or "auto".
+    #[serde(default = "default_recovery_policy")]
+    pub dead_worker_policy: String,
+
+    /// Maximum restart attempts for dead workers.
+    #[serde(default = "default_max_restart_attempts")]
+    pub max_restart_attempts: u8,
+
+    /// Policy for memory leak: "disabled", "notify", or "auto".
+    #[serde(default = "default_recovery_policy")]
+    pub memory_leak_policy: String,
+
+    /// Memory threshold in MB before considering it a leak.
+    #[serde(default = "default_memory_threshold")]
+    pub memory_threshold_mb: u64,
+
+    /// Policy for stuck tasks: "disabled", "notify", or "auto".
+    #[serde(default = "default_recovery_policy")]
+    pub stuck_task_policy: String,
+
+    /// Time in minutes before a task is considered stuck.
+    #[serde(default = "default_stuck_timeout")]
+    pub stuck_task_timeout_mins: i64,
+
+    /// Policy for stale assignees: "disabled", "notify", or "auto".
+    #[serde(default = "default_stale_assignee_policy")]
+    pub stale_assignee_policy: String,
+
+    /// Time in minutes before an assignee is considered stale.
+    #[serde(default = "default_stale_timeout")]
+    pub stale_assignee_timeout_mins: i64,
+}
+
+impl Default for AutoRecoveryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            check_interval_secs: default_recovery_check_interval(),
+            dead_worker_policy: default_recovery_policy(),
+            max_restart_attempts: default_max_restart_attempts(),
+            memory_leak_policy: default_recovery_policy(),
+            memory_threshold_mb: default_memory_threshold(),
+            stuck_task_policy: default_recovery_policy(),
+            stuck_task_timeout_mins: default_stuck_timeout(),
+            stale_assignee_policy: default_stale_assignee_policy(),
+            stale_assignee_timeout_mins: default_stale_timeout(),
+        }
+    }
+}
+
+fn default_recovery_check_interval() -> u64 {
+    30
+}
+
+fn default_recovery_policy() -> String {
+    "notify".to_string()
+}
+
+fn default_stale_assignee_policy() -> String {
+    "auto".to_string()
+}
+
+fn default_max_restart_attempts() -> u8 {
+    3
+}
+
+fn default_memory_threshold() -> u64 {
+    2048
+}
+
+fn default_stuck_timeout() -> i64 {
+    30
+}
+
+fn default_stale_timeout() -> i64 {
+    60
 }
 
 fn default_cost_enabled() -> bool {
