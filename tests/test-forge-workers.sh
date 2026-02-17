@@ -30,17 +30,40 @@ TEST_NAME="forge-workers"
 # o   - Opus 4.6 (lowercase only)
 # h   - Haiku (lowercase only)
 
-# Global variable for tracking sessions before spawning
-BEFORE_SESSIONS=""
+# Global variable for tracking sessions before script starts
+SCRIPT_BEFORE_SESSIONS=""
 
 # Trap handler to cleanup on any exit
+# This ensures all spawned workers are cleaned up even if a test fails
 cleanup_on_exit() {
     local exit_code=$?
-    if [ -n "${BEFORE_SESSIONS:-}" ]; then
-        cleanup_spawned_workers "$BEFORE_SESSIONS" 2>/dev/null || true
+
+    log_info "Final cleanup: checking for orphaned worker sessions..."
+
+    # Clean up all forge-forge-* sessions that were created after script started
+    if [ -n "${SCRIPT_BEFORE_SESSIONS:-}" ]; then
+        cleanup_spawned_workers "$SCRIPT_BEFORE_SESSIONS" 2>/dev/null || true
+    else
+        # If we don't have a before snapshot, clean up ALL forge-forge-* sessions
+        # This is a fallback safety measure
+        local sessions
+        sessions=$(tmux list-sessions 2>/dev/null | grep -E '^forge-forge-' | cut -d: -f1 || true)
+        if [ -n "$sessions" ]; then
+            log_warn "No before snapshot - cleaning all forge-forge-* sessions"
+            while IFS= read -r session; do
+                if [ -n "$session" ]; then
+                    log_info "  Killing orphaned worker: $session"
+                    tmux kill-session -t "$session" 2>/dev/null || true
+                fi
+            done <<< "$sessions"
+        fi
     fi
+
     exit $exit_code
 }
+
+# Capture sessions before any tests run (for final cleanup)
+SCRIPT_BEFORE_SESSIONS=$(tmux list-sessions 2>/dev/null | grep -E '^forge-forge-' | cut -d: -f1 || true)
 
 # Set up trap for cleanup on script exit
 trap cleanup_on_exit EXIT
@@ -152,6 +175,7 @@ test_worker_spawn() {
     local session
     session=$(get_session_name)
     local result=0
+    local test_before_sessions
 
     log_info "=== Testing Worker Spawn Functionality ==="
 
@@ -169,6 +193,10 @@ test_worker_spawn() {
         stop_forge "$session"
         return 1
     fi
+
+    # Step 2.5: Capture sessions before spawning workers
+    log_info "Step 2.5: Capturing sessions before spawning workers..."
+    test_before_sessions=$(capture_before_sessions)
 
     # Step 3: Navigate to Workers view
     log_info "Step 3: Navigating to Workers view with 'w' key..."
@@ -231,8 +259,12 @@ test_worker_spawn() {
         log_warn "Worker panel status information not visible"
     fi
 
-    # Step 9: Cleanup
-    log_info "Step 9: Cleaning up..."
+    # Step 9: Cleanup spawned workers
+    log_info "Step 9: Cleaning up spawned worker sessions..."
+    cleanup_spawned_workers "$test_before_sessions"
+
+    # Step 10: Cleanup main session
+    log_info "Step 10: Cleaning up main test session..."
     stop_forge "$session"
 
     return $result
@@ -352,6 +384,7 @@ test_worker_status_updates() {
     local session
     session=$(get_session_name)
     local result=0
+    local test_before_sessions
 
     log_info "=== Testing Worker Status Updates ==="
 
@@ -369,6 +402,10 @@ test_worker_status_updates() {
         stop_forge "$session"
         return 1
     fi
+
+    # Step 2.5: Capture sessions before spawning workers
+    log_info "Step 2.5: Capturing sessions before spawning workers..."
+    test_before_sessions=$(capture_before_sessions)
 
     # Step 3: Navigate to Workers view
     log_info "Step 3: Navigating to Workers view..."
@@ -417,8 +454,12 @@ test_worker_status_updates() {
         log_warn "Refresh response not detected"
     fi
 
-    # Step 9: Cleanup
-    log_info "Step 9: Cleaning up..."
+    # Step 9: Cleanup spawned workers
+    log_info "Step 9: Cleaning up spawned worker sessions..."
+    cleanup_spawned_workers "$test_before_sessions"
+
+    # Step 10: Cleanup main session
+    log_info "Step 10: Cleaning up main test session..."
     stop_forge "$session"
 
     return $result
