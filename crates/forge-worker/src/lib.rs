@@ -144,6 +144,7 @@ pub mod launcher;
 mod lifecycle_tests;
 pub mod memory;
 pub mod pause;
+pub mod response_time;
 pub mod router;
 pub mod scorer;
 pub mod tmux;
@@ -170,6 +171,10 @@ pub use launcher::WorkerLauncher;
 pub use pause::{
     Pausable, PauseConfig, PauseSignalHandler, DEFAULT_PAUSE_CHECK_INTERVAL_SECS,
     is_any_paused, pause_all, resume_all,
+};
+pub use response_time::{
+    PingResult, ResponseTimeConfig, ResponseTimeTracker, WorkerResponseState,
+    DEFAULT_FAILURE_THRESHOLD, DEFAULT_PING_INTERVAL_SECS, DEFAULT_PING_TIMEOUT_MS,
 };
 pub use router::{
     FallbackOption, ModelAvailability, ModelConfig, ModelHealth, Router, RouterConfig,
