@@ -8,6 +8,7 @@
 //! - [`types`] - Shared type definitions used across FORGE crates
 //! - [`status`] - Worker status file reading
 //! - [`watcher`] - Real-time file watching for status updates
+//! - [`activity_monitor`] - Worker activity monitoring with heartbeat support
 //!
 //! ## Example
 //!
@@ -28,6 +29,7 @@
 //! }
 //! ```
 
+pub mod activity_monitor;
 pub mod deps;
 pub mod error;
 pub mod logging;
@@ -48,6 +50,12 @@ pub use worker_perf::{
 // Re-export stuck detection types
 pub use stuck_detection::{
     ActivityChecks, StuckDetectionConfig, StuckTask, StuckTaskDetector,
+};
+
+// Re-export activity monitoring types
+pub use activity_monitor::{
+    ActivityMonitor, ActivityMonitorConfig, ActivityState, HeartbeatData,
+    HeartbeatMetrics, HeartbeatWriter, WorkerActivity,
 };
 
 // Re-export main types for convenience
