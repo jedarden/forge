@@ -27,7 +27,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use forge_core::{LogGuard, StatusWriter, init_logging};
-use forge_init::{detection, generator};
+use forge_init::{detection, generator, guidance};
 use forge_tui::{App, ForgeConfig};
 use tracing::{error, info};
 
@@ -323,17 +323,17 @@ fn get_forge_dir() -> std::path::PathBuf {
 fn run_onboarding() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting onboarding flow");
 
-    // Detect CLI tools
+    // Detect CLI tools with diagnostics
     eprintln!("🔍 Detecting available CLI tools...");
-    let tools = detection::detect_cli_tools()?;
+    let (tools, diagnostics) = detection::detect_cli_tools_with_diagnostics()?;
 
-    if tools.is_empty() {
-        eprintln!("\n❌ No compatible CLI tools found!");
-        eprintln!("\nFORGE requires one of:");
-        eprintln!("  - Claude Code (https://claude.com/claude-code)");
-        eprintln!("  - OpenCode");
-        eprintln!("\nPlease install a compatible tool and try again.");
-        return Err("No CLI tools available".into());
+    // Filter to only show tools that are ready to use
+    let ready_tools: Vec<_> = tools.iter().filter(|t| t.is_ready()).collect();
+
+    if ready_tools.is_empty() {
+        // Use the guidance module to show detailed instructions
+        eprint!("{}", guidance::generate_guidance(Some(&diagnostics)));
+        return Err("No compatible CLI tools available".into());
     }
 
     // Display detected tools

@@ -8,6 +8,8 @@ use std::process::Command;
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
+use crate::guidance::{PathDiagnostics, RejectionReason};
+
 /// Errors that can occur during CLI tool detection.
 #[derive(Debug, Error)]
 pub enum DetectionError {
@@ -155,23 +157,42 @@ impl CliToolDetection {
 /// }
 /// ```
 pub fn detect_cli_tools() -> Result<Vec<CliToolDetection>> {
-    info!("Starting CLI tool detection");
+    let (tools, _diagnostics) = detect_cli_tools_with_diagnostics()?;
+    Ok(tools)
+}
+
+/// Detect all available CLI tools with detailed diagnostics.
+///
+/// Returns both the detected tools and diagnostic information about the search,
+/// useful for providing helpful error messages when no tools are found.
+///
+/// # Returns
+///
+/// A tuple containing:
+/// - A vector of detected tools, sorted by readiness (ready tools first)
+/// - Diagnostic information about the PATH search and any rejected candidates
+pub fn detect_cli_tools_with_diagnostics() -> Result<(Vec<CliToolDetection>, PathDiagnostics)> {
+    info!("Starting CLI tool detection with diagnostics");
 
     let mut tools = Vec::new();
+    let mut diagnostics = PathDiagnostics::new();
 
     // Detect Claude Code
-    if let Some(tool) = detect_claude_code()? {
-        tools.push(tool);
+    match detect_claude_code_with_diagnostics(&mut diagnostics)? {
+        Some(tool) => tools.push(tool),
+        None => {}
     }
 
     // Detect OpenCode
-    if let Some(tool) = detect_opencode()? {
-        tools.push(tool);
+    match detect_opencode_with_diagnostics(&mut diagnostics)? {
+        Some(tool) => tools.push(tool),
+        None => {}
     }
 
     // Detect Aider
-    if let Some(tool) = detect_aider()? {
-        tools.push(tool);
+    match detect_aider_with_diagnostics(&mut diagnostics)? {
+        Some(tool) => tools.push(tool),
+        None => {}
     }
 
     // Sort by status (ready tools first)
@@ -183,22 +204,21 @@ pub fn detect_cli_tools() -> Result<Vec<CliToolDetection>> {
     });
 
     info!("Detected {} CLI tools", tools.len());
-    Ok(tools)
+    Ok((tools, diagnostics))
 }
 
-/// Detect Claude Code CLI tool.
-///
-/// Searches for the `claude` binary and checks for:
-/// - Version via `claude --version`
-/// - Headless mode support via `claude --help`
-/// - ANTHROPIC_API_KEY environment variable
-fn detect_claude_code() -> Result<Option<CliToolDetection>> {
-    debug!("Detecting Claude Code");
+
+/// Detect Claude Code CLI tool with diagnostic collection.
+fn detect_claude_code_with_diagnostics(
+    diagnostics: &mut PathDiagnostics,
+) -> Result<Option<CliToolDetection>> {
+    debug!("Detecting Claude Code with diagnostics");
 
     let binary_path = match which::which("claude") {
         Ok(path) => path,
         Err(_) => {
             debug!("Claude Code not found in PATH");
+            diagnostics.add_rejection("claude", RejectionReason::NotFound);
             return Ok(None);
         }
     };
@@ -206,17 +226,21 @@ fn detect_claude_code() -> Result<Option<CliToolDetection>> {
     let mut tool = CliToolDetection::new("claude-code", binary_path.clone());
 
     // Get version
+    let mut version: Option<String> = None;
     if let Ok(output) = Command::new(&binary_path).arg("--version").output()
         && let Ok(version_str) = String::from_utf8(output.stdout)
     {
+        version = Some(version_str.trim().to_string());
         tool = tool.with_version(version_str.trim());
     }
 
     // Check for headless support
+    let mut has_headless = false;
+    let mut has_skip_perms = false;
     if let Ok(output) = Command::new(&binary_path).arg("--help").output() {
         let help_text = String::from_utf8_lossy(&output.stdout);
-        let has_headless = help_text.contains("--output-format");
-        let has_skip_perms = help_text.contains("--dangerously-skip-permissions");
+        has_headless = help_text.contains("--output-format");
+        has_skip_perms = help_text.contains("--dangerously-skip-permissions");
 
         tool = tool
             .with_headless_support(has_headless)
@@ -230,11 +254,24 @@ fn detect_claude_code() -> Result<Option<CliToolDetection>> {
         true,  // Always "detected" since CLI handles it
     );
 
-    // Determine overall status
-    let status = if !tool.headless_support || !tool.skip_permissions {
+    // Determine overall status and record rejection if not ready
+    let status = if !has_headless || !has_skip_perms {
+        let missing_feature = if !has_headless {
+            "headless mode (--output-format)"
+        } else {
+            "permission skipping (--dangerously-skip-permissions)"
+        };
+        diagnostics.add_rejection(
+            "claude",
+            RejectionReason::IncompatibleVersion {
+                path: binary_path.clone(),
+                version: version.clone(),
+                missing_feature: missing_feature.to_string(),
+            },
+        );
         ToolStatus::IncompatibleVersion
     } else {
-        ToolStatus::Ready // Ready if it has headless support
+        ToolStatus::Ready
     };
 
     tool = tool.with_status(status);
@@ -247,16 +284,17 @@ fn detect_claude_code() -> Result<Option<CliToolDetection>> {
     Ok(Some(tool))
 }
 
-/// Detect OpenCode CLI tool.
-///
-/// Searches for the `opencode` binary and checks its capabilities.
-fn detect_opencode() -> Result<Option<CliToolDetection>> {
-    debug!("Detecting OpenCode");
+/// Detect OpenCode CLI tool with diagnostic collection.
+fn detect_opencode_with_diagnostics(
+    diagnostics: &mut PathDiagnostics,
+) -> Result<Option<CliToolDetection>> {
+    debug!("Detecting OpenCode with diagnostics");
 
     let binary_path = match which::which("opencode") {
         Ok(path) => path,
         Err(_) => {
             debug!("OpenCode not found in PATH");
+            diagnostics.add_rejection("opencode", RejectionReason::NotFound);
             return Ok(None);
         }
     };
@@ -264,22 +302,23 @@ fn detect_opencode() -> Result<Option<CliToolDetection>> {
     let mut tool = CliToolDetection::new("opencode", binary_path.clone());
 
     // Get version
+    let mut version: Option<String> = None;
     if let Ok(output) = Command::new(&binary_path).arg("--version").output()
         && let Ok(version_str) = String::from_utf8(output.stdout)
     {
+        version = Some(version_str.trim().to_string());
         tool = tool.with_version(version_str.trim());
     }
 
     // Check for headless support - OpenCode uses "serve" command
+    let mut has_headless = false;
     if let Ok(output) = Command::new(&binary_path).arg("--help").output() {
         let help_text = String::from_utf8_lossy(&output.stdout);
-        let has_headless = help_text.contains("serve") || help_text.contains("headless");
-        // OpenCode doesn't use skip-permissions flag
-        let has_skip_perms = true; // Not applicable for OpenCode
+        has_headless = help_text.contains("serve") || help_text.contains("headless");
 
         tool = tool
             .with_headless_support(has_headless)
-            .with_skip_permissions(has_skip_perms);
+            .with_skip_permissions(true); // Not applicable for OpenCode
     }
 
     // OpenCode CLI handles its own authentication - no API key check needed
@@ -289,11 +328,19 @@ fn detect_opencode() -> Result<Option<CliToolDetection>> {
         true,  // Always "detected" since CLI handles it
     );
 
-    // Determine status
-    let status = if !tool.headless_support {
+    // Determine status and record rejection if not ready
+    let status = if !has_headless {
+        diagnostics.add_rejection(
+            "opencode",
+            RejectionReason::IncompatibleVersion {
+                path: binary_path.clone(),
+                version: version.clone(),
+                missing_feature: "headless/serve mode".to_string(),
+            },
+        );
         ToolStatus::IncompatibleVersion
     } else {
-        ToolStatus::Ready // Ready if it has headless support
+        ToolStatus::Ready
     };
 
     tool = tool.with_status(status);
@@ -306,16 +353,17 @@ fn detect_opencode() -> Result<Option<CliToolDetection>> {
     Ok(Some(tool))
 }
 
-/// Detect Aider CLI tool.
-///
-/// Searches for the `aider` binary and checks its capabilities.
-fn detect_aider() -> Result<Option<CliToolDetection>> {
-    debug!("Detecting Aider");
+/// Detect Aider CLI tool with diagnostic collection.
+fn detect_aider_with_diagnostics(
+    diagnostics: &mut PathDiagnostics,
+) -> Result<Option<CliToolDetection>> {
+    debug!("Detecting Aider with diagnostics");
 
     let binary_path = match which::which("aider") {
         Ok(path) => path,
         Err(_) => {
             debug!("Aider not found in PATH");
+            diagnostics.add_rejection("aider", RejectionReason::NotFound);
             return Ok(None);
         }
     };
@@ -323,17 +371,18 @@ fn detect_aider() -> Result<Option<CliToolDetection>> {
     let mut tool = CliToolDetection::new("aider", binary_path.clone());
 
     // Get version
+    let mut version: Option<String> = None;
     if let Ok(output) = Command::new(&binary_path).arg("--version").output()
         && let Ok(version_str) = String::from_utf8(output.stdout)
     {
+        version = Some(version_str.trim().to_string());
         tool = tool.with_version(version_str.trim());
     }
 
     // Aider doesn't have the same headless mode as Claude Code
-    // It has different flags, so we mark it as not fully compatible for now
     tool = tool
-        .with_headless_support(false) // Different mode
-        .with_skip_permissions(false); // Not applicable
+        .with_headless_support(false)
+        .with_skip_permissions(false);
 
     // Aider can use multiple API keys (OpenAI, Anthropic)
     let openai_key = std::env::var("OPENAI_API_KEY").is_ok();
@@ -346,11 +395,28 @@ fn detect_aider() -> Result<Option<CliToolDetection>> {
         has_api_key,
     );
 
-    // Aider requires different integration approach
+    // Aider requires different integration approach - record rejection
     let status = if !has_api_key {
+        diagnostics.add_rejection(
+            "aider",
+            RejectionReason::MissingApiKey {
+                path: binary_path.clone(),
+                env_var: "OPENAI_API_KEY or ANTHROPIC_API_KEY".to_string(),
+            },
+        );
         ToolStatus::MissingApiKey
     } else {
-        ToolStatus::IncompatibleVersion // Needs custom integration
+        // Even with API key, Aider isn't fully compatible yet
+        diagnostics.add_rejection(
+            "aider",
+            RejectionReason::IncompatibleVersion {
+                path: binary_path.clone(),
+                version: version.clone(),
+                missing_feature: "FORGE-compatible headless mode (requires custom integration)"
+                    .to_string(),
+            },
+        );
+        ToolStatus::IncompatibleVersion
     };
 
     tool = tool.with_status(status);
