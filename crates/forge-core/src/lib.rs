@@ -57,7 +57,7 @@ pub use recovery::{
     friendly_error_message, retry_with_backoff, retry_with_backoff_async, RecoveryAction,
     RetryConfig, RetryResult, Retryable,
 };
-pub use status::{StatusReader, WorkerStatusInfo};
+pub use status::{StatusReader, StatusWriter, WorkerStatusInfo};
 pub use watcher::{StatusEvent, StatusWatcher, WatcherConfig};
 
 // Re-export dependency checking utilities

@@ -330,6 +330,162 @@ impl StatusReader {
     }
 }
 
+/// Writer for worker status files to `~/.forge/status/`.
+///
+/// The writer provides methods to update individual worker statuses or
+/// perform batch operations on multiple workers.
+#[derive(Debug, Clone)]
+pub struct StatusWriter {
+    /// Directory containing status files
+    status_dir: PathBuf,
+}
+
+impl StatusWriter {
+    /// Create a new StatusWriter.
+    ///
+    /// If `status_dir` is None, uses the default `~/.forge/status/` directory.
+    pub fn new(status_dir: Option<PathBuf>) -> Result<Self> {
+        let status_dir = match status_dir {
+            Some(dir) => dir,
+            None => StatusReader::default_status_dir()?,
+        };
+
+        // Ensure the status directory exists
+        if !status_dir.exists() {
+            std::fs::create_dir_all(&status_dir).map_err(|e| ForgeError::Io {
+                operation: "creating status directory".to_string(),
+                path: status_dir.clone(),
+                source: e,
+            })?;
+        }
+
+        debug!("StatusWriter initialized with directory: {:?}", status_dir);
+
+        Ok(Self { status_dir })
+    }
+
+    /// Get the path to a worker's status file.
+    pub fn status_file_path(&self, worker_id: &str) -> PathBuf {
+        self.status_dir.join(format!("{}.json", worker_id))
+    }
+
+    /// Update a worker's status in their status file.
+    ///
+    /// If the status file exists, it reads the existing data and updates only the status.
+    /// If the file doesn't exist, it creates a new status file with the given status.
+    pub fn update_status(&self, worker_id: &str, status: WorkerStatus) -> Result<()> {
+        let path = self.status_file_path(worker_id);
+
+        // Read existing status if file exists, otherwise create new
+        let mut info = if path.exists() {
+            let content = std::fs::read_to_string(&path).map_err(|e| ForgeError::Io {
+                operation: "reading status file".to_string(),
+                path: path.clone(),
+                source: e,
+            })?;
+
+            serde_json::from_str(&content).unwrap_or_else(|_| {
+                WorkerStatusInfo::new(worker_id, status)
+            })
+        } else {
+            WorkerStatusInfo::new(worker_id, status)
+        };
+
+        // Update the status
+        info.status = status;
+        info.last_activity = Some(Utc::now());
+
+        // Write atomically using temp file
+        self.write_status(&path, &info)
+    }
+
+    /// Write a complete worker status info to file.
+    pub fn write_worker(&self, info: &WorkerStatusInfo) -> Result<()> {
+        let path = self.status_file_path(&info.worker_id);
+        self.write_status(&path, info)
+    }
+
+    /// Write status to file atomically.
+    fn write_status(&self, path: &Path, info: &WorkerStatusInfo) -> Result<()> {
+        let json = serde_json::to_string_pretty(info).map_err(|e| ForgeError::StatusFileParse {
+            path: path.to_path_buf(),
+            message: format!("Failed to serialize status: {}", e),
+        })?;
+
+        // Write to temp file first, then rename for atomicity
+        let temp_path = path.with_extension("json.tmp");
+        std::fs::write(&temp_path, &json).map_err(|e| ForgeError::Io {
+            operation: "writing status file".to_string(),
+            path: temp_path.clone(),
+            source: e,
+        })?;
+
+        std::fs::rename(&temp_path, path).map_err(|e| ForgeError::Io {
+            operation: "renaming status file".to_string(),
+            path: path.to_path_buf(),
+            source: e,
+        })?;
+
+        debug!("Wrote status file: {:?}", path);
+        Ok(())
+    }
+
+    /// Pause a worker by setting their status to Paused.
+    pub fn pause_worker(&self, worker_id: &str) -> Result<()> {
+        self.update_status(worker_id, WorkerStatus::Paused)
+    }
+
+    /// Resume a worker by setting their status to Idle.
+    pub fn resume_worker(&self, worker_id: &str) -> Result<()> {
+        self.update_status(worker_id, WorkerStatus::Idle)
+    }
+
+    /// Pause all workers with status files in the status directory.
+    ///
+    /// Returns the number of workers paused.
+    pub fn pause_all(&self) -> Result<usize> {
+        let reader = StatusReader::new(Some(self.status_dir.clone()))?;
+        let workers = reader.list_workers()?;
+        let mut count = 0;
+
+        for worker_id in workers {
+            if let Ok(Some(info)) = reader.read_worker(&worker_id) {
+                // Only pause if not already paused, stopped, or failed
+                if info.status != WorkerStatus::Paused
+                    && info.status != WorkerStatus::Stopped
+                    && info.status != WorkerStatus::Failed
+                {
+                    self.pause_worker(&worker_id)?;
+                    count += 1;
+                }
+            }
+        }
+
+        Ok(count)
+    }
+
+    /// Resume all paused workers in the status directory.
+    ///
+    /// Returns the number of workers resumed.
+    pub fn resume_all(&self) -> Result<usize> {
+        let reader = StatusReader::new(Some(self.status_dir.clone()))?;
+        let workers = reader.list_workers()?;
+        let mut count = 0;
+
+        for worker_id in workers {
+            if let Ok(Some(info)) = reader.read_worker(&worker_id) {
+                // Only resume if currently paused
+                if info.status == WorkerStatus::Paused {
+                    self.resume_worker(&worker_id)?;
+                    count += 1;
+                }
+            }
+        }
+
+        Ok(count)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -702,5 +858,189 @@ mod tests {
             .find(|w| w.worker_id == "worker-null")
             .unwrap();
         assert_eq!(w_null.current_task, None);
+    }
+
+    // ============================================================
+    // StatusWriter Tests (bd-2y6q)
+    // ============================================================
+
+    #[test]
+    fn test_status_writer_new_creates_directory() {
+        let tmp_dir = TempDir::new().unwrap();
+        let status_dir = tmp_dir.path().join("status");
+
+        // Directory doesn't exist yet
+        assert!(!status_dir.exists());
+
+        // Writer should create it
+        let _writer = StatusWriter::new(Some(status_dir.clone())).unwrap();
+        assert!(status_dir.exists());
+    }
+
+    #[test]
+    fn test_status_writer_pause_worker() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        // Create an active worker status file
+        create_test_status_file(
+            tmp_dir.path(),
+            "test-worker",
+            r#"{"worker_id": "test-worker", "status": "active", "model": "sonnet"}"#,
+        );
+
+        let writer = StatusWriter::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        writer.pause_worker("test-worker").unwrap();
+
+        // Read back and verify
+        let reader = StatusReader::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        let worker = reader.read_worker("test-worker").unwrap().unwrap();
+
+        assert_eq!(worker.status, WorkerStatus::Paused);
+        assert_eq!(worker.model, Some("sonnet".to_string())); // Preserved
+    }
+
+    #[test]
+    fn test_status_writer_resume_worker() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        // Create a paused worker status file
+        create_test_status_file(
+            tmp_dir.path(),
+            "paused-worker",
+            r#"{"worker_id": "paused-worker", "status": "paused", "model": "opus"}"#,
+        );
+
+        let writer = StatusWriter::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        writer.resume_worker("paused-worker").unwrap();
+
+        // Read back and verify
+        let reader = StatusReader::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        let worker = reader.read_worker("paused-worker").unwrap().unwrap();
+
+        assert_eq!(worker.status, WorkerStatus::Idle);
+        assert_eq!(worker.model, Some("opus".to_string())); // Preserved
+    }
+
+    #[test]
+    fn test_status_writer_pause_creates_file_if_missing() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let writer = StatusWriter::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        writer.pause_worker("new-worker").unwrap();
+
+        // File should be created
+        let reader = StatusReader::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        let worker = reader.read_worker("new-worker").unwrap().unwrap();
+
+        assert_eq!(worker.worker_id, "new-worker");
+        assert_eq!(worker.status, WorkerStatus::Paused);
+    }
+
+    #[test]
+    fn test_status_writer_pause_all() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        // Create multiple workers with different statuses
+        create_test_status_file(
+            tmp_dir.path(),
+            "worker-active",
+            r#"{"worker_id": "worker-active", "status": "active"}"#,
+        );
+        create_test_status_file(
+            tmp_dir.path(),
+            "worker-idle",
+            r#"{"worker_id": "worker-idle", "status": "idle"}"#,
+        );
+        create_test_status_file(
+            tmp_dir.path(),
+            "worker-paused",
+            r#"{"worker_id": "worker-paused", "status": "paused"}"#,
+        );
+        create_test_status_file(
+            tmp_dir.path(),
+            "worker-stopped",
+            r#"{"worker_id": "worker-stopped", "status": "stopped"}"#,
+        );
+
+        let writer = StatusWriter::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        let count = writer.pause_all().unwrap();
+
+        // Should pause active and idle, skip paused and stopped
+        assert_eq!(count, 2);
+
+        let reader = StatusReader::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        let workers = reader.read_all().unwrap();
+
+        for worker in workers {
+            match worker.worker_id.as_str() {
+                "worker-active" | "worker-idle" | "worker-paused" => {
+                    assert_eq!(worker.status, WorkerStatus::Paused);
+                }
+                "worker-stopped" => {
+                    assert_eq!(worker.status, WorkerStatus::Stopped);
+                }
+                _ => panic!("Unexpected worker: {}", worker.worker_id),
+            }
+        }
+    }
+
+    #[test]
+    fn test_status_writer_resume_all() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        // Create paused and non-paused workers
+        create_test_status_file(
+            tmp_dir.path(),
+            "worker-paused1",
+            r#"{"worker_id": "worker-paused1", "status": "paused"}"#,
+        );
+        create_test_status_file(
+            tmp_dir.path(),
+            "worker-paused2",
+            r#"{"worker_id": "worker-paused2", "status": "paused"}"#,
+        );
+        create_test_status_file(
+            tmp_dir.path(),
+            "worker-active",
+            r#"{"worker_id": "worker-active", "status": "active"}"#,
+        );
+
+        let writer = StatusWriter::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        let count = writer.resume_all().unwrap();
+
+        // Should only resume paused workers
+        assert_eq!(count, 2);
+
+        let reader = StatusReader::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+
+        let p1 = reader.read_worker("worker-paused1").unwrap().unwrap();
+        assert_eq!(p1.status, WorkerStatus::Idle);
+
+        let p2 = reader.read_worker("worker-paused2").unwrap().unwrap();
+        assert_eq!(p2.status, WorkerStatus::Idle);
+
+        let active = reader.read_worker("worker-active").unwrap().unwrap();
+        assert_eq!(active.status, WorkerStatus::Active); // Unchanged
+    }
+
+    #[test]
+    fn test_status_writer_updates_last_activity() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        // Create a worker without last_activity
+        create_test_status_file(
+            tmp_dir.path(),
+            "test-worker",
+            r#"{"worker_id": "test-worker", "status": "active"}"#,
+        );
+
+        let writer = StatusWriter::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        writer.pause_worker("test-worker").unwrap();
+
+        let reader = StatusReader::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        let worker = reader.read_worker("test-worker").unwrap().unwrap();
+
+        // Should have last_activity set
+        assert!(worker.last_activity.is_some());
     }
 }
