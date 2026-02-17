@@ -110,6 +110,53 @@ impl ChatResponse {
     }
 }
 
+/// A streaming chunk of text from the chat backend.
+///
+/// This represents a partial response as tokens arrive from the LLM.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamingChatChunk {
+    /// Text chunk (may be partial, typically a few tokens).
+    pub text: String,
+    /// Whether this is the final chunk.
+    pub is_done: bool,
+    /// Error if one occurred during streaming.
+    pub error: Option<String>,
+    /// Final response metadata (only present in the final chunk).
+    pub final_response: Option<ChatResponse>,
+}
+
+impl StreamingChatChunk {
+    /// Create a text chunk.
+    pub fn text(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            is_done: false,
+            error: None,
+            final_response: None,
+        }
+    }
+
+    /// Create the final chunk with response metadata.
+    pub fn done(response: ChatResponse) -> Self {
+        Self {
+            text: String::new(),
+            is_done: true,
+            error: None,
+            final_response: Some(response),
+        }
+    }
+
+    /// Create an error chunk.
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            text: String::new(),
+            is_done: true,
+            error: Some(message.into()),
+            final_response: None,
+        }
+    }
+}
+
 /// Chat backend with pluggable provider support.
 pub struct ChatBackend {
     #[allow(dead_code)]
@@ -317,6 +364,60 @@ impl ChatBackend {
         Ok(chat_response)
     }
 
+    /// Check if the provider supports streaming.
+    ///
+    /// Returns true if the provider is a ClaudeApiProvider with streaming support.
+    pub fn supports_streaming(&self) -> bool {
+        self.provider.supports_streaming() && self.provider.name() == "claude-api"
+    }
+
+    /// Get the configuration for creating a streaming provider.
+    ///
+    /// Returns the ClaudeApiConfig if available, which can be used to create
+    /// a streaming provider externally.
+    pub fn get_streaming_config(&self) -> Option<crate::config::ClaudeApiConfig> {
+        use crate::config::ProviderConfig;
+
+        match &self.config.provider {
+            ProviderConfig::ClaudeApi(config) => Some(config.clone()),
+            _ => None,
+        }
+    }
+
+    /// Get the current dashboard context.
+    ///
+    /// This is exposed so streaming callers can build their own prompts.
+    pub async fn get_context(&self) -> Result<DashboardContext> {
+        self.context_provider.get_context().await
+    }
+
+    /// Get tool definitions for chat requests.
+    ///
+    /// This is exposed so streaming callers can include tools in their requests.
+    pub fn get_tool_definitions(&self) -> Vec<ProviderTool> {
+        self.tool_registry
+            .tool_definitions()
+            .into_iter()
+            .map(|t| t.into())
+            .collect()
+    }
+
+    /// Build a prompt with context included.
+    ///
+    /// This is exposed so streaming callers can create prompts consistently.
+    pub async fn build_streaming_prompt(&self, input: &str, context: &DashboardContext) -> String {
+        self.build_prompt(input, context).await
+    }
+
+    /// Check and record rate limit for streaming requests.
+    ///
+    /// Call this before starting a streaming request to ensure rate limits are respected.
+    pub async fn check_and_record_rate_limit(&self) -> Result<()> {
+        self.rate_limiter.check().await?;
+        self.rate_limiter.record().await;
+        Ok(())
+    }
+
     /// Confirm an action that requires confirmation.
     pub async fn confirm_action(&self, action: &str, confirmed: bool) -> Result<ChatResponse> {
         if !confirmed {
@@ -360,6 +461,23 @@ impl ChatBackend {
 
         prompt
     }
+}
+
+/// Estimate cost based on token usage and provider.
+pub fn estimate_cost_from_usage(input_tokens: u32, output_tokens: u32, provider: &str) -> f64 {
+    // Cost per million tokens (input, output)
+    let (input_cost_per_million, output_cost_per_million) = if provider.contains("opus") {
+        (15.0, 75.0)
+    } else if provider.contains("sonnet") {
+        (3.0, 15.0)
+    } else {
+        (0.25, 1.25) // Haiku
+    };
+
+    let input_cost = (input_tokens as f64 / 1_000_000.0) * input_cost_per_million;
+    let output_cost = (output_tokens as f64 / 1_000_000.0) * output_cost_per_million;
+
+    input_cost + output_cost
 }
 
 #[cfg(test)]

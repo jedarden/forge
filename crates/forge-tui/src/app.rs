@@ -50,7 +50,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyEvent};
-use forge_chat::{ChatBackend, ChatConfig, ChatResponse};
+use forge_chat::{ChatBackend, ChatConfig, ChatResponse, StreamingChatChunk};
 use forge_core::types::WorkerTier;
 use forge_worker::{
     CrashRecoveryManager, LaunchConfig, SpawnRequest, WorkerLauncher,
@@ -166,12 +166,18 @@ pub struct App {
     chat_spinner_frame: usize,
     /// Partial response being streamed (for visual streaming effect)
     streaming_response: String,
-    /// Current streaming position (character index)
+    /// Current streaming position (character index - used for simulated streaming fallback)
     streaming_position: usize,
-    /// Whether streaming is active
+    /// Whether streaming is active (real-time from API or simulated)
     streaming_active: bool,
-    /// Complete response received but not yet displayed
+    /// Complete response received but not yet displayed (for simulated streaming fallback)
     pending_complete_response: Option<String>,
+    /// Channel receiver for real-time streaming chunks from API
+    streaming_chunk_rx: Option<std::sync::mpsc::Receiver<StreamingChatChunk>>,
+    /// Whether we're doing real-time API streaming (vs simulated)
+    real_streaming_active: bool,
+    /// Query being processed (for streaming context)
+    streaming_query: Option<String>,
     /// Chat conversation history (last 10 exchanges)
     chat_history: Vec<ChatExchange>,
     /// Chat history vertical scroll offset (lines scrolled from bottom)
@@ -545,6 +551,9 @@ impl App {
             streaming_position: 0,
             streaming_active: false,
             pending_complete_response: None,
+            streaming_chunk_rx: None,
+            real_streaming_active: false,
+            streaming_query: None,
             chat_history: Vec::new(),
             chat_scroll_offset: 0,
             worker_launcher,
@@ -618,6 +627,9 @@ impl App {
             streaming_position: 0,
             streaming_active: false,
             pending_complete_response: None,
+            streaming_chunk_rx: None,
+            real_streaming_active: false,
+            streaming_query: None,
             chat_history: Vec::new(),
             chat_scroll_offset: 0,
             worker_launcher: WorkerLauncher::new(),
@@ -1137,11 +1149,192 @@ impl App {
         }
     }
 
+    /// Poll for real-time streaming chunks from the API.
+    ///
+    /// This method checks the streaming channel and appends new text chunks
+    /// to the display as they arrive from the LLM.
+    fn poll_streaming_chunks(&mut self) {
+        if !self.real_streaming_active {
+            return;
+        }
+
+        // Collect all available chunks first (to avoid borrow issues)
+        let chunks: Vec<StreamingChatChunk> = if let Some(ref rx) = self.streaming_chunk_rx {
+            let mut collected = Vec::new();
+            loop {
+                match rx.try_recv() {
+                    Ok(chunk) => collected.push(chunk),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        // Signal disconnection with a special marker
+                        collected.push(StreamingChatChunk {
+                            text: String::new(),
+                            is_done: true,
+                            error: None,
+                            final_response: None,
+                        });
+                        break;
+                    }
+                }
+            }
+            collected
+        } else {
+            return;
+        };
+
+        // Process collected chunks
+        for chunk in chunks {
+            if let Some(ref err) = chunk.error {
+                // Handle streaming error
+                info!("Streaming error: {}", err);
+                let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+                let query = self.streaming_query.take().unwrap_or_default();
+
+                self.chat_history.push(ChatExchange {
+                    user_query: query,
+                    assistant_response: format!("Error: {}", err),
+                    timestamp,
+                    is_error: true,
+                    tool_calls: vec![],
+                    side_effects: vec![],
+                    confirmation: None,
+                    metadata: ResponseMetadata::default(),
+                    error_guidance: Some("Streaming error occurred. Try again.".to_string()),
+                });
+
+                self.finalize_real_streaming();
+                return;
+            }
+
+            if !chunk.text.is_empty() {
+                // Append new text to streaming response
+                self.streaming_response.push_str(&chunk.text);
+                self.mark_dirty();
+            }
+
+            if chunk.is_done {
+                // Streaming complete - finalize with the response metadata
+                if let Some(response) = chunk.final_response {
+                    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+                    let query = self.streaming_query.take().unwrap_or_default();
+
+                    // Build metadata from response
+                    let metadata = ResponseMetadata {
+                        duration_ms: response.duration_ms,
+                        cost_usd: response.cost_usd,
+                        provider: response.provider.clone(),
+                    };
+
+                    // Extract tool call information if any
+                    let tool_calls: Vec<ToolCallInfo> = response
+                        .tool_results
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, result)| {
+                            let name = response
+                                .tool_calls
+                                .get(idx)
+                                .map(|c| c.name.clone())
+                                .unwrap_or_else(|| "unknown".to_string());
+                            ToolCallInfo {
+                                name,
+                                success: result.success,
+                                message: result.message.clone(),
+                            }
+                        })
+                        .collect();
+
+                    // Extract side effects
+                    let side_effects: Vec<SideEffectInfo> = response
+                        .tool_results
+                        .iter()
+                        .flat_map(|result| {
+                            result.side_effects.iter().map(|effect| SideEffectInfo {
+                                effect_type: effect.effect_type.clone(),
+                                description: effect.description.clone(),
+                            })
+                        })
+                        .collect();
+
+                    // Use the accumulated streaming_response as the final text
+                    let response_text = if self.streaming_response.is_empty() {
+                        response.text.clone()
+                    } else {
+                        self.streaming_response.clone()
+                    };
+
+                    self.chat_history.push(ChatExchange {
+                        user_query: query,
+                        assistant_response: response_text,
+                        timestamp,
+                        is_error: !response.success,
+                        tool_calls,
+                        side_effects,
+                        confirmation: None,
+                        metadata,
+                        error_guidance: None,
+                    });
+
+                    // Keep only last 10 exchanges
+                    if self.chat_history.len() > 10 {
+                        self.chat_history.remove(0);
+                    }
+
+                    info!("Real-time streaming complete: {}ms", response.duration_ms);
+                } else {
+                    // Channel closed without final response - save accumulated text
+                    if !self.streaming_response.is_empty() {
+                        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+                        let query = self.streaming_query.take().unwrap_or_default();
+
+                        self.chat_history.push(ChatExchange {
+                            user_query: query,
+                            assistant_response: self.streaming_response.clone(),
+                            timestamp,
+                            is_error: false,
+                            tool_calls: vec![],
+                            side_effects: vec![],
+                            confirmation: None,
+                            metadata: ResponseMetadata::default(),
+                            error_guidance: None,
+                        });
+
+                        if self.chat_history.len() > 10 {
+                            self.chat_history.remove(0);
+                        }
+                    }
+                }
+
+                self.finalize_real_streaming();
+                return;
+            }
+        }
+    }
+
+    /// Finalize real-time streaming state.
+    fn finalize_real_streaming(&mut self) {
+        self.real_streaming_active = false;
+        self.streaming_active = false;
+        self.streaming_response.clear();
+        self.streaming_chunk_rx = None;
+        self.streaming_query = None;
+        self.chat_pending = false;
+        self.status_message = Some("✅ Response complete".to_string());
+        self.mark_dirty();
+    }
+
     /// Update streaming display by advancing character position.
     ///
     /// This creates a visual streaming effect by revealing the response
     /// character by character at a configurable speed.
+    /// Only used for simulated streaming (when real streaming is not available).
     fn update_streaming(&mut self) {
+        // If real streaming is active, poll for chunks instead
+        if self.real_streaming_active {
+            self.poll_streaming_chunks();
+            return;
+        }
+
         if !self.streaming_active {
             return;
         }
@@ -1218,6 +1411,141 @@ impl App {
         self.pending_complete_response = None;
         self.chat_pending = false;
         self.mark_dirty();
+    }
+
+    /// Start a real-time streaming chat request.
+    ///
+    /// This spawns a background thread that makes a streaming API request
+    /// and sends chunks via a channel as they arrive.
+    fn start_streaming_chat_request(&mut self, query: &str) {
+        use tracing::info;
+
+        let Some(backend) = &self.chat_backend else {
+            self.status_message = Some("Chat backend not initialized".to_string());
+            return;
+        };
+
+        // Get the streaming config
+        let Some(api_config) = backend.get_streaming_config() else {
+            info!("Streaming config not available, falling back to non-streaming");
+            // Fall back to simulated streaming via non-streaming request
+            return;
+        };
+
+        info!("Starting real-time streaming chat request: {}", query);
+
+        // Create channel for streaming chunks
+        let (chunk_tx, chunk_rx) = std::sync::mpsc::channel::<StreamingChatChunk>();
+
+        // Store the streaming state
+        self.streaming_chunk_rx = Some(chunk_rx);
+        self.real_streaming_active = true;
+        self.streaming_active = true;
+        self.streaming_response = String::new();
+        self.streaming_query = Some(query.to_string());
+
+        // Clone data needed for the background thread
+        let backend_clone = Arc::clone(backend);
+        let query_clone = query.to_string();
+
+        // Spawn background thread for streaming
+        std::thread::spawn(move || {
+            use futures_util::StreamExt;
+
+            info!("Streaming thread started for query: {}", query_clone);
+
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    let _ = chunk_tx.send(StreamingChatChunk::error(format!("Runtime error: {}", e)));
+                    return;
+                }
+            };
+
+            rt.block_on(async {
+                // Check rate limit
+                if let Err(e) = backend_clone.check_and_record_rate_limit().await {
+                    let _ = chunk_tx.send(StreamingChatChunk::error(format!("Rate limit error: {}", e)));
+                    return;
+                }
+
+                // Get context and build prompt
+                let context = match backend_clone.get_context().await {
+                    Ok(ctx) => ctx,
+                    Err(e) => {
+                        let _ = chunk_tx.send(StreamingChatChunk::error(format!("Context error: {}", e)));
+                        return;
+                    }
+                };
+
+                let prompt = backend_clone.build_streaming_prompt(&query_clone, &context).await;
+                let tools = backend_clone.get_tool_definitions();
+
+                // Create provider for streaming
+                let provider = match forge_chat::ClaudeApiProvider::from_config(api_config) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let _ = chunk_tx.send(StreamingChatChunk::error(format!("Provider error: {}", e)));
+                        return;
+                    }
+                };
+
+                // Start streaming
+                let stream = match provider.process_streaming(&prompt, &context, &tools).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let _ = chunk_tx.send(StreamingChatChunk::error(format!("Streaming error: {}", e)));
+                        return;
+                    }
+                };
+
+                let start_time = std::time::Instant::now();
+                let mut accumulated_text = String::new();
+                let mut stream = std::pin::pin!(stream);
+
+                while let Some(api_chunk) = stream.next().await {
+                    if let Some(ref err) = api_chunk.error {
+                        let _ = chunk_tx.send(StreamingChatChunk::error(err));
+                        return;
+                    }
+
+                    if !api_chunk.text.is_empty() {
+                        accumulated_text.push_str(&api_chunk.text);
+                        let _ = chunk_tx.send(StreamingChatChunk::text(&api_chunk.text));
+                    }
+
+                    if api_chunk.is_done {
+                        let duration_ms = start_time.elapsed().as_millis() as u64;
+
+                        // Build final response
+                        let mut response = ChatResponse::success(&accumulated_text)
+                            .with_duration(duration_ms)
+                            .with_provider("claude-api");
+
+                        // Add cost if usage info available
+                        if let Some(usage) = api_chunk.usage {
+                            let cost = forge_chat::estimate_cost_from_usage(
+                                usage.input_tokens,
+                                usage.output_tokens,
+                                "claude-api",
+                            );
+                            response = response.with_cost(cost);
+                        }
+
+                        let _ = chunk_tx.send(StreamingChatChunk::done(response));
+                        info!("Streaming complete: {} chars in {}ms", accumulated_text.len(), duration_ms);
+                        return;
+                    }
+                }
+
+                // Stream ended without done marker
+                let duration_ms = start_time.elapsed().as_millis() as u64;
+                let response = ChatResponse::success(&accumulated_text)
+                    .with_duration(duration_ms)
+                    .with_provider("claude-api");
+                let _ = chunk_tx.send(StreamingChatChunk::done(response));
+            });
+        });
     }
 
     /// Poll for config changes and apply hot-reload.
@@ -1685,44 +2013,56 @@ impl App {
 
                     // Process chat request in background thread
                     if let Some(backend) = &self.chat_backend {
-                        self.status_message = Some(format!("⏳ Processing: {}...", query));
+                        // Check if streaming is supported
+                        let supports_streaming = backend.supports_streaming();
+
+                        self.status_message = Some(format!(
+                            "⏳ Processing{}...",
+                            if supports_streaming { " (streaming)" } else { "" }
+                        ));
                         self.chat_pending = true;
 
-                        // Clone Arc for thread
-                        let backend_clone = Arc::clone(backend);
-                        let query_clone = query.clone();
+                        if supports_streaming {
+                            // Use real-time streaming
+                            self.start_streaming_chat_request(&query);
+                        } else {
+                            // Fall back to non-streaming request
+                            // Clone Arc for thread
+                            let backend_clone = Arc::clone(backend);
+                            let query_clone = query.clone();
 
-                        // Create channel if not already created
-                        if self.chat_response_rx.is_none() {
-                            let (tx, rx) = mpsc::channel();
-                            self.chat_response_tx = Some(tx);
-                            self.chat_response_rx = Some(rx);
-                        }
-
-                        let tx = self.chat_response_tx.as_ref().unwrap().clone();
-
-                        // Spawn background thread to process request
-                        std::thread::spawn(move || {
-                            use tracing::info;
-
-                            info!("Chat thread started for query: {}", query_clone);
-
-                            let result = match tokio::runtime::Runtime::new() {
-                                Ok(rt) => rt.block_on(backend_clone.process_command(&query_clone)),
-                                Err(e) => Err(forge_chat::ChatError::ApiError(format!(
-                                    "Runtime error: {}",
-                                    e
-                                ))),
-                            };
-
-                            info!("Chat request completed, result: {:?}", result.is_ok());
-
-                            // Send result back to UI thread
-                            match tx.send((query_clone, result)) {
-                                Ok(_) => info!("✅ Sent response to UI thread via channel"),
-                                Err(e) => info!("❌ Failed to send response: {:?}", e),
+                            // Create channel if not already created
+                            if self.chat_response_rx.is_none() {
+                                let (tx, rx) = mpsc::channel();
+                                self.chat_response_tx = Some(tx);
+                                self.chat_response_rx = Some(rx);
                             }
-                        });
+
+                            let tx = self.chat_response_tx.as_ref().unwrap().clone();
+
+                            // Spawn background thread to process request
+                            std::thread::spawn(move || {
+                                use tracing::info;
+
+                                info!("Chat thread started for query: {}", query_clone);
+
+                                let result = match tokio::runtime::Runtime::new() {
+                                    Ok(rt) => rt.block_on(backend_clone.process_command(&query_clone)),
+                                    Err(e) => Err(forge_chat::ChatError::ApiError(format!(
+                                        "Runtime error: {}",
+                                        e
+                                    ))),
+                                };
+
+                                info!("Chat request completed, result: {:?}", result.is_ok());
+
+                                // Send result back to UI thread
+                                match tx.send((query_clone, result)) {
+                                    Ok(_) => info!("✅ Sent response to UI thread via channel"),
+                                    Err(e) => info!("❌ Failed to send response: {:?}", e),
+                                }
+                            });
+                        }
                     } else {
                         self.status_message = Some("Chat backend not initialized".to_string());
                     }

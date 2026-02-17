@@ -54,7 +54,8 @@ pub mod tools;
 
 // Re-export main types
 pub use audit::{AuditEntry, AuditLogger};
-pub use backend::{ChatBackend, ChatResponse};
+pub use backend::{ChatBackend, ChatResponse, StreamingChatChunk, estimate_cost_from_usage};
+pub use claude_api_types::StreamChunk;
 pub use claude_api::ClaudeApiProvider;
 pub use config::{
     ChatConfig, ClaudeApiConfig, ClaudeCliConfig, MockConfig, ProviderConfig, ProviderType,
