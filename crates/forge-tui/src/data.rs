@@ -180,6 +180,11 @@ impl WorkerData {
 
     /// Format worker pool summary for display.
     pub fn format_worker_pool_summary(&self) -> String {
+        self.format_worker_pool_summary_with_paused(0)
+    }
+
+    /// Format worker pool summary for display with paused worker count.
+    pub fn format_worker_pool_summary_with_paused(&self, paused_count: usize) -> String {
         if !self.is_loaded() {
             return "Loading worker data...".to_string();
         }
@@ -198,10 +203,19 @@ impl WorkerData {
         // If we have status file data, use it (more detailed)
         if !self.is_empty() {
             let c = &self.counts;
-            lines.push(format!(
-                "Total: {} ({} active, {} idle)",
-                c.total, c.active, c.idle
-            ));
+            // Include paused count in total line if any workers are paused
+            let total_line = if paused_count > 0 {
+                format!(
+                    "Total: {} ({} active, {} idle, ⏸{} paused)",
+                    c.total, c.active, c.idle, paused_count
+                )
+            } else {
+                format!(
+                    "Total: {} ({} active, {} idle)",
+                    c.total, c.active, c.idle
+                )
+            };
+            lines.push(total_line);
 
             // Show health summary
             if !self.health_status.is_empty() {

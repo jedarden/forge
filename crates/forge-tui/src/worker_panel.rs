@@ -170,6 +170,24 @@ impl<'a> WorkerPanel<'a> {
             lines.push(Line::from(activity_spans));
         }
 
+        // Show paused workers summary if any are paused
+        let paused_count = self.paused_workers.len();
+        if paused_count > 0 {
+            let paused_spans = vec![
+                Span::raw("Paused: "),
+                Span::styled(
+                    format!("{} ", paused_count),
+                    Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("⏸", Style::default().fg(Color::Magenta)),
+                Span::styled(
+                    " PAUSED",
+                    Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                ),
+            ];
+            lines.push(Line::from(paused_spans));
+        }
+
         lines.push(Line::raw(""));
 
         // Table header (with selection column)

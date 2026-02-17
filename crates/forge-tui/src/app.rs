@@ -3254,6 +3254,7 @@ impl App {
         };
 
         // Determine system status from real data
+        let paused_count = self.paused_workers.len();
         let (status_text, status_color) = if let Some(err) = self.data_manager.init_error() {
             (
                 format!("[Error: {}]", truncate_status_error(err)),
@@ -3264,12 +3265,23 @@ impl App {
         } else {
             let counts = self.data_manager.worker_counts();
             if counts.unhealthy() > 0 {
+                let paused_suffix = if paused_count > 0 {
+                    format!(" ⏸{}", paused_count)
+                } else {
+                    String::new()
+                };
                 (
-                    format!("[{} unhealthy]", counts.unhealthy()),
+                    format!("[{} unhealthy{}]", counts.unhealthy(), paused_suffix),
                     theme.colors.status_warning,
                 )
             } else if counts.total == 0 {
                 ("[No workers]".to_string(), theme.colors.text_dim)
+            } else if paused_count > 0 {
+                // Show paused count when there are paused workers
+                (
+                    format!("[{} workers ⏸{}]", counts.total, paused_count),
+                    Color::Magenta,
+                )
             } else {
                 (
                     format!("[{} workers]", counts.total),
@@ -3437,7 +3449,7 @@ impl App {
             .split(columns[2]);
 
         // Left column: Workers + Subscriptions
-        let worker_summary = self.data_manager.worker_data.format_worker_pool_summary();
+        let worker_summary = self.data_manager.worker_data.format_worker_pool_summary_with_paused(self.paused_workers.len());
         self.draw_panel(
             frame,
             left_panels[0],
@@ -3507,7 +3519,7 @@ impl App {
             .split(chunks[0]);
 
         // Use real worker data
-        let worker_summary = self.data_manager.worker_data.format_worker_pool_summary();
+        let worker_summary = self.data_manager.worker_data.format_worker_pool_summary_with_paused(self.paused_workers.len());
 
         self.draw_panel(
             frame,
@@ -3572,7 +3584,7 @@ impl App {
             .split(area);
 
         // Worker Pool (primary focus)
-        let worker_summary = self.data_manager.worker_data.format_worker_pool_summary();
+        let worker_summary = self.data_manager.worker_data.format_worker_pool_summary_with_paused(self.paused_workers.len());
         self.draw_panel(
             frame,
             chunks[0],
@@ -3667,7 +3679,9 @@ impl App {
 
         // Use the WorkerPanel widget with color-coded health indicators
         let worker_panel = WorkerPanel::new(&self.data_manager.worker_data)
-            .focused(self.focus_panel == FocusPanel::WorkerPool);
+            .focused(self.focus_panel == FocusPanel::WorkerPool)
+            .paused_workers(&self.paused_workers)
+            .selected(self.selected_worker_index);
 
         frame.render_widget(worker_panel, area);
     }
