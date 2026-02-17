@@ -27,7 +27,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use forge_core::{LogGuard, StatusWriter, init_logging};
-use forge_init::{detection, generator, guidance};
+use forge_init::{detection, generator, guidance, wizard};
 use forge_tui::{App, ForgeConfig};
 use tracing::{error, info};
 
@@ -373,36 +373,8 @@ fn run_onboarding(
         return Err("No compatible CLI tools available".into());
     }
 
-    // Display detected tools (only in interactive mode)
-    if !non_interactive {
-        eprintln!("\n📦 Detected tools:");
-        for tool in &tools {
-            let status_icon = match tool.status {
-                detection::ToolStatus::Ready => "✅",
-                detection::ToolStatus::MissingApiKey => "⚠️ ",
-                _ => "❌",
-            };
-            eprintln!(
-                "  {} {} - {} ({})",
-                status_icon,
-                tool.name,
-                tool.status_message(),
-                tool.binary_path.display()
-            );
-            if let Some(version) = &tool.version {
-                eprintln!("     Version: {}", version);
-            }
-            if tool.api_key_required
-                && !tool.api_key_detected
-                && let Some(env_var) = &tool.api_key_env_var
-            {
-                eprintln!("     Missing: {}", env_var);
-            }
-        }
-    }
-
     // Select the backend to use
-    let selected_tool = if let Some(backend) = preferred_backend {
+    let selected_tool: detection::CliToolDetection = if let Some(backend) = preferred_backend {
         // Try to find the specified backend
         let normalized_backend = normalize_backend_name(backend);
         let found = tools.iter().find(|t| {
@@ -425,7 +397,7 @@ fn run_onboarding(
                     }
                     return Err(format!("Backend '{}' is not ready", backend).into());
                 }
-                tool
+                tool.clone()
             }
             None => {
                 eprintln!("error: Backend '{}' not found", backend);
@@ -440,17 +412,51 @@ fn run_onboarding(
                 return Err(format!("Backend '{}' not found", backend).into());
             }
         }
-    } else {
-        // Auto-select the first ready tool
+    } else if non_interactive {
+        // Auto-select the first ready tool in non-interactive mode
         tools
             .iter()
             .find(|t| t.is_ready())
             .ok_or("No ready tools available. Please set required API keys.")?
+            .clone()
+    } else {
+        // Interactive mode: show the TUI wizard for selection
+        match wizard::run_wizard(tools.clone()) {
+            Ok(Some(tool)) => {
+                // User selected a tool
+                eprintln!(
+                    "\n✨ Using: {} ({})",
+                    tool.name,
+                    tool.binary_path.display()
+                );
+                tool
+            }
+            Ok(None) => {
+                // User chose "Manual Setup" - skip auto-configuration
+                eprintln!("\n📝 Manual setup selected.");
+                eprintln!("   Create ~/.forge/config.yaml manually to configure FORGE.");
+                return Ok(());
+            }
+            Err(wizard::WizardError::UserCancelled) => {
+                eprintln!("\n👋 Setup cancelled.");
+                return Err("User cancelled setup".into());
+            }
+            Err(wizard::WizardError::NoToolsAvailable) => {
+                // This shouldn't happen since we already checked, but handle it
+                eprint!("{}", guidance::generate_guidance(Some(&diagnostics)));
+                return Err("No compatible CLI tools available".into());
+            }
+            Err(e) => {
+                eprintln!("\nerror: Wizard failed: {}", e);
+                return Err(format!("Wizard failed: {}", e).into());
+            }
+        }
     };
 
-    if !non_interactive {
-        eprintln!(
-            "\n✨ Using: {} ({})",
+    if non_interactive {
+        // Only print in non-interactive mode (wizard already prints in interactive mode)
+        info!(
+            "Auto-selected: {} ({})",
             selected_tool.name,
             selected_tool.binary_path.display()
         );
@@ -468,7 +474,7 @@ fn run_onboarding(
     if !non_interactive {
         eprintln!("📝 Generating config.yaml...");
     }
-    generator::generate_config_yaml(selected_tool, &config_path)?;
+    generator::generate_config_yaml(&selected_tool, &config_path)?;
 
     // Generate launcher script
     let launcher_name = format!("{}-launcher", selected_tool.name);
@@ -476,7 +482,7 @@ fn run_onboarding(
     if !non_interactive {
         eprintln!("🚀 Generating launcher script...");
     }
-    generator::generate_launcher_script(selected_tool, &launcher_path)?;
+    generator::generate_launcher_script(&selected_tool, &launcher_path)?;
 
     if !non_interactive {
         eprintln!("\n✅ Configuration complete!");
