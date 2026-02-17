@@ -1,7 +1,7 @@
-//! Worker Panel widget with color-coded health indicators.
+//! Worker Panel widget with color-coded health and activity indicators.
 //!
 //! This module provides a rich widget for displaying worker information
-//! with proper color-coded health status indicators.
+//! with proper color-coded health status and activity state indicators.
 
 use ratatui::{
     buffer::Buffer,
@@ -13,6 +13,7 @@ use ratatui::{
 use std::collections::HashSet;
 
 use crate::data::WorkerData;
+use forge_core::activity_monitor::ActivityState;
 use forge_worker::health::{HealthLevel, WorkerHealthStatus};
 
 /// A worker panel widget with color-coded health indicators.
@@ -133,8 +134,43 @@ impl<'a> WorkerPanel<'a> {
             summary_spans.push(Span::raw(format!(" | {} total", total)));
 
             lines.push(Line::from(summary_spans));
-            lines.push(Line::raw(""));
         }
+
+        // Show activity summary (idle/working/stuck counts)
+        if !self.data.activity_status.is_empty() {
+            let (idle, working, stuck) = self.data.activity_counts();
+
+            let mut activity_spans = vec![Span::raw("Activity: ")];
+
+            // Working count (green)
+            activity_spans.push(Span::styled(
+                format!("{} ", working),
+                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            ));
+            activity_spans.push(Span::styled("⟳", Style::default().fg(Color::Green)));
+            activity_spans.push(Span::raw(" | "));
+
+            // Idle count (cyan)
+            activity_spans.push(Span::styled(
+                format!("{} ", idle),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            ));
+            activity_spans.push(Span::styled("💤", Style::default().fg(Color::Cyan)));
+
+            // Stuck count (red) - only show if > 0
+            if stuck > 0 {
+                activity_spans.push(Span::raw(" | "));
+                activity_spans.push(Span::styled(
+                    format!("{} ", stuck),
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ));
+                activity_spans.push(Span::styled("⚠️STUCK", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)));
+            }
+
+            lines.push(Line::from(activity_spans));
+        }
+
+        lines.push(Line::raw(""));
 
         // Table header (with selection column)
         lines.push(Line::from(vec![
@@ -194,30 +230,58 @@ impl<'a> WorkerPanel<'a> {
 
             let worker_id = truncate_string(&worker.worker_id, 15);
             let model = format_model_name_short(&worker.model);
-            // Show "Paused" status for paused workers, otherwise show actual status
-            let status = if is_paused {
-                "Paused".to_string()
+
+            // Get activity state for this worker
+            let activity = self.data.get_activity(&worker.worker_id);
+            let is_stuck = activity.map_or(false, |a| a.state == ActivityState::Stuck);
+
+            // Show "Paused" for paused workers, "STUCK" for stuck workers, otherwise actual status
+            let (status, status_style) = if is_paused {
+                ("Paused".to_string(), Style::default().fg(Color::Magenta))
+            } else if is_stuck {
+                ("STUCK".to_string(), Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
             } else {
-                format_status(&worker.status)
+                (format_status(&worker.status), row_style)
             };
-            let task = worker
-                .current_task
-                .as_deref()
-                .map(|t| truncate_string(t, 11))
-                .unwrap_or_else(|| "-".to_string());
+
+            // Show activity time for stuck workers
+            let task = if is_stuck {
+                activity
+                    .map(|a| format!("{}!", a.activity_age_string()))
+                    .unwrap_or_else(|| "-".to_string())
+            } else {
+                worker
+                    .current_task
+                    .as_deref()
+                    .map(|t| truncate_string(t, 11))
+                    .unwrap_or_else(|| "-".to_string())
+            };
 
             let mut row_spans = vec![
                 Span::styled(sel_indicator, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
                 Span::styled(" ", Style::default().fg(Color::DarkGray)),
             ];
             row_spans.extend(health_spans);
-            row_spans.extend(vec![
-                Span::styled(format!(" │ {:<15} │ {:<8} │ {:<8} │ {:<11} │",
-                    worker_id, model, status, task),
-                    row_style),
-            ]);
 
-            lines.push(Line::from(row_spans));
+            // Build the row with proper styling for stuck workers
+            let row_content = if is_stuck {
+                // Special styling for stuck workers - red status
+                row_spans.extend(vec![
+                    Span::styled(format!(" │ {:<15} │ {:<8} │ ", worker_id, model), row_style),
+                    Span::styled(format!("{:<8}", status), status_style),
+                    Span::styled(format!(" │ {:<11} │", task), Style::default().fg(Color::Red)),
+                ]);
+                row_spans
+            } else {
+                row_spans.extend(vec![
+                    Span::styled(format!(" │ {:<15} │ {:<8} │ {:<8} │ {:<11} │",
+                        worker_id, model, status, task),
+                        row_style),
+                ]);
+                row_spans
+            };
+
+            lines.push(Line::from(row_content));
         }
 
         // Table footer

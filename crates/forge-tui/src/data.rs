@@ -20,6 +20,7 @@ use crate::metrics_panel::MetricsPanelData;
 use crate::perf_metrics::{get_memory_rss, PerfMetrics};
 use crate::status::{StatusWatcher, StatusWatcherConfig, WorkerCounts, WorkerStatusFile};
 use crate::subscription_panel::SubscriptionData;
+use forge_core::activity_monitor::{ActivityMonitor, ActivityState, WorkerActivity};
 use forge_core::types::WorkerStatus;
 use forge_cost::{CostDatabase, CostQuery, SubscriptionTracker};
 use forge_worker::discovery::DiscoveryResult;
@@ -44,6 +45,10 @@ pub struct WorkerData {
     pub health_status: HashMap<String, WorkerHealthStatus>,
     /// Last health check timestamp
     pub health_last_update: Option<std::time::Instant>,
+    /// Activity status per worker (idle/working/stuck)
+    pub activity_status: HashMap<String, WorkerActivity>,
+    /// Last activity check timestamp
+    pub activity_last_update: Option<std::time::Instant>,
 }
 
 impl WorkerData {
@@ -91,6 +96,43 @@ impl WorkerData {
         }
 
         (healthy, degraded, unhealthy)
+    }
+
+    /// Update activity status from activity monitor.
+    pub fn update_activity_status(&mut self, activity: HashMap<String, WorkerActivity>) {
+        self.activity_status = activity;
+        self.activity_last_update = Some(std::time::Instant::now());
+    }
+
+    /// Get activity status for a specific worker.
+    pub fn get_activity(&self, worker_id: &str) -> Option<&WorkerActivity> {
+        self.activity_status.get(worker_id)
+    }
+
+    /// Get workers that are currently stuck (have task but no activity > 15 min).
+    pub fn stuck_workers(&self) -> Vec<&WorkerActivity> {
+        self.activity_status
+            .values()
+            .filter(|a| a.state == ActivityState::Stuck)
+            .collect()
+    }
+
+    /// Count workers by activity state (idle, working, stuck).
+    pub fn activity_counts(&self) -> (usize, usize, usize) {
+        let mut idle = 0;
+        let mut working = 0;
+        let mut stuck = 0;
+
+        for activity in self.activity_status.values() {
+            match activity.state {
+                ActivityState::Idle => idle += 1,
+                ActivityState::Working => working += 1,
+                ActivityState::Stuck | ActivityState::Unresponsive => stuck += 1,
+                ActivityState::Unknown => {}
+            }
+        }
+
+        (idle, working, stuck)
     }
 
     /// Check if data has been loaded.
@@ -498,7 +540,10 @@ const SUBSCRIPTION_POLL_INTERVAL_SECS: u64 = 60;
 /// Interval for health monitoring (30 seconds).
 const HEALTH_POLL_INTERVAL_SECS: u64 = 30;
 
-/// Data manager that handles the StatusWatcher, BeadManager, CostDatabase, LogWatcher, HealthMonitor, AlertManager, and provides formatted data.
+/// Interval for activity monitoring (15 seconds).
+const ACTIVITY_POLL_INTERVAL_SECS: u64 = 15;
+
+/// Data manager that handles the StatusWatcher, BeadManager, CostDatabase, LogWatcher, HealthMonitor, AlertManager, ActivityMonitor, and provides formatted data.
 pub struct DataManager {
     /// StatusWatcher for real-time updates
     watcher: Option<StatusWatcher>,
@@ -520,6 +565,8 @@ pub struct DataManager {
     pub realtime_metrics: RealtimeMetrics,
     /// Health monitor for worker health checks
     health_monitor: Option<HealthMonitor>,
+    /// Activity monitor for idle/stuck detection
+    activity_monitor: ActivityMonitor,
     /// Alert manager for worker health alerts
     pub alert_manager: AlertManager,
     /// Alert notifier for terminal bell and visual notifications
@@ -542,6 +589,8 @@ pub struct DataManager {
     last_subscription_poll: Option<std::time::Instant>,
     /// Last health check time
     last_health_poll: Option<std::time::Instant>,
+    /// Last activity monitor poll time
+    last_activity_poll: Option<std::time::Instant>,
     /// Tokio runtime for async tmux discovery
     runtime: Option<tokio::runtime::Runtime>,
     /// Dirty flag - whether data changed since last check
@@ -662,6 +711,9 @@ impl DataManager {
         // Initialize alert notifier for terminal bell and visual notifications
         let alert_notifier = AlertNotifier::new();
 
+        // Initialize activity monitor for idle/stuck detection
+        let activity_monitor = ActivityMonitor::with_defaults();
+
         // Initialize activity log data
         let activity_data = ActivityLogData::with_default_capacity();
 
@@ -679,6 +731,7 @@ impl DataManager {
             metrics_data,
             realtime_metrics,
             health_monitor,
+            activity_monitor,
             alert_manager,
             alert_notifier,
             activity_data,
@@ -690,6 +743,7 @@ impl DataManager {
             last_log_poll: None,
             last_subscription_poll: None,
             last_health_poll: None,
+            last_activity_poll: None,
             runtime,
             dirty: false,
             cached_worker_count: 0,
@@ -774,6 +828,9 @@ impl DataManager {
         // Initialize alert notifier for terminal bell and visual notifications
         let alert_notifier = AlertNotifier::new();
 
+        // Initialize activity monitor for idle/stuck detection
+        let activity_monitor = ActivityMonitor::with_defaults();
+
         // Initialize activity log data
         let activity_data = ActivityLogData::with_default_capacity();
 
@@ -794,6 +851,7 @@ impl DataManager {
             metrics_data,
             realtime_metrics,
             health_monitor,
+            activity_monitor,
             alert_manager,
             alert_notifier,
             activity_data,
@@ -805,6 +863,7 @@ impl DataManager {
             last_log_poll: None,
             last_subscription_poll: None,
             last_health_poll: None,
+            last_activity_poll: None,
             runtime,
             dirty: false,
             cached_worker_count: 0,
@@ -1055,6 +1114,16 @@ impl DataManager {
         if should_poll_health {
             self.poll_health_monitor();
             self.last_health_poll = Some(std::time::Instant::now());
+        }
+
+        // Periodically poll activity monitoring (every 15 seconds)
+        let should_poll_activity = self
+            .last_activity_poll
+            .map_or(true, |t| t.elapsed().as_secs() >= ACTIVITY_POLL_INTERVAL_SECS);
+
+        if should_poll_activity {
+            self.poll_activity_monitor();
+            self.last_activity_poll = Some(std::time::Instant::now());
         }
 
         // Update cached counts and mark dirty if changed
@@ -1336,6 +1405,86 @@ impl DataManager {
                     format!("Health check failed: {}", e),
                 ));
             }
+        }
+    }
+
+    /// Poll activity monitor for idle/stuck worker detection.
+    fn poll_activity_monitor(&mut self) {
+        let mut activity_updates: HashMap<String, WorkerActivity> = HashMap::new();
+        let mut stuck_count = 0;
+
+        // Check each worker's activity state
+        for (worker_id, worker) in &self.worker_data.workers {
+            let has_task = worker.current_task.is_some();
+            let current_task = worker.current_task.clone();
+            let last_activity = worker.last_activity;
+            let worker_status = worker.status.to_string();
+
+            let activity = self.activity_monitor.get_activity(
+                worker_id,
+                has_task,
+                current_task,
+                last_activity,
+                &worker_status,
+            );
+
+            // Check for transition to stuck state
+            let was_stuck = self
+                .worker_data
+                .get_activity(worker_id)
+                .map(|a| a.state == ActivityState::Stuck)
+                .unwrap_or(false);
+
+            if activity.state == ActivityState::Stuck && !was_stuck {
+                // Worker just became stuck - raise alert and log activity
+                let msg = format!(
+                    "No activity for {} - may be stuck",
+                    activity.activity_age_string()
+                );
+                self.activity_data.push(
+                    ActivityEntry::new(ActivityEventType::Warning, msg.clone())
+                        .with_source(worker_id),
+                );
+
+                // Raise alert for stuck worker
+                self.alert_manager.raise(
+                    AlertType::TaskStuck,
+                    worker_id.clone(),
+                    Some(format!(
+                        "Task {} stuck - no activity for {}",
+                        activity.current_task.as_deref().unwrap_or("unknown"),
+                        activity.activity_age_string()
+                    )),
+                );
+
+                // Trigger warning notification
+                self.alert_notifier.notify(AlertSeverity::Warning);
+                stuck_count += 1;
+            } else if activity.state != ActivityState::Stuck && was_stuck {
+                // Worker recovered from stuck state
+                self.activity_data.push(
+                    ActivityEntry::new(ActivityEventType::Info, "Worker activity resumed")
+                        .with_source(worker_id),
+                );
+
+                // Resolve stuck alert
+                self.alert_manager.resolve_all_for_worker(worker_id);
+            }
+
+            activity_updates.insert(worker_id.clone(), activity);
+        }
+
+        // Update worker data with activity status
+        if !activity_updates.is_empty() {
+            self.worker_data.update_activity_status(activity_updates);
+        }
+
+        if stuck_count > 0 {
+            tracing::info!(
+                "Activity check: {} stuck workers detected",
+                stuck_count
+            );
+            self.dirty = true;
         }
     }
 
