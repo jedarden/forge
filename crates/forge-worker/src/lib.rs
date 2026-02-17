@@ -142,6 +142,7 @@ pub mod health;
 pub mod launcher;
 #[cfg(test)]
 mod lifecycle_tests;
+pub mod memory;
 pub mod router;
 pub mod scorer;
 pub mod tmux;
@@ -160,8 +161,10 @@ pub use discovery::{DiscoveredWorker, DiscoveryResult, WorkerType, discover_work
 pub use health::{
     HealthCheckResult, HealthCheckType, HealthErrorType, HealthLevel, HealthMonitor,
     HealthMonitorConfig, WorkerHealthStatus, DEFAULT_CHECK_INTERVAL_SECS,
-    DEFAULT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MEMORY_LIMIT_MB, DEFAULT_STALE_THRESHOLD_SECS,
+    DEFAULT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MEMORY_KILL_LIMIT_MB, DEFAULT_MEMORY_LIMIT_MB,
+    DEFAULT_STALE_THRESHOLD_SECS,
 };
+pub use memory::{MemoryConfig, MemoryMonitor, MemorySeverity, WorkerMemoryStats};
 pub use launcher::WorkerLauncher;
 pub use router::{
     FallbackOption, ModelAvailability, ModelConfig, ModelHealth, Router, RouterConfig,
