@@ -183,6 +183,12 @@ fn main() -> ExitCode {
         }
     }
 
+    // Check for required dependencies
+    if !forge_core::check_dependencies() {
+        // check_dependencies already prints error messages
+        return ExitCode::from(1);
+    }
+
     info!("Starting FORGE dashboard");
 
     // Mark startup as successful (app initialized without crashing)

@@ -28,6 +28,7 @@
 //! }
 //! ```
 
+pub mod deps;
 pub mod error;
 pub mod logging;
 pub mod recovery;
@@ -58,6 +59,9 @@ pub use recovery::{
 };
 pub use status::{StatusReader, WorkerStatusInfo};
 pub use watcher::{StatusEvent, StatusWatcher, WatcherConfig};
+
+// Re-export dependency checking utilities
+pub use deps::{check_and_report as check_dependencies, check_dependencies as dependency_check, DependencyCheck};
 
 // Re-export self_update types when feature is enabled
 #[cfg(feature = "self-update")]
