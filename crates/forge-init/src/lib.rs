@@ -15,5 +15,5 @@ pub mod validator;
 pub mod wizard;
 
 pub use detection::CliToolDetection;
-pub use guidance::{PathDiagnostics, Platform, RejectionReason, generate_guidance};
+pub use guidance::{PathDiagnostics, Platform, RejectionReason, ToolFixInfo, generate_guidance, generate_not_ready_guidance};
 pub use validator::{BackendStatus, ComprehensiveValidationResults, validate_comprehensive};

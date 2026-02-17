@@ -453,11 +453,49 @@ fn run_onboarding(
         }
     } else if non_interactive {
         // Auto-select the first ready tool in non-interactive mode
-        tools
-            .iter()
-            .find(|t| t.is_ready())
-            .ok_or("No ready tools available. Please set required API keys.")?
-            .clone()
+        match tools.iter().find(|t| t.is_ready()) {
+            Some(tool) => tool.clone(),
+            None => {
+                // Tools exist but none are ready - show specific guidance
+                let not_ready: Vec<_> = tools
+                    .iter()
+                    .filter(|t| !t.is_ready())
+                    .map(|t| {
+                        let (missing_api_key, incompatible_version, missing_feature) = match t.status {
+                            detection::ToolStatus::MissingApiKey => (true, false, None),
+                            detection::ToolStatus::IncompatibleVersion => {
+                                // Extract missing feature from diagnostics
+                                let feature = diagnostics
+                                    .rejections
+                                    .iter()
+                                    .find(|r| r.tool_name == t.name || r.tool_name == t.name.replace("-code", ""))
+                                    .and_then(|r| match &r.reason {
+                                        guidance::RejectionReason::IncompatibleVersion { missing_feature, .. } => {
+                                            Some(missing_feature.clone())
+                                        }
+                                        _ => None,
+                                    });
+                                (false, true, feature)
+                            }
+                            _ => (false, false, None),
+                        };
+                        guidance::ToolFixInfo {
+                            name: t.name.clone(),
+                            version: t.version.clone(),
+                            missing_api_key,
+                            api_key_env_var: t.api_key_env_var.clone(),
+                            incompatible_version,
+                            missing_feature,
+                        }
+                    })
+                    .collect();
+
+                if !not_ready.is_empty() {
+                    eprint!("{}", guidance::generate_not_ready_guidance(&not_ready));
+                }
+                return Err("No ready tools available".into());
+            }
+        }
     } else {
         // Interactive mode: show the TUI wizard for selection
         match wizard::run_wizard(tools.clone()) {
