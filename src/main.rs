@@ -27,7 +27,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use forge_core::{LogGuard, StatusWriter, init_logging};
-use forge_init::{detection, generator, guidance, wizard};
+use forge_init::{detection, generator, guidance, validator, wizard};
 use forge_tui::{App, ForgeConfig};
 use tracing::{error, info};
 
@@ -93,6 +93,25 @@ enum Commands {
     Worker {
         #[command(subcommand)]
         action: WorkerAction,
+    },
+
+    /// Validate FORGE configuration
+    Validate {
+        /// Show detailed validation results
+        #[arg(long, short = 'v')]
+        verbose: bool,
+
+        /// Attempt automatic fixes for issues
+        #[arg(long)]
+        fix: bool,
+
+        /// Skip chat backend connectivity test
+        #[arg(long)]
+        skip_backend_test: bool,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -202,6 +221,14 @@ fn main() -> ExitCode {
             }
             Commands::Worker { action } => {
                 return handle_worker_action(action);
+            }
+            Commands::Validate {
+                verbose,
+                fix,
+                skip_backend_test,
+                json,
+            } => {
+                return handle_validate_command(*verbose, *fix, *skip_backend_test, *json);
             }
             _ => {
                 // Other commands fall through to TUI startup
@@ -748,6 +775,134 @@ fn handle_worker_action(action: &WorkerAction) -> ExitCode {
                 }
             }
         }
+    }
+}
+
+/// Handle the `forge validate` command.
+fn handle_validate_command(verbose: bool, fix: bool, skip_backend_test: bool, json: bool) -> ExitCode {
+    info!(
+        "Handling validate command (verbose={}, fix={}, skip_backend_test={}, json={})",
+        verbose, fix, skip_backend_test, json
+    );
+
+    let forge_dir = get_forge_dir();
+
+    // Run comprehensive validation
+    let results = validator::validate_comprehensive(&forge_dir, verbose, fix, skip_backend_test);
+
+    // Output results
+    if json {
+        // JSON output
+        match serde_json::to_string_pretty(&results) {
+            Ok(json_output) => {
+                println!("{}", json_output);
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to serialize results to JSON: {}", e);
+                return ExitCode::from(1);
+            }
+        }
+    } else {
+        // Human-readable output
+        print_validation_results(&results, verbose);
+    }
+
+    // Return appropriate exit code
+    if results.passed {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
+
+/// Print validation results in human-readable format.
+fn print_validation_results(results: &validator::ComprehensiveValidationResults, verbose: bool) {
+    // Config file
+    if results.config_valid {
+        println!("✅ Config file: valid");
+    } else {
+        println!("❌ Config file: invalid");
+    }
+
+    // Launchers
+    if results.launcher_valid {
+        let count = results.launcher_count;
+        let plural = if count == 1 { "" } else { "s" };
+        println!("✅ Launchers: {} found, executable", count);
+        if verbose {
+            for launcher in &results.launcher_names {
+                println!("   - {}", launcher);
+            }
+        }
+    } else {
+        println!("❌ Launchers: {}", results.launcher_message);
+    }
+
+    // Directories
+    if results.directories_valid {
+        println!("✅ Directories: all present");
+    } else {
+        println!("❌ Directories: missing");
+        for dir in &results.missing_directories {
+            println!("   - {}", dir);
+        }
+    }
+
+    // Chat backend (only shown if tested)
+    match &results.backend_status {
+        validator::BackendStatus::NotTested => {
+            println!("⚠️  Chat backend: not tested (use --test-backend)");
+        }
+        validator::BackendStatus::Skipped => {
+            println!("⏭️  Chat backend: skipped (--skip-backend-test)");
+        }
+        validator::BackendStatus::Ready { command } => {
+            println!("✅ Chat backend: ready ({})", command);
+        }
+        validator::BackendStatus::NotConfigured => {
+            println!("⚠️  Chat backend: not configured");
+        }
+        validator::BackendStatus::CommandNotFound { command } => {
+            println!("❌ Chat backend: command not found ({})", command);
+        }
+        validator::BackendStatus::Error { message } => {
+            println!("❌ Chat backend: error - {}", message);
+        }
+    }
+
+    // Warnings
+    if !results.warnings.is_empty() {
+        println!();
+        println!("Warnings:");
+        for warning in &results.warnings {
+            println!("  ⚠️  {}", warning);
+        }
+    }
+
+    // Fixes applied
+    if !results.fixes_applied.is_empty() {
+        println!();
+        println!("Fixes applied:");
+        for fix in &results.fixes_applied {
+            println!("  🔧 {}", fix);
+        }
+    }
+
+    // Verbose details
+    if verbose && !results.details.is_empty() {
+        println!();
+        println!("Details:");
+        for detail in &results.details {
+            println!("  ℹ️  {}", detail);
+        }
+    }
+
+    // Summary
+    println!();
+    if results.passed {
+        println!("✅ Validation passed");
+    } else {
+        println!("❌ Validation failed");
     }
 }
 
