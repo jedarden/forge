@@ -30,7 +30,7 @@
 //!
 //! fn main() -> forge_core::Result<()> {
 //!     let config = HealthMonitorConfig::default();
-//!     let monitor = HealthMonitor::new(config)?;
+//!     let mut monitor = HealthMonitor::new(config)?;
 //!
 //!     // Check health of all workers
 //!     let results = monitor.check_all_health()?;
