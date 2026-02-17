@@ -20,7 +20,7 @@
 //! ## Usage
 //!
 //! ```no_run
-//! use forge_worker::crash_recovery::CrashRecoveryManager;
+//! use forge_worker::crash_recovery::{CrashRecoveryManager, CrashAction};
 //! use forge_worker::health::HealthMonitor;
 //!
 //! #[tokio::main]

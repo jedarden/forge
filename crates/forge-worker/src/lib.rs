@@ -134,6 +134,7 @@
 //! - `FORGE_MODEL`: Model to use
 //! - `FORGE_WORKSPACE`: Working directory path
 
+pub mod auto_recovery;
 pub mod bead_queue;
 pub mod crash_recovery;
 pub mod discovery;
@@ -147,6 +148,9 @@ pub mod tmux;
 pub mod types;
 
 // Re-export main types for convenience
+pub use auto_recovery::{
+    AutoRecoveryManager, RecoveryAction, RecoveryActionType, RecoveryConfig, RecoveryPolicy,
+};
 pub use bead_queue::{BeadAllocation, BeadQueueManager, BeadQueueReader, QueuedBead};
 pub use crash_recovery::{
     CrashAction, CrashRecord, CrashRecoveryConfig, CrashRecoveryManager, CRASH_WINDOW_SECS,

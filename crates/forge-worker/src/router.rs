@@ -24,7 +24,7 @@
 //! use forge_core::types::{Priority, WorkerTier};
 //!
 //! // Create router with default configuration
-//! let router = Router::new();
+//! let mut router = Router::new();
 //!
 //! // Create task metadata
 //! let task = TaskMetadata {
@@ -33,6 +33,7 @@
 //!     complexity_score: Some(85),
 //!     labels: vec!["architecture".to_string()],
 //!     requires_reasoning: true,
+//!     estimated_tokens: Some(5000),
 //! };
 //!
 //! // Get routing decision
