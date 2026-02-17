@@ -26,7 +26,7 @@ use std::panic;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use forge_core::{LogGuard, init_logging};
+use forge_core::{LogGuard, StatusWriter, init_logging};
 use forge_init::{detection, generator};
 use forge_tui::{App, ForgeConfig};
 use tracing::{error, info};
@@ -76,6 +76,27 @@ enum Commands {
 
     /// Clean the staging directory
     CleanStaging,
+
+    /// Manage workers
+    Worker {
+        #[command(subcommand)]
+        action: WorkerAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum WorkerAction {
+    /// Pause a worker (stop claiming new tasks)
+    Pause {
+        /// Worker ID to pause, or "all" to pause all workers
+        id: String,
+    },
+
+    /// Resume a paused worker
+    Resume {
+        /// Worker ID to resume, or "all" to resume all workers
+        id: String,
+    },
 }
 
 fn main() -> ExitCode {
@@ -156,6 +177,18 @@ fn main() -> ExitCode {
     #[cfg(not(feature = "self-update"))]
     {
         // No self-update feature, skip installation check
+    }
+
+    // Handle subcommands that don't require the TUI
+    if let Some(command) = &cli.command {
+        match command {
+            Commands::Worker { action } => {
+                return handle_worker_action(action);
+            }
+            _ => {
+                // Other commands fall through to TUI startup
+            }
+        }
     }
 
     // Install panic hook to ensure terminal cleanup
@@ -474,6 +507,78 @@ cost_tracking:
     std::fs::write(&config_path, default_config)?;
     info!("Reset config to defaults: {}", config_path.display());
     Ok(())
+}
+
+/// Handle worker subcommand actions.
+fn handle_worker_action(action: &WorkerAction) -> ExitCode {
+    let writer = match StatusWriter::new(None) {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("❌ Failed to initialize status writer: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    match action {
+        WorkerAction::Pause { id } => {
+            if id.to_lowercase() == "all" {
+                match writer.pause_all() {
+                    Ok(count) => {
+                        if count == 0 {
+                            eprintln!("No workers to pause");
+                        } else {
+                            eprintln!("⏸️  Paused {} worker(s)", count);
+                        }
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Failed to pause workers: {}", e);
+                        ExitCode::from(1)
+                    }
+                }
+            } else {
+                match writer.pause_worker(id) {
+                    Ok(()) => {
+                        eprintln!("⏸️  Paused worker: {}", id);
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Failed to pause worker '{}': {}", id, e);
+                        ExitCode::from(1)
+                    }
+                }
+            }
+        }
+        WorkerAction::Resume { id } => {
+            if id.to_lowercase() == "all" {
+                match writer.resume_all() {
+                    Ok(count) => {
+                        if count == 0 {
+                            eprintln!("No workers to resume");
+                        } else {
+                            eprintln!("▶️  Resumed {} worker(s)", count);
+                        }
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Failed to resume workers: {}", e);
+                        ExitCode::from(1)
+                    }
+                }
+            } else {
+                match writer.resume_worker(id) {
+                    Ok(()) => {
+                        eprintln!("▶️  Resumed worker: {}", id);
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Failed to resume worker '{}': {}", id, e);
+                        ExitCode::from(1)
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Run the TUI application.
