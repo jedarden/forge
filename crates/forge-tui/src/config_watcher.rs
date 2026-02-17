@@ -170,6 +170,10 @@ pub struct ForgeConfig {
     /// Auto-recovery configuration
     #[serde(default)]
     pub auto_recovery: AutoRecoveryConfig,
+
+    /// Notification configuration
+    #[serde(default)]
+    pub notifications: NotificationsConfig,
 }
 
 impl ForgeConfig {
@@ -327,6 +331,11 @@ impl ForgeConfig {
             .and_then(|v| serde_yaml::from_value(v.clone()).ok())
             .unwrap_or_default();
 
+        let notifications = yaml
+            .get("notifications")
+            .and_then(|v| serde_yaml::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
         info!("Loaded partial config - some sections may use defaults");
 
         Some(Self {
@@ -334,6 +343,7 @@ impl ForgeConfig {
             theme,
             cost_tracking,
             auto_recovery,
+            notifications,
         })
     }
 
@@ -593,6 +603,49 @@ impl Default for AutoRecoveryConfig {
             stale_assignee_timeout_mins: default_stale_timeout(),
         }
     }
+}
+
+/// Notification configuration for alerts.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct NotificationsConfig {
+    /// Enable terminal bell for critical alerts.
+    #[serde(default = "default_bell_enabled")]
+    pub bell_on_critical: bool,
+
+    /// Enable terminal bell for warning alerts.
+    #[serde(default)]
+    pub bell_on_warning: bool,
+
+    /// Minimum interval between bells (in seconds) to avoid spam.
+    #[serde(default = "default_bell_interval")]
+    pub bell_interval_secs: u64,
+
+    /// Enable visual flash for critical alerts.
+    #[serde(default = "default_visual_flash")]
+    pub visual_flash_on_critical: bool,
+}
+
+impl Default for NotificationsConfig {
+    fn default() -> Self {
+        Self {
+            bell_on_critical: default_bell_enabled(),
+            bell_on_warning: false,
+            bell_interval_secs: default_bell_interval(),
+            visual_flash_on_critical: default_visual_flash(),
+        }
+    }
+}
+
+fn default_bell_enabled() -> bool {
+    true
+}
+
+fn default_bell_interval() -> u64 {
+    30 // Minimum 30 seconds between bells
+}
+
+fn default_visual_flash() -> bool {
+    true
 }
 
 fn default_recovery_check_interval() -> u64 {
@@ -1039,5 +1092,43 @@ dashboard:
         let formatted = format_yaml_error(&err);
         // Should include "line" or "YAML parse error"
         assert!(formatted.contains("line") || formatted.contains("YAML parse error"));
+    }
+
+    #[test]
+    fn test_default_notifications_config() {
+        let config = NotificationsConfig::default();
+        assert!(config.bell_on_critical);
+        assert!(!config.bell_on_warning);
+        assert_eq!(config.bell_interval_secs, 30);
+        assert!(config.visual_flash_on_critical);
+    }
+
+    #[test]
+    fn test_parse_notifications_config() {
+        let yaml = r#"
+notifications:
+  bell_on_critical: false
+  bell_on_warning: true
+  bell_interval_secs: 60
+  visual_flash_on_critical: false
+"#;
+        let config = ForgeConfig::parse(yaml).expect("Failed to parse config");
+        assert!(!config.notifications.bell_on_critical);
+        assert!(config.notifications.bell_on_warning);
+        assert_eq!(config.notifications.bell_interval_secs, 60);
+        assert!(!config.notifications.visual_flash_on_critical);
+    }
+
+    #[test]
+    fn test_notifications_config_defaults_when_missing() {
+        let yaml = r#"
+dashboard:
+  refresh_interval_ms: 1000
+"#;
+        let config = ForgeConfig::parse(yaml).expect("Failed to parse config");
+        // Notifications should use defaults
+        assert!(config.notifications.bell_on_critical);
+        assert!(!config.notifications.bell_on_warning);
+        assert_eq!(config.notifications.bell_interval_secs, 30);
     }
 }

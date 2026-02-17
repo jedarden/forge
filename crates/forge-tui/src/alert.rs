@@ -563,6 +563,133 @@ impl AlertBadge {
     }
 }
 
+/// Notification manager for alert sounds and visual feedback.
+///
+/// Handles terminal bell notifications and tracks cooldowns to avoid spam.
+#[derive(Debug)]
+pub struct AlertNotifier {
+    /// Last time a bell was triggered
+    last_bell: Option<std::time::Instant>,
+    /// Minimum interval between bells (in seconds)
+    bell_interval_secs: u64,
+    /// Whether bell is enabled for critical alerts
+    bell_on_critical: bool,
+    /// Whether bell is enabled for warning alerts
+    bell_on_warning: bool,
+    /// Whether visual flash is enabled
+    visual_flash_enabled: bool,
+    /// Pending bell to be triggered on next render
+    pending_bell: bool,
+    /// Pending flash to be triggered on next render
+    pending_flash: bool,
+    /// Flash start time (for timing the flash duration)
+    flash_start: Option<std::time::Instant>,
+}
+
+impl Default for AlertNotifier {
+    fn default() -> Self {
+        Self {
+            last_bell: None,
+            bell_interval_secs: 30,
+            bell_on_critical: true,
+            bell_on_warning: false,
+            visual_flash_enabled: true,
+            pending_bell: false,
+            pending_flash: false,
+            flash_start: None,
+        }
+    }
+}
+
+impl AlertNotifier {
+    /// Create a new alert notifier with default settings.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Configure the notifier from settings.
+    pub fn configure(
+        &mut self,
+        bell_on_critical: bool,
+        bell_on_warning: bool,
+        bell_interval_secs: u64,
+        visual_flash_enabled: bool,
+    ) {
+        self.bell_on_critical = bell_on_critical;
+        self.bell_on_warning = bell_on_warning;
+        self.bell_interval_secs = bell_interval_secs;
+        self.visual_flash_enabled = visual_flash_enabled;
+    }
+
+    /// Notify about a new alert (queues bell/flash if applicable).
+    pub fn notify(&mut self, severity: AlertSeverity) {
+        let should_bell = match severity {
+            AlertSeverity::Critical => self.bell_on_critical,
+            AlertSeverity::Warning => self.bell_on_warning,
+            AlertSeverity::Info => false,
+        };
+
+        if should_bell && self.can_ring_bell() {
+            self.pending_bell = true;
+        }
+
+        if self.visual_flash_enabled && severity == AlertSeverity::Critical {
+            self.pending_flash = true;
+            self.flash_start = Some(std::time::Instant::now());
+        }
+    }
+
+    /// Check if enough time has passed to ring the bell again.
+    fn can_ring_bell(&self) -> bool {
+        match self.last_bell {
+            None => true,
+            Some(last) => {
+                last.elapsed().as_secs() >= self.bell_interval_secs
+            }
+        }
+    }
+
+    /// Take and clear the pending bell flag, returning whether to ring the bell.
+    ///
+    /// Call this during the render loop to trigger the bell.
+    pub fn take_pending_bell(&mut self) -> bool {
+        if self.pending_bell {
+            self.pending_bell = false;
+            self.last_bell = Some(std::time::Instant::now());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Check if visual flash is currently active (within 200ms of alert).
+    pub fn is_flashing(&self) -> bool {
+        if let Some(start) = self.flash_start {
+            start.elapsed().as_millis() < 200
+        } else {
+            false
+        }
+    }
+
+    /// Clear the flash state after it has been displayed.
+    pub fn clear_flash(&mut self) {
+        self.pending_flash = false;
+        // Keep flash_start for timing
+    }
+
+    /// Ring the terminal bell (BEL character).
+    ///
+    /// This outputs the ASCII BEL character (0x07) which causes most terminals
+    /// to emit an audible beep or visual bell depending on terminal settings.
+    pub fn ring_bell() {
+        // Output BEL character (ASCII 7) to trigger terminal bell
+        print!("\x07");
+        // Flush to ensure it's sent immediately
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -734,5 +861,96 @@ mod tests {
         assert!(compact.contains("✖"));
         assert!(compact.contains("worker-1"));
         assert!(compact.contains("Worker Crashed"));
+    }
+
+    #[test]
+    fn test_alert_notifier_new() {
+        let mut notifier = AlertNotifier::new();
+        // Default: bell on critical enabled, bell on warning disabled
+        assert!(!notifier.take_pending_bell());
+        assert!(!notifier.is_flashing());
+    }
+
+    #[test]
+    fn test_alert_notifier_notify_critical() {
+        let mut notifier = AlertNotifier::new();
+        // Configure to enable bell on critical
+        notifier.configure(true, false, 30, true);
+
+        // Notify critical alert
+        notifier.notify(AlertSeverity::Critical);
+
+        // Should have pending bell
+        assert!(notifier.take_pending_bell());
+        // Should be flashing
+        assert!(notifier.is_flashing());
+    }
+
+    #[test]
+    fn test_alert_notifier_notify_warning_disabled() {
+        let mut notifier = AlertNotifier::new();
+        // Configure: bell on critical only, warning disabled
+        notifier.configure(true, false, 30, false);
+
+        // Notify warning alert
+        notifier.notify(AlertSeverity::Warning);
+
+        // Should NOT have pending bell (warning disabled)
+        assert!(!notifier.take_pending_bell());
+    }
+
+    #[test]
+    fn test_alert_notifier_notify_warning_enabled() {
+        let mut notifier = AlertNotifier::new();
+        // Configure: bell on warning enabled
+        notifier.configure(false, true, 30, false);
+
+        // Notify warning alert
+        notifier.notify(AlertSeverity::Warning);
+
+        // Should have pending bell
+        assert!(notifier.take_pending_bell());
+    }
+
+    #[test]
+    fn test_alert_notifier_bell_interval() {
+        let mut notifier = AlertNotifier::new();
+        // Configure with 60 second interval
+        notifier.configure(true, false, 60, false);
+
+        // First notification - should ring
+        notifier.notify(AlertSeverity::Critical);
+        assert!(notifier.take_pending_bell());
+
+        // Second notification immediately after - should NOT ring (within interval)
+        notifier.notify(AlertSeverity::Critical);
+        assert!(!notifier.take_pending_bell());
+    }
+
+    #[test]
+    fn test_alert_notifier_info_does_not_bell() {
+        let mut notifier = AlertNotifier::new();
+        notifier.configure(true, true, 30, true);
+
+        // Notify info alert
+        notifier.notify(AlertSeverity::Info);
+
+        // Should NOT have pending bell (info never bells)
+        assert!(!notifier.take_pending_bell());
+    }
+
+    #[test]
+    fn test_alert_notifier_clear_flash() {
+        let mut notifier = AlertNotifier::new();
+        notifier.configure(true, false, 30, true);
+
+        // Trigger flash
+        notifier.notify(AlertSeverity::Critical);
+        assert!(notifier.is_flashing());
+
+        // Clear flash
+        notifier.clear_flash();
+        // Flash is still "active" based on time, not pending_flash flag
+        // The is_flashing() check is time-based (200ms)
     }
 }
