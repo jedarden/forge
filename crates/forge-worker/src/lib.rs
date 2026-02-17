@@ -143,6 +143,7 @@ pub mod launcher;
 #[cfg(test)]
 mod lifecycle_tests;
 pub mod memory;
+pub mod pause;
 pub mod router;
 pub mod scorer;
 pub mod tmux;
@@ -166,6 +167,10 @@ pub use health::{
 };
 pub use memory::{MemoryConfig, MemoryMonitor, MemorySeverity, WorkerMemoryStats};
 pub use launcher::WorkerLauncher;
+pub use pause::{
+    Pausable, PauseConfig, PauseSignalHandler, DEFAULT_PAUSE_CHECK_INTERVAL_SECS,
+    is_any_paused, pause_all, resume_all,
+};
 pub use router::{
     FallbackOption, ModelAvailability, ModelConfig, ModelHealth, Router, RouterConfig,
     RouterError, RouterStats, RoutingDecision, RoutingReason, SubscriptionQuota, TaskMetadata,
