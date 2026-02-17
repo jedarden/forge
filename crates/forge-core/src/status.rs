@@ -108,6 +108,14 @@ pub struct WorkerStatusInfo {
     /// Number of tasks completed by this worker
     #[serde(default)]
     pub tasks_completed: u32,
+
+    /// Timestamp when the worker was paused (if status is Paused)
+    #[serde(default)]
+    pub paused_at: Option<DateTime<Utc>>,
+
+    /// Reason why the worker was paused (if status is Paused)
+    #[serde(default)]
+    pub pause_reason: Option<String>,
 }
 
 impl WorkerStatusInfo {
@@ -126,6 +134,8 @@ impl WorkerStatusInfo {
             last_activity: None,
             current_task: None,
             tasks_completed: 0,
+            paused_at: None,
+            pause_reason: None,
         }
     }
 
@@ -432,12 +442,74 @@ impl StatusWriter {
 
     /// Pause a worker by setting their status to Paused.
     pub fn pause_worker(&self, worker_id: &str) -> Result<()> {
-        self.update_status(worker_id, WorkerStatus::Paused)
+        self.pause_worker_with_reason(worker_id, None)
+    }
+
+    /// Pause a worker with a specific reason.
+    ///
+    /// The pause reason is stored in the status file and can be displayed
+    /// in health reports and monitoring tools.
+    pub fn pause_worker_with_reason(
+        &self,
+        worker_id: &str,
+        reason: Option<&str>,
+    ) -> Result<()> {
+        let path = self.status_file_path(worker_id);
+
+        // Read existing status if file exists, otherwise create new
+        let mut info = if path.exists() {
+            let content = std::fs::read_to_string(&path).map_err(|e| ForgeError::Io {
+                operation: "reading status file".to_string(),
+                path: path.clone(),
+                source: e,
+            })?;
+
+            serde_json::from_str(&content).unwrap_or_else(|_| {
+                WorkerStatusInfo::new(worker_id, WorkerStatus::Paused)
+            })
+        } else {
+            WorkerStatusInfo::new(worker_id, WorkerStatus::Paused)
+        };
+
+        // Update the status and pause fields
+        info.status = WorkerStatus::Paused;
+        info.last_activity = Some(Utc::now());
+        info.paused_at = Some(Utc::now());
+        info.pause_reason = reason.map(|s| s.to_string());
+
+        // Write atomically using temp file
+        self.write_status(&path, &info)
     }
 
     /// Resume a worker by setting their status to Idle.
+    ///
+    /// This clears the paused_at and pause_reason fields.
     pub fn resume_worker(&self, worker_id: &str) -> Result<()> {
-        self.update_status(worker_id, WorkerStatus::Idle)
+        let path = self.status_file_path(worker_id);
+
+        // Read existing status if file exists, otherwise create new
+        let mut info = if path.exists() {
+            let content = std::fs::read_to_string(&path).map_err(|e| ForgeError::Io {
+                operation: "reading status file".to_string(),
+                path: path.clone(),
+                source: e,
+            })?;
+
+            serde_json::from_str(&content).unwrap_or_else(|_| {
+                WorkerStatusInfo::new(worker_id, WorkerStatus::Idle)
+            })
+        } else {
+            WorkerStatusInfo::new(worker_id, WorkerStatus::Idle)
+        };
+
+        // Update the status and clear pause fields
+        info.status = WorkerStatus::Idle;
+        info.last_activity = Some(Utc::now());
+        info.paused_at = None;
+        info.pause_reason = None;
+
+        // Write atomically using temp file
+        self.write_status(&path, &info)
     }
 
     /// Pause all workers with status files in the status directory.
@@ -721,6 +793,8 @@ mod tests {
             last_activity: Some(Utc::now()),
             current_task: Some("fg-123".to_string()),
             tasks_completed: 10,
+            paused_at: None,
+            pause_reason: None,
         };
 
         let json = serde_json::to_string(&original).unwrap();
@@ -733,6 +807,8 @@ mod tests {
         assert_eq!(original.pid, deserialized.pid);
         assert_eq!(original.current_task, deserialized.current_task);
         assert_eq!(original.tasks_completed, deserialized.tasks_completed);
+        assert_eq!(original.paused_at, deserialized.paused_at);
+        assert_eq!(original.pause_reason, deserialized.pause_reason);
     }
 
     // ============================================================
@@ -1042,5 +1118,135 @@ mod tests {
 
         // Should have last_activity set
         assert!(worker.last_activity.is_some());
+    }
+
+    // ============================================================
+    // Paused Status Tracking Tests (bd-6sal)
+    // ============================================================
+
+    #[test]
+    fn test_worker_status_info_paused_fields_default() {
+        let status = WorkerStatusInfo::new("test", WorkerStatus::Active);
+        assert!(status.paused_at.is_none());
+        assert!(status.pause_reason.is_none());
+    }
+
+    #[test]
+    fn test_worker_status_info_deserialize_with_paused_fields() {
+        let json = r#"{
+            "worker_id": "paused-worker",
+            "status": "paused",
+            "paused_at": "2026-02-17T10:00:00Z",
+            "pause_reason": "Manual pause for maintenance"
+        }"#;
+
+        let info: WorkerStatusInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.worker_id, "paused-worker");
+        assert_eq!(info.status, WorkerStatus::Paused);
+        assert!(info.paused_at.is_some());
+        assert_eq!(
+            info.pause_reason,
+            Some("Manual pause for maintenance".to_string())
+        );
+    }
+
+    #[test]
+    fn test_worker_status_info_serialize_with_paused_fields() {
+        let mut info = WorkerStatusInfo::new("test", WorkerStatus::Paused);
+        info.paused_at = Some(Utc::now());
+        info.pause_reason = Some("Test reason".to_string());
+
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("paused_at"));
+        assert!(json.contains("pause_reason"));
+        assert!(json.contains("Test reason"));
+    }
+
+    #[test]
+    fn test_status_writer_pause_with_reason() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        // Create an active worker
+        create_test_status_file(
+            tmp_dir.path(),
+            "worker",
+            r#"{"worker_id": "worker", "status": "active"}"#,
+        );
+
+        let writer = StatusWriter::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        writer
+            .pause_worker_with_reason("worker", Some("Maintenance window"))
+            .unwrap();
+
+        let reader = StatusReader::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        let worker = reader.read_worker("worker").unwrap().unwrap();
+
+        assert_eq!(worker.status, WorkerStatus::Paused);
+        assert!(worker.paused_at.is_some());
+        assert_eq!(worker.pause_reason, Some("Maintenance window".to_string()));
+    }
+
+    #[test]
+    fn test_status_writer_pause_without_reason() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        // Create an active worker
+        create_test_status_file(
+            tmp_dir.path(),
+            "worker",
+            r#"{"worker_id": "worker", "status": "active"}"#,
+        );
+
+        let writer = StatusWriter::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        writer.pause_worker("worker").unwrap();
+
+        let reader = StatusReader::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        let worker = reader.read_worker("worker").unwrap().unwrap();
+
+        assert_eq!(worker.status, WorkerStatus::Paused);
+        assert!(worker.paused_at.is_some());
+        assert!(worker.pause_reason.is_none());
+    }
+
+    #[test]
+    fn test_status_writer_resume_clears_paused_fields() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        // Create a paused worker with pause fields
+        create_test_status_file(
+            tmp_dir.path(),
+            "worker",
+            r#"{"worker_id": "worker", "status": "paused", "paused_at": "2026-02-17T10:00:00Z", "pause_reason": "Testing"}"#,
+        );
+
+        let writer = StatusWriter::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        writer.resume_worker("worker").unwrap();
+
+        let reader = StatusReader::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        let worker = reader.read_worker("worker").unwrap().unwrap();
+
+        assert_eq!(worker.status, WorkerStatus::Idle);
+        assert!(worker.paused_at.is_none());
+        assert!(worker.pause_reason.is_none());
+    }
+
+    #[test]
+    fn test_status_reader_handles_missing_paused_fields() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        // Create a worker without paused fields (legacy format)
+        create_test_status_file(
+            tmp_dir.path(),
+            "legacy-worker",
+            r#"{"worker_id": "legacy-worker", "status": "active"}"#,
+        );
+
+        let reader = StatusReader::new(Some(tmp_dir.path().to_path_buf())).unwrap();
+        let worker = reader.read_worker("legacy-worker").unwrap().unwrap();
+
+        // Should still parse correctly with None for paused fields
+        assert_eq!(worker.worker_id, "legacy-worker");
+        assert!(worker.paused_at.is_none());
+        assert!(worker.pause_reason.is_none());
     }
 }

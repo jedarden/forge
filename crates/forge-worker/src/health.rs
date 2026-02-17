@@ -292,6 +292,12 @@ pub struct WorkerHealthStatus {
     pub should_auto_restart: bool,
     /// Whether recovery is exhausted (max attempts reached)
     pub recovery_exhausted: bool,
+    /// Whether the worker is paused
+    pub is_paused: bool,
+    /// Timestamp when the worker was paused (if paused)
+    pub paused_at: Option<DateTime<Utc>>,
+    /// Reason for pausing the worker (if paused)
+    pub pause_reason: Option<String>,
 }
 
 impl WorkerHealthStatus {
@@ -310,6 +316,9 @@ impl WorkerHealthStatus {
             consecutive_failures: 0,
             should_auto_restart: false,
             recovery_exhausted: false,
+            is_paused: false,
+            paused_at: None,
+            pause_reason: None,
         }
     }
 
@@ -480,6 +489,11 @@ impl HealthMonitor {
             status.consecutive_failures = failures;
         }
 
+        // Track paused status from worker info
+        status.is_paused = worker.status.is_paused();
+        status.paused_at = worker.paused_at;
+        status.pause_reason = worker.pause_reason.clone();
+
         // Run health checks
         if self.config.enable_pid_check {
             let result = self.check_pid_exists(worker);
@@ -548,6 +562,7 @@ impl HealthMonitor {
             health_score = status.health_score,
             failed_checks = ?status.failed_checks,
             consecutive_failures = status.consecutive_failures,
+            is_paused = status.is_paused,
             "Health check completed"
         );
 
@@ -1210,5 +1225,97 @@ mod tests {
         assert_eq!(config.response_timeout_ms, 5000);
         assert!(!config.enable_auto_recovery);
         assert_eq!(config.auto_restart_after_failures, 2);
+    }
+
+    // ============================================================
+    // Paused Status Tracking Tests (bd-6sal)
+    // ============================================================
+
+    #[test]
+    fn test_worker_health_status_paused_fields_default() {
+        let status = WorkerHealthStatus::new("test-worker");
+        assert!(!status.is_paused);
+        assert!(status.paused_at.is_none());
+        assert!(status.pause_reason.is_none());
+    }
+
+    #[test]
+    fn test_worker_health_status_tracks_paused_status() {
+        // Disable health checks to focus on testing paused status tracking
+        let config = HealthMonitorConfig {
+            enable_pid_check: false,
+            enable_activity_check: false,
+            enable_memory_check: false,
+            enable_task_check: false,
+            enable_response_check: false,
+            ..Default::default()
+        };
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().to_path_buf();
+        let log_dir = temp_dir.path().to_path_buf();
+
+        let mut monitor =
+            HealthMonitor::with_dirs(config, status_dir, log_dir).expect("Failed to create monitor");
+
+        let paused_at = Utc::now();
+        let worker = WorkerStatusInfo {
+            worker_id: "paused-worker".to_string(),
+            status: WorkerStatus::Paused,
+            paused_at: Some(paused_at),
+            pause_reason: Some("Manual pause".to_string()),
+            ..Default::default()
+        };
+
+        let health = monitor.check_worker_health(&worker);
+
+        assert!(health.is_paused);
+        assert!(health.paused_at.is_some());
+        assert_eq!(health.pause_reason, Some("Manual pause".to_string()));
+        // Paused workers should still be considered healthy (when no checks fail)
+        assert!(health.is_healthy);
+    }
+
+    #[test]
+    fn test_worker_health_status_active_not_paused() {
+        let config = HealthMonitorConfig::default();
+        let temp_dir = TempDir::new().unwrap();
+        let status_dir = temp_dir.path().to_path_buf();
+        let log_dir = temp_dir.path().to_path_buf();
+
+        let mut monitor =
+            HealthMonitor::with_dirs(config, status_dir, log_dir).expect("Failed to create monitor");
+
+        let worker = WorkerStatusInfo {
+            worker_id: "active-worker".to_string(),
+            status: WorkerStatus::Active,
+            pid: None, // Will cause PID check to fail but that's ok
+            ..Default::default()
+        };
+
+        let health = monitor.check_worker_health(&worker);
+
+        assert!(!health.is_paused);
+        assert!(health.paused_at.is_none());
+        assert!(health.pause_reason.is_none());
+    }
+
+    #[test]
+    fn test_worker_health_status_serialization_with_paused() {
+        let mut status = WorkerHealthStatus::new("test");
+        status.is_paused = true;
+        status.paused_at = Some(Utc::now());
+        status.pause_reason = Some("Test reason".to_string());
+
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(json.contains("is_paused"));
+        assert!(json.contains("paused_at"));
+        assert!(json.contains("pause_reason"));
+        assert!(json.contains("Test reason"));
+
+        // Deserialize back
+        let deserialized: WorkerHealthStatus = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.is_paused);
+        assert!(deserialized.paused_at.is_some());
+        assert_eq!(deserialized.pause_reason, Some("Test reason".to_string()));
     }
 }
