@@ -12,11 +12,12 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::activity_panel::{ActivityEntry, ActivityEventType, ActivityLogData};
-use crate::alert::{AlertBadge, AlertManager, AlertType};
+use crate::alert::{AlertBadge, AlertManager, AlertNotifier, AlertSeverity, AlertType};
 use crate::bead::BeadManager;
 use crate::cost_panel::{BudgetConfig, CostPanelData};
 use crate::log_watcher::{LogWatcher, LogWatcherConfig, LogWatcherEvent, RealtimeMetrics};
 use crate::metrics_panel::MetricsPanelData;
+use crate::perf_metrics::{get_memory_rss, PerfMetrics};
 use crate::status::{StatusWatcher, StatusWatcherConfig, WorkerCounts, WorkerStatusFile};
 use crate::subscription_panel::SubscriptionData;
 use forge_core::types::WorkerStatus;
@@ -521,8 +522,12 @@ pub struct DataManager {
     health_monitor: Option<HealthMonitor>,
     /// Alert manager for worker health alerts
     pub alert_manager: AlertManager,
+    /// Alert notifier for terminal bell and visual notifications
+    pub alert_notifier: AlertNotifier,
     /// Activity log data for real-time streaming display
     pub activity_data: ActivityLogData,
+    /// FORGE internal performance metrics (event loop, render, memory)
+    pub perf_metrics: PerfMetrics,
     /// Error message if watcher failed to initialize
     init_error: Option<String>,
     /// Last tmux discovery time
@@ -654,8 +659,14 @@ impl DataManager {
         // Initialize alert manager for worker health alerts
         let alert_manager = AlertManager::new(100);
 
+        // Initialize alert notifier for terminal bell and visual notifications
+        let alert_notifier = AlertNotifier::new();
+
         // Initialize activity log data
         let activity_data = ActivityLogData::with_default_capacity();
+
+        // Initialize FORGE internal performance metrics
+        let perf_metrics = PerfMetrics::new();
 
         let manager = Self {
             watcher,
@@ -669,7 +680,9 @@ impl DataManager {
             realtime_metrics,
             health_monitor,
             alert_manager,
+            alert_notifier,
             activity_data,
+            perf_metrics,
             init_error,
             last_tmux_poll: None,
             last_cost_poll: None,
@@ -758,8 +771,14 @@ impl DataManager {
         // Initialize alert manager for worker health alerts
         let alert_manager = AlertManager::new(100);
 
+        // Initialize alert notifier for terminal bell and visual notifications
+        let alert_notifier = AlertNotifier::new();
+
         // Initialize activity log data
         let activity_data = ActivityLogData::with_default_capacity();
+
+        // Initialize FORGE internal performance metrics
+        let perf_metrics = PerfMetrics::new();
 
         // Skip initial poll_updates during initialization - it blocks for too long
         // due to bead manager calling `br` commands which can take seconds each.
@@ -776,7 +795,9 @@ impl DataManager {
             realtime_metrics,
             health_monitor,
             alert_manager,
+            alert_notifier,
             activity_data,
+            perf_metrics,
             init_error,
             last_tmux_poll: None,
             last_cost_poll: None,
@@ -1076,6 +1097,58 @@ impl DataManager {
         self.dirty = true;
     }
 
+    // ========== FORGE Performance Metrics ==========
+
+    /// Record a frame's performance metrics.
+    ///
+    /// Call this at the end of each frame with:
+    /// - event_loop_us: Time spent in event loop (polling + handling events)
+    /// - render_us: Time spent rendering the frame
+    pub fn record_frame_perf(&mut self, event_loop_us: u64, render_us: u64) {
+        self.perf_metrics.record_frame(event_loop_us, render_us);
+    }
+
+    /// Record a database query time.
+    pub fn record_db_query(&mut self, query_us: u64) {
+        self.perf_metrics.record_db_query(query_us);
+    }
+
+    /// Record a key event.
+    pub fn record_event(&mut self) {
+        self.perf_metrics.record_event();
+    }
+
+    /// Record a worker spawn.
+    pub fn record_worker_spawn(&mut self) {
+        self.perf_metrics.record_worker_spawn();
+    }
+
+    /// Record a worker exit.
+    pub fn record_worker_exit(&mut self) {
+        self.perf_metrics.record_worker_exit();
+    }
+
+    /// Update memory usage (call periodically).
+    pub fn update_memory(&mut self) {
+        let rss = get_memory_rss();
+        self.perf_metrics.update_memory(rss);
+    }
+
+    /// Prune old performance alerts.
+    pub fn prune_perf_alerts(&mut self) {
+        self.perf_metrics.prune_alerts();
+    }
+
+    /// Get reference to perf metrics.
+    pub fn perf_metrics(&self) -> &PerfMetrics {
+        &self.perf_metrics
+    }
+
+    /// Get mutable reference to perf metrics.
+    pub fn perf_metrics_mut(&mut self) -> &mut PerfMetrics {
+        &mut self.perf_metrics
+    }
+
     /// Get the activity log data.
     pub fn activity_log(&self) -> &ActivityLogData {
         &self.activity_data
@@ -1163,6 +1236,10 @@ impl DataManager {
                         self.alert_manager
                             .raise(alert_type, worker_id.clone(), alert_msg);
 
+                        // Trigger notification (terminal bell) for the alert
+                        let severity = alert_type.default_severity();
+                        self.alert_notifier.notify(severity);
+
                         // Add guidance for recovery
                         if !health.guidance.is_empty() {
                             for guidance in &health.guidance {
@@ -1192,6 +1269,8 @@ impl DataManager {
                             worker_id.clone(),
                             Some(msg),
                         );
+                        // Notify for auto-restart (warning severity)
+                        self.alert_notifier.notify(AlertSeverity::Warning);
                     }
 
                     // Check for recovery exhaustion
@@ -1209,6 +1288,8 @@ impl DataManager {
                             worker_id.clone(),
                             Some(msg),
                         );
+                        // Notify for recovery exhausted (critical severity)
+                        self.alert_notifier.notify(AlertSeverity::Critical);
                     }
 
                     // Log when worker recovers - clear alerts
@@ -1693,6 +1774,33 @@ impl DataManager {
             self.dirty = true;
         }
         count
+    }
+
+    /// Configure the alert notifier from settings.
+    pub fn configure_notifier(
+        &mut self,
+        bell_on_critical: bool,
+        bell_on_warning: bool,
+        bell_interval_secs: u64,
+        visual_flash_enabled: bool,
+    ) {
+        self.alert_notifier.configure(
+            bell_on_critical,
+            bell_on_warning,
+            bell_interval_secs,
+            visual_flash_enabled,
+        );
+    }
+
+    /// Check if the alert notifier has a pending bell to ring.
+    /// Call this in the render loop and ring the bell if true.
+    pub fn take_pending_bell(&mut self) -> bool {
+        self.alert_notifier.take_pending_bell()
+    }
+
+    /// Check if visual flash is currently active.
+    pub fn is_flashing(&self) -> bool {
+        self.alert_notifier.is_flashing()
     }
 }
 

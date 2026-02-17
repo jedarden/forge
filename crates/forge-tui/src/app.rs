@@ -3044,6 +3044,10 @@ impl App {
 
     /// The inner event loop with frame-rate limiting and optimized polling.
     fn run_loop(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> AppResult<()> {
+        // Memory update interval (every 60 frames = ~1 second at 60fps)
+        let mut memory_update_counter: u32 = 0;
+        const MEMORY_UPDATE_INTERVAL: u32 = 60;
+
         while !self.should_quit {
             let frame_start = Instant::now();
 
@@ -3097,9 +3101,12 @@ impl App {
             let needs_redraw = self.take_dirty()
                 || self.last_timestamp_update.elapsed() >= TIMESTAMP_CACHE_DURATION;
 
+            // Measure render time
+            let render_start = Instant::now();
             if needs_redraw {
                 terminal.draw(|frame| self.draw(frame))?;
             }
+            let render_us = render_start.elapsed().as_micros() as u64;
 
             // Calculate remaining time in frame for event handling
             let elapsed = frame_start.elapsed();
@@ -3119,12 +3126,27 @@ impl App {
 
             if event::poll(event_timeout)? {
                 if let Event::Key(key) = event::read()? {
+                    self.data_manager.record_event();
                     self.handle_key_event(key);
                 }
             }
 
-            // Frame-rate limiting: sleep if frame was too fast
+            // Calculate event loop time (everything except render)
             let frame_elapsed = frame_start.elapsed();
+            let event_loop_us = frame_elapsed.as_micros() as u64 - render_us;
+
+            // Record frame performance metrics
+            self.data_manager.record_frame_perf(event_loop_us, render_us);
+
+            // Periodically update memory usage
+            memory_update_counter += 1;
+            if memory_update_counter >= MEMORY_UPDATE_INTERVAL {
+                self.data_manager.update_memory();
+                self.data_manager.prune_perf_alerts();
+                memory_update_counter = 0;
+            }
+
+            // Frame-rate limiting: sleep if frame was too fast
             if frame_elapsed < FRAME_DURATION {
                 let sleep_time = FRAME_DURATION - frame_elapsed;
                 std::thread::sleep(sleep_time);
@@ -3330,6 +3352,8 @@ impl App {
             Span::raw("Costs "),
             Span::styled("[m]", hotkey_style),
             Span::raw("Metrics "),
+            Span::styled("[p]", hotkey_style),
+            Span::raw("Perf "),
             Span::styled("[l]", hotkey_style),
             Span::raw("Logs "),
             Span::styled("[u]", hotkey_style),
@@ -3681,12 +3705,12 @@ impl App {
         frame.render_widget(cost_panel, area);
     }
 
-    /// Draw the Perf view (alias for Metrics).
+    /// Draw the Perf view (FORGE internal performance metrics).
     fn draw_perf(&self, frame: &mut Frame, area: Rect) {
-        // Use the same MetricsPanel widget as Perf view
-        let metrics_panel = MetricsPanel::new(&self.data_manager.metrics_data)
+        // Use PerfPanel widget for FORGE internal performance metrics
+        let perf_panel = PerfPanel::new(&self.data_manager.perf_metrics)
             .focused(self.focus_panel == FocusPanel::PerfCharts);
-        frame.render_widget(metrics_panel, area);
+        frame.render_widget(perf_panel, area);
     }
 
     /// Draw the Metrics view.
