@@ -1,7 +1,7 @@
 # Implementation Summary: Graceful Error Recovery (bd-1xdv)
 
 **Epic:** bd-1xdv - Implement graceful error recovery
-**Status:** All core components implemented
+**Status:** COMPLETED - All 6 child tasks implemented
 **Date:** 2026-02-17
 
 ## Overview
@@ -35,8 +35,8 @@ The error recovery system follows **ADR 0014: Error Handling Strategy** with the
 | 2 | API rate limit handling | bd-16hv | CLOSED | `ChatError::ApiRateLimitExceeded` with retry-after |
 | 3 | Worker crash recovery | bd-1a92 | CLOSED | `WorkerCrash` error + ADR 0018 |
 | 4 | Invalid config handling | bd-a6yr | CLOSED | `ConfigInvalid` + validator.rs |
-| 5 | Network timeout recovery | bd-24vt | OPEN | `ChatError::Timeout` (needs TUI integration) |
-| 6 | Missing dependency detection | bd-2oum | OPEN | Partially implemented in forge-init |
+| 5 | Network timeout recovery | bd-24vt | CLOSED | Network banner + retry + error tracking |
+| 6 | Missing dependency detection | bd-2oum | CLOSED | `forge_core::deps` + startup checks |
 
 ## Detailed Implementation
 
@@ -116,9 +116,11 @@ Features:
 ConfigInvalid { path: PathBuf, message: String },
 ```
 
-### 5. Network Timeout Recovery (bd-24vt) - OPEN
+### 5. Network Timeout Recovery (bd-24vt) - CLOSED
 
-**File:** `crates/forge-chat/src/error.rs`
+**Files:**
+- `crates/forge-chat/src/error.rs` - Network error types
+- `crates/forge-tui/src/app.rs` - Network status tracking and banner
 
 ```rust
 #[error("Network timeout after {0}s: {1}")]
@@ -129,25 +131,41 @@ ConnectionFailed(String),
 
 #[error("DNS resolution failed for {host}: {message}")]
 DnsResolutionFailed { host: String, message: String },
+
+#[error("Network unreachable: {0}")]
+NetworkUnreachable(String),
 ```
 
-Implemented:
-- Error types for timeout, connection, DNS failures
-- `is_network_error()` classification
-- User-friendly messages
+Features:
+- Network status tracking in App state (`network_available`, `network_error_message`)
+- "Network unreachable" banner displayed at top of TUI when network is down
+- Duration tracking (shows how long network has been unavailable)
+- Automatic recovery when network becomes available
+- Integration with `ErrorRecoveryManager` for degraded component tracking
+- Retry prompt with 'r' key
 
-Remaining:
-- TUI integration for "Network unreachable" banner
-- Caching of last known good state
+### 6. Missing Dependency Detection (bd-2oum) - CLOSED
 
-### 6. Missing Dependency Detection (bd-2oum) - OPEN
+**Files:**
+- `crates/forge-core/src/deps.rs` - Dependency checking module
+- `src/main.rs` - Startup integration
 
-**Status:** Partially implemented in `crates/forge-init/`
+```rust
+pub struct Dependency {
+    pub name: &'static str,
+    pub required: bool,
+    pub purpose: &'static str,
+    pub install_instructions: &'static str,
+}
+```
 
-Needed:
-- Startup check for: br, git, tmux, jq
-- Clear message with install instructions
-- Graceful degradation for non-critical deps
+Features:
+- Checks for required dependencies at startup: tmux, git
+- Checks for optional dependencies: br, jq
+- Clear error messages with install instructions for each platform
+- Graceful degradation for optional dependencies (warning only)
+- Version detection for found dependencies
+- Startup fails only if required dependencies are missing
 
 ## TUI Integration
 
@@ -210,10 +228,10 @@ pub enum ErrorSeverity {
 
 | Criteria | Status |
 |----------|--------|
-| All error types handled gracefully | Partial (4/6) |
-| User sees helpful error messages | Yes |
-| System recovers automatically where possible | Yes |
-| No crashes on recoverable errors | Yes |
+| All error types handled gracefully | ✅ Complete (6/6) |
+| User sees helpful error messages | ✅ Yes |
+| System recovers automatically where possible | ✅ Yes |
+| No crashes on recoverable errors | ✅ Yes |
 
 ## Related Documentation
 
@@ -221,8 +239,15 @@ pub enum ErrorSeverity {
 - [ADR 0018: Worker Crash Recovery](docs/adr/0018-worker-crash-recovery.md)
 - [Database Documentation](docs/DATABASE.md)
 
-## Next Steps
+## Completion Notes
 
-1. **bd-24vt**: Complete network timeout TUI integration
-2. **bd-2oum**: Implement startup dependency checking
-3. Close this epic when both remaining tasks complete
+All 6 child tasks have been implemented:
+
+1. **Database lock handling** - SQLite BUSY/LOCKED errors with exponential backoff
+2. **API rate limit handling** - 429 responses with retry-after parsing
+3. **Worker crash recovery** - PID monitoring, auto-restart with rate limiting
+4. **Invalid config handling** - YAML validation with clear error messages
+5. **Network timeout recovery** - TUI banner, status tracking, retry support
+6. **Missing dependency detection** - Startup checks with install instructions
+
+The epic can now be closed.

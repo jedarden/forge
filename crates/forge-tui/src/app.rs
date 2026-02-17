@@ -97,6 +97,14 @@ pub enum PendingAction {
     SpawnWorker(crate::event::WorkerExecutor),
     /// Kill a specific worker by suffix
     KillWorker { suffix: String, worker_type: String },
+    /// Pause a specific worker
+    PauseWorker { worker_id: String },
+    /// Pause all workers
+    PauseAllWorkers { count: usize },
+    /// Resume a specific worker
+    ResumeWorker { worker_id: String },
+    /// Resume all workers
+    ResumeAllWorkers { count: usize },
 }
 
 /// Main application state.
@@ -224,6 +232,12 @@ pub struct App {
     retry_available: bool,
     /// Crash recovery manager for handling worker crashes
     crash_recovery: CrashRecoveryManager,
+    /// Network connectivity status (false = network unreachable)
+    network_available: bool,
+    /// Last network error message (for display in banner)
+    network_error_message: Option<String>,
+    /// Timestamp when network became unavailable
+    network_unavailable_since: Option<Instant>,
 }
 
 /// Temporary storage for chat exchange data during streaming display.
@@ -552,6 +566,9 @@ impl App {
             last_failed_query: None,
             retry_available: false,
             crash_recovery: CrashRecoveryManager::new(),
+            network_available: true,
+            network_error_message: None,
+            network_unavailable_since: None,
         }
     }
 
@@ -625,6 +642,9 @@ impl App {
             last_failed_query: None,
             retry_available: false,
             crash_recovery: CrashRecoveryManager::new(),
+            network_available: true,
+            network_error_message: None,
+            network_unavailable_since: None,
         }
     }
 
@@ -1023,6 +1043,15 @@ impl App {
                             metadata,
                         });
                         self.status_message = Some("✅ Streaming response...".to_string());
+
+                        // Network is working - clear any network error status
+                        if !self.network_available {
+                            info!("Network recovered after {:?}", self.network_unavailable_since.map(|t| t.elapsed()));
+                            self.network_available = true;
+                            self.network_error_message = None;
+                            self.network_unavailable_since = None;
+                            self.error_recovery.mark_recovered("chat");
+                        }
                     }
                 }
                 Err(e) => {
@@ -1032,9 +1061,35 @@ impl App {
 
                     // Check if this is a network error that's retryable
                     let is_retryable = e.is_network_error() || e.is_retryable();
+                    let is_network_error = e.is_network_error();
+
                     if is_retryable {
                         self.last_failed_query = Some(query.clone());
                         self.retry_available = true;
+                    }
+
+                    // Update network status tracking
+                    if is_network_error {
+                        if self.network_available {
+                            // First network error - mark as unavailable
+                            self.network_available = false;
+                            self.network_unavailable_since = Some(Instant::now());
+                            warn!("Network became unavailable: {}", e.friendly_message());
+                        }
+                        self.network_error_message = Some(e.friendly_message());
+
+                        // Record network error in error recovery manager
+                        let error_id = self.error_recovery.record_error(
+                            ErrorCategory::Network,
+                            ErrorSeverity::Error,
+                            "Network Error",
+                            e.friendly_message(),
+                            vec![
+                                e.suggested_action().to_string(),
+                                "Press 'r' to retry when network is available".to_string(),
+                            ],
+                        );
+                        self.error_recovery.mark_degraded("chat", error_id);
                     }
 
                     self.chat_history.push(ChatExchange {
@@ -1324,6 +1379,12 @@ impl App {
         // Handle kill dialog if active
         if self.show_kill_dialog {
             self.handle_kill_dialog_key(key);
+            return;
+        }
+
+        // Handle confirmation dialog if active
+        if self.show_confirmation {
+            self.handle_confirmation_dialog_key(key);
             return;
         }
 
@@ -1696,16 +1757,16 @@ impl App {
                 self.trigger_update();
             }
             AppEvent::PauseWorker => {
-                self.pause_selected_worker();
+                self.show_pause_worker_confirmation();
             }
             AppEvent::PauseAllWorkers => {
-                self.pause_all_workers();
+                self.show_pause_all_workers_confirmation();
             }
             AppEvent::ResumeWorker => {
-                self.resume_selected_worker();
+                self.show_resume_worker_confirmation();
             }
             AppEvent::ResumeAllWorkers => {
-                self.resume_all_workers();
+                self.show_resume_all_workers_confirmation();
             }
             AppEvent::AcknowledgeAlert => {
                 self.acknowledge_selected_alert();
@@ -1945,6 +2006,114 @@ impl App {
             }
         }
 
+        self.mark_dirty();
+    }
+
+    /// Show confirmation dialog for pausing the selected worker.
+    fn show_pause_worker_confirmation(&mut self) {
+        // Get sorted list of worker IDs
+        let mut workers: Vec<_> = self.data_manager.worker_data.workers.keys().collect();
+        workers.sort();
+
+        if workers.is_empty() {
+            self.status_message = Some("No workers to pause".to_string());
+            self.mark_dirty();
+            return;
+        }
+
+        // Ensure selection is within bounds
+        if self.selected_worker_index >= workers.len() {
+            self.selected_worker_index = 0;
+        }
+
+        let worker_id = workers[self.selected_worker_index].clone();
+
+        // Check if already paused
+        if self.paused_workers.contains(&worker_id) {
+            self.status_message = Some(format!("Worker {} is already paused", worker_id));
+            self.mark_dirty();
+            return;
+        }
+
+        // Show confirmation dialog
+        self.pending_action = Some(PendingAction::PauseWorker { worker_id });
+        self.show_confirmation = true;
+        self.mark_dirty();
+    }
+
+    /// Show confirmation dialog for pausing all workers.
+    fn show_pause_all_workers_confirmation(&mut self) {
+        let workers = &self.data_manager.worker_data.workers;
+
+        if workers.is_empty() {
+            self.status_message = Some("No workers to pause".to_string());
+            self.mark_dirty();
+            return;
+        }
+
+        // Count workers that are not already paused
+        let count = workers
+            .keys()
+            .filter(|id| !self.paused_workers.contains(*id))
+            .count();
+
+        if count == 0 {
+            self.status_message = Some("All workers are already paused".to_string());
+            self.mark_dirty();
+            return;
+        }
+
+        // Show confirmation dialog
+        self.pending_action = Some(PendingAction::PauseAllWorkers { count });
+        self.show_confirmation = true;
+        self.mark_dirty();
+    }
+
+    /// Show confirmation dialog for resuming the selected worker.
+    fn show_resume_worker_confirmation(&mut self) {
+        // Get sorted list of worker IDs
+        let mut workers: Vec<_> = self.data_manager.worker_data.workers.keys().collect();
+        workers.sort();
+
+        if workers.is_empty() {
+            self.status_message = Some("No workers to resume".to_string());
+            self.mark_dirty();
+            return;
+        }
+
+        // Ensure selection is within bounds
+        if self.selected_worker_index >= workers.len() {
+            self.selected_worker_index = 0;
+        }
+
+        let worker_id = workers[self.selected_worker_index].clone();
+
+        // Check if actually paused
+        if !self.paused_workers.contains(&worker_id) {
+            self.status_message = Some(format!("Worker {} is not paused", worker_id));
+            self.mark_dirty();
+            return;
+        }
+
+        // Show confirmation dialog
+        self.pending_action = Some(PendingAction::ResumeWorker { worker_id });
+        self.show_confirmation = true;
+        self.mark_dirty();
+    }
+
+    /// Show confirmation dialog for resuming all workers.
+    fn show_resume_all_workers_confirmation(&mut self) {
+        if self.paused_workers.is_empty() {
+            self.status_message = Some("No paused workers to resume".to_string());
+            self.mark_dirty();
+            return;
+        }
+
+        let count = self.paused_workers.len();
+
+        // Show confirmation dialog
+        self.pending_action = Some(PendingAction::ResumeAllWorkers { count });
+        self.show_confirmation = true;
         self.mark_dirty();
     }
 
@@ -2205,6 +2374,59 @@ impl App {
                 self.mark_dirty();
             }
             _ => {}
+        }
+    }
+
+    /// Handle confirmation dialog key events.
+    fn handle_confirmation_dialog_key(&mut self, key: KeyEvent) {
+        use crossterm::event::KeyCode;
+
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                // Confirm the action
+                self.show_confirmation = false;
+                if let Some(action) = self.pending_action.take() {
+                    self.execute_pending_action(action);
+                }
+                self.mark_dirty();
+            }
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Char('q') => {
+                // Cancel the action
+                self.show_confirmation = false;
+                self.pending_action = None;
+                self.status_message = Some("Action cancelled".to_string());
+                self.mark_dirty();
+            }
+            _ => {}
+        }
+    }
+
+    /// Execute a pending action after confirmation.
+    fn execute_pending_action(&mut self, action: PendingAction) {
+        match action {
+            PendingAction::SpawnWorker(executor) => {
+                // Execute spawn logic
+                self.spawn_worker(executor);
+            }
+            PendingAction::KillWorker { suffix, worker_type } => {
+                // Execute kill logic - this would be called from kill dialog
+                self.status_message = Some(format!(
+                    "Kill action confirmed for {} ({})",
+                    suffix, worker_type
+                ));
+            }
+            PendingAction::PauseWorker { .. } => {
+                self.pause_selected_worker();
+            }
+            PendingAction::PauseAllWorkers { .. } => {
+                self.pause_all_workers();
+            }
+            PendingAction::ResumeWorker { .. } => {
+                self.resume_selected_worker();
+            }
+            PendingAction::ResumeAllWorkers { .. } => {
+                self.resume_all_workers();
+            }
         }
     }
 
@@ -2564,6 +2786,11 @@ impl App {
             self.draw_kill_dialog(frame, area);
         }
 
+        // Draw confirmation dialog if active
+        if self.show_confirmation {
+            self.draw_confirmation_dialog(frame, area);
+        }
+
         // Draw task detail overlay if active
         if self.show_task_detail {
             self.draw_task_detail_overlay(frame, area);
@@ -2572,6 +2799,11 @@ impl App {
         // Draw update notification banner if update available
         if self.update_available {
             self.draw_update_banner(frame, area);
+        }
+
+        // Draw network unreachable banner if network is down
+        if !self.network_available {
+            self.draw_network_banner(frame, area);
         }
 
         // Draw status message overlay if present
@@ -3924,6 +4156,118 @@ Press any key to close this help.";
         frame.render_widget(dialog, overlay_area);
     }
 
+    /// Draw the confirmation dialog overlay.
+    fn draw_confirmation_dialog(&self, frame: &mut Frame, area: Rect) {
+        let theme = self.theme_manager.current();
+
+        // Get dialog content based on pending action
+        let (title, message, action_text) = match &self.pending_action {
+            Some(PendingAction::SpawnWorker(executor)) => (
+                " Spawn Worker ",
+                format!("Are you sure you want to spawn a {} worker?", executor.name()),
+                "spawn",
+            ),
+            Some(PendingAction::KillWorker { suffix, worker_type }) => (
+                " Kill Worker ",
+                format!(
+                    "Are you sure you want to kill worker {} ({})?",
+                    suffix, worker_type
+                ),
+                "kill",
+            ),
+            Some(PendingAction::PauseWorker { worker_id }) => (
+                " Pause Worker ",
+                format!(
+                    "Are you sure you want to pause worker {}?\nThis will suspend the worker's tmux session.",
+                    worker_id
+                ),
+                "pause",
+            ),
+            Some(PendingAction::PauseAllWorkers { count }) => (
+                " Pause All Workers ",
+                format!(
+                    "Are you sure you want to pause {} worker(s)?\nThis will suspend all active tmux sessions.",
+                    count
+                ),
+                "pause all",
+            ),
+            Some(PendingAction::ResumeWorker { worker_id }) => (
+                " Resume Worker ",
+                format!(
+                    "Are you sure you want to resume worker {}?\nThis will continue the worker's tmux session.",
+                    worker_id
+                ),
+                "resume",
+            ),
+            Some(PendingAction::ResumeAllWorkers { count }) => (
+                " Resume All Workers ",
+                format!(
+                    "Are you sure you want to resume {} paused worker(s)?\nThis will continue all paused tmux sessions.",
+                    count
+                ),
+                "resume all",
+            ),
+            None => return, // No action pending, don't draw
+        };
+
+        // Calculate dialog dimensions
+        let overlay_width = 60.min(area.width.saturating_sub(4));
+        let overlay_height = 9.min(area.height.saturating_sub(4));
+        let overlay_x = (area.width - overlay_width) / 2;
+        let overlay_y = (area.height - overlay_height) / 2;
+
+        let overlay_area = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
+
+        // Clear background
+        frame.render_widget(Clear, overlay_area);
+
+        // Build dialog content
+        let mut lines: Vec<Line> = Vec::new();
+
+        // Message
+        for line in message.lines() {
+            lines.push(Line::from(Span::styled(
+                line,
+                Style::default().fg(theme.colors.text),
+            )));
+        }
+
+        lines.push(Line::raw("")); // Empty line
+
+        // Instructions
+        lines.push(Line::from(vec![
+            Span::styled("Press ", Style::default().fg(theme.colors.text_dim)),
+            Span::styled("Enter", Style::default().fg(theme.colors.hotkey).add_modifier(Modifier::BOLD)),
+            Span::styled(format!(" to {} or ", action_text), Style::default().fg(theme.colors.text_dim)),
+            Span::styled("Esc", Style::default().fg(theme.colors.hotkey).add_modifier(Modifier::BOLD)),
+            Span::styled(" to cancel", Style::default().fg(theme.colors.text_dim)),
+        ]));
+
+        // Determine border color based on action type
+        let border_color = match &self.pending_action {
+            Some(PendingAction::PauseWorker { .. }) | Some(PendingAction::PauseAllWorkers { .. }) => Color::Yellow,
+            Some(PendingAction::ResumeWorker { .. }) | Some(PendingAction::ResumeAllWorkers { .. }) => Color::Green,
+            Some(PendingAction::KillWorker { .. }) => Color::Red,
+            Some(PendingAction::SpawnWorker(_)) => Color::Cyan,
+            None => theme.colors.border_dim,
+        };
+
+        let dialog = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(border_color))
+                    .title(Span::styled(
+                        title,
+                        Style::default().fg(border_color).add_modifier(Modifier::BOLD),
+                    ))
+                    .style(Style::default().bg(Color::Black)),
+            )
+            .wrap(Wrap { trim: false });
+
+        frame.render_widget(dialog, overlay_area);
+    }
+
     /// Draw the task detail overlay.
     fn draw_task_detail_overlay(&self, frame: &mut Frame, area: Rect) {
         let theme = self.theme_manager.current();
@@ -4158,6 +4502,55 @@ Press any key to close this help.";
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::Yellow)),
+            )
+            .alignment(ratatui::layout::Alignment::Center);
+
+        frame.render_widget(banner, banner_area);
+    }
+
+    /// Draw network unreachable banner at the top of the screen.
+    fn draw_network_banner(&self, frame: &mut Frame, area: Rect) {
+        // Position below the header (and potentially below update banner if both are showing)
+        let banner_y = if self.update_available { 6 } else { 3 };
+        let banner_height = 3;
+        let banner_width = (area.width * 2 / 3).min(60);
+        let banner_area = Rect::new(
+            (area.width.saturating_sub(banner_width)) / 2, // Center horizontally
+            banner_y,
+            banner_width,
+            banner_height,
+        );
+
+        // Clear background
+        frame.render_widget(Clear, banner_area);
+
+        // Format the duration if available
+        let duration_text = if let Some(since) = self.network_unavailable_since {
+            let secs = since.elapsed().as_secs();
+            if secs < 60 {
+                format!(" ({}s)", secs)
+            } else {
+                format!(" ({}m {}s)", secs / 60, secs % 60)
+            }
+        } else {
+            String::new()
+        };
+
+        // Get error message or use default
+        let error_detail = self.network_error_message.as_deref().unwrap_or("Network unreachable");
+
+        let banner_text = format!("📡 {}{} | Press 'r' to retry", error_detail, duration_text);
+        let banner = Paragraph::new(banner_text)
+            .style(
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::Red)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::LightRed)),
             )
             .alignment(ratatui::layout::Alignment::Center);
 

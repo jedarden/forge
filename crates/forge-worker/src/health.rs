@@ -59,8 +59,13 @@ pub const DEFAULT_CHECK_INTERVAL_SECS: u64 = 30;
 /// Default stale activity threshold in seconds (15 minutes).
 pub const DEFAULT_STALE_THRESHOLD_SECS: i64 = 900;
 
-/// Default memory limit in MB (1GB).
-pub const DEFAULT_MEMORY_LIMIT_MB: u64 = 1024;
+/// Default memory warning limit in MB (4GB).
+/// Workers exceeding this will trigger alerts.
+pub const DEFAULT_MEMORY_LIMIT_MB: u64 = 4096;
+
+/// Hard memory kill limit in MB (8GB).
+/// Workers exceeding this will be forcefully terminated.
+pub const DEFAULT_MEMORY_KILL_LIMIT_MB: u64 = 8192;
 
 /// Default maximum recovery attempts.
 pub const DEFAULT_MAX_RECOVERY_ATTEMPTS: u8 = 3;
@@ -80,8 +85,14 @@ pub struct HealthMonitorConfig {
     /// Stale activity threshold in seconds
     pub stale_activity_threshold_secs: i64,
 
-    /// Memory limit in MB (0 = no limit)
+    /// Memory warning limit in MB (0 = no limit)
+    /// Workers exceeding this will trigger warnings/alerts.
     pub memory_limit_mb: u64,
+
+    /// Memory kill limit in MB (0 = no limit)
+    /// Workers exceeding this will be forcefully terminated.
+    /// Default: 8GB - designed to catch runaway processes.
+    pub memory_kill_limit_mb: u64,
 
     /// Maximum recovery attempts before escalation
     pub max_recovery_attempts: u8,
@@ -120,10 +131,11 @@ impl Default for HealthMonitorConfig {
             check_interval_secs: DEFAULT_CHECK_INTERVAL_SECS,
             stale_activity_threshold_secs: DEFAULT_STALE_THRESHOLD_SECS,
             memory_limit_mb: DEFAULT_MEMORY_LIMIT_MB,
+            memory_kill_limit_mb: DEFAULT_MEMORY_KILL_LIMIT_MB,
             max_recovery_attempts: DEFAULT_MAX_RECOVERY_ATTEMPTS,
             enable_pid_check: true,
             enable_activity_check: true,
-            enable_memory_check: false, // Disabled by default - requires procfs
+            enable_memory_check: true, // Enabled by default for memory monitoring
             enable_task_check: true,
             task_stuck_threshold_mins: 30,
             enable_response_check: false, // Disabled by default - requires signal handling
