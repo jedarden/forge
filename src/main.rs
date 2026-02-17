@@ -58,6 +58,18 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Initialize FORGE configuration (first-time setup)
+    Init {
+        /// Run in non-interactive mode (for CI/automation)
+        /// Auto-selects first available backend or uses FORGE_CHAT_BACKEND env var
+        #[arg(long)]
+        non_interactive: bool,
+
+        /// Force re-initialization even if config exists
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Update forge binary from a URL
     Update {
         /// URL to download the new binary from
@@ -182,6 +194,12 @@ fn main() -> ExitCode {
     // Handle subcommands that don't require the TUI
     if let Some(command) = &cli.command {
         match command {
+            Commands::Init {
+                non_interactive,
+                force,
+            } => {
+                return handle_init_command(*non_interactive, *force);
+            }
             Commands::Worker { action } => {
                 return handle_worker_action(action);
             }
@@ -199,7 +217,7 @@ fn main() -> ExitCode {
         eprintln!("🚀 Welcome to FORGE!");
         eprintln!("No configuration found. Running first-time setup...\n");
 
-        if let Err(e) = run_onboarding() {
+        if let Err(e) = run_onboarding(false, None) {
             eprintln!("❌ Onboarding failed: {}", e);
             eprintln!("You can manually create ~/.forge/config.yaml or try again.");
             return ExitCode::from(1);
@@ -320,81 +338,227 @@ fn get_forge_dir() -> std::path::PathBuf {
 }
 
 /// Run the onboarding flow.
-fn run_onboarding() -> Result<(), Box<dyn std::error::Error>> {
-    info!("Starting onboarding flow");
+///
+/// # Arguments
+///
+/// * `non_interactive` - If true, suppress output and auto-select backend
+/// * `preferred_backend` - Optional backend to use (from FORGE_CHAT_BACKEND env var)
+fn run_onboarding(
+    non_interactive: bool,
+    preferred_backend: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    info!(
+        "Starting onboarding flow (non_interactive={}, preferred_backend={:?})",
+        non_interactive, preferred_backend
+    );
 
     // Detect CLI tools with diagnostics
-    eprintln!("🔍 Detecting available CLI tools...");
+    if !non_interactive {
+        eprintln!("🔍 Detecting available CLI tools...");
+    }
     let (tools, diagnostics) = detection::detect_cli_tools_with_diagnostics()?;
 
     // Filter to only show tools that are ready to use
     let ready_tools: Vec<_> = tools.iter().filter(|t| t.is_ready()).collect();
 
     if ready_tools.is_empty() {
-        // Use the guidance module to show detailed instructions
-        eprint!("{}", guidance::generate_guidance(Some(&diagnostics)));
+        if non_interactive {
+            // In non-interactive mode, output to stderr and exit
+            eprintln!("error: No compatible CLI tools available");
+            eprintln!("Install one of: claude (Claude Code), opencode, aider");
+        } else {
+            // Use the guidance module to show detailed instructions
+            eprint!("{}", guidance::generate_guidance(Some(&diagnostics)));
+        }
         return Err("No compatible CLI tools available".into());
     }
 
-    // Display detected tools
-    eprintln!("\n📦 Detected tools:");
-    for tool in &tools {
-        let status_icon = match tool.status {
-            detection::ToolStatus::Ready => "✅",
-            detection::ToolStatus::MissingApiKey => "⚠️ ",
-            _ => "❌",
-        };
-        eprintln!(
-            "  {} {} - {} ({})",
-            status_icon,
-            tool.name,
-            tool.status_message(),
-            tool.binary_path.display()
-        );
-        if let Some(version) = &tool.version {
-            eprintln!("     Version: {}", version);
-        }
-        if tool.api_key_required
-            && !tool.api_key_detected
-            && let Some(env_var) = &tool.api_key_env_var
-        {
-            eprintln!("     Missing: {}", env_var);
+    // Display detected tools (only in interactive mode)
+    if !non_interactive {
+        eprintln!("\n📦 Detected tools:");
+        for tool in &tools {
+            let status_icon = match tool.status {
+                detection::ToolStatus::Ready => "✅",
+                detection::ToolStatus::MissingApiKey => "⚠️ ",
+                _ => "❌",
+            };
+            eprintln!(
+                "  {} {} - {} ({})",
+                status_icon,
+                tool.name,
+                tool.status_message(),
+                tool.binary_path.display()
+            );
+            if let Some(version) = &tool.version {
+                eprintln!("     Version: {}", version);
+            }
+            if tool.api_key_required
+                && !tool.api_key_detected
+                && let Some(env_var) = &tool.api_key_env_var
+            {
+                eprintln!("     Missing: {}", env_var);
+            }
         }
     }
 
-    // Select the first ready tool
-    let selected_tool = tools
-        .iter()
-        .find(|t| t.is_ready())
-        .ok_or("No ready tools available. Please set required API keys.")?;
+    // Select the backend to use
+    let selected_tool = if let Some(backend) = preferred_backend {
+        // Try to find the specified backend
+        let normalized_backend = normalize_backend_name(backend);
+        let found = tools.iter().find(|t| {
+            let tool_name = normalize_backend_name(&t.name);
+            tool_name == normalized_backend
+        });
 
-    eprintln!(
-        "\n✨ Using: {} ({})",
-        selected_tool.name,
-        selected_tool.binary_path.display()
-    );
+        match found {
+            Some(tool) => {
+                if !tool.is_ready() {
+                    eprintln!(
+                        "error: Backend '{}' is not ready: {}",
+                        backend,
+                        tool.status_message()
+                    );
+                    if tool.status == detection::ToolStatus::MissingApiKey {
+                        if let Some(env_var) = &tool.api_key_env_var {
+                            eprintln!("Set the {} environment variable and try again", env_var);
+                        }
+                    }
+                    return Err(format!("Backend '{}' is not ready", backend).into());
+                }
+                tool
+            }
+            None => {
+                eprintln!("error: Backend '{}' not found", backend);
+                eprintln!(
+                    "Available backends: {}",
+                    tools
+                        .iter()
+                        .map(|t| t.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                return Err(format!("Backend '{}' not found", backend).into());
+            }
+        }
+    } else {
+        // Auto-select the first ready tool
+        tools
+            .iter()
+            .find(|t| t.is_ready())
+            .ok_or("No ready tools available. Please set required API keys.")?
+    };
+
+    if !non_interactive {
+        eprintln!(
+            "\n✨ Using: {} ({})",
+            selected_tool.name,
+            selected_tool.binary_path.display()
+        );
+    }
 
     // Create directory structure
     let forge_dir = get_forge_dir();
-    eprintln!("\n📁 Creating directory structure...");
+    if !non_interactive {
+        eprintln!("\n📁 Creating directory structure...");
+    }
     generator::create_directory_structure(&forge_dir)?;
 
     // Generate config.yaml
     let config_path = forge_dir.join("config.yaml");
-    eprintln!("📝 Generating config.yaml...");
+    if !non_interactive {
+        eprintln!("📝 Generating config.yaml...");
+    }
     generator::generate_config_yaml(selected_tool, &config_path)?;
 
     // Generate launcher script
     let launcher_name = format!("{}-launcher", selected_tool.name);
     let launcher_path = forge_dir.join("launchers").join(&launcher_name);
-    eprintln!("🚀 Generating launcher script...");
+    if !non_interactive {
+        eprintln!("🚀 Generating launcher script...");
+    }
     generator::generate_launcher_script(selected_tool, &launcher_path)?;
 
-    eprintln!("\n✅ Configuration complete!");
-    eprintln!("   Config: {}", config_path.display());
-    eprintln!("   Launcher: {}", launcher_path.display());
+    if !non_interactive {
+        eprintln!("\n✅ Configuration complete!");
+        eprintln!("   Config: {}", config_path.display());
+        eprintln!("   Launcher: {}", launcher_path.display());
+    }
 
+    info!(
+        "Onboarding complete: using {} backend",
+        selected_tool.name
+    );
     Ok(())
+}
+
+/// Normalize backend name for comparison.
+///
+/// Maps common aliases to canonical names:
+/// - "claude", "claude-code", "claudecode" -> "claude-code"
+/// - "opencode" -> "opencode"
+/// - "aider" -> "aider"
+fn normalize_backend_name(name: &str) -> String {
+    let lower = name.to_lowercase();
+    match lower.as_str() {
+        "claude" | "claude-code" | "claudecode" => "claude-code".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Handle the `forge init` command.
+fn handle_init_command(non_interactive: bool, force: bool) -> ExitCode {
+    info!(
+        "Handling init command (non_interactive={}, force={})",
+        non_interactive, force
+    );
+
+    // Check if config already exists
+    if !force && !needs_onboarding() {
+        let forge_dir = get_forge_dir();
+        let config_path = forge_dir.join("config.yaml");
+
+        if non_interactive {
+            eprintln!(
+                "error: Configuration already exists at {}",
+                config_path.display()
+            );
+            eprintln!("Use --force to overwrite existing configuration");
+            return ExitCode::from(1);
+        } else {
+            eprintln!(
+                "Configuration already exists at {}",
+                config_path.display()
+            );
+            eprintln!("Use --force to overwrite existing configuration");
+            return ExitCode::SUCCESS;
+        }
+    }
+
+    // Get preferred backend from environment variable
+    let preferred_backend = std::env::var("FORGE_CHAT_BACKEND").ok();
+
+    if non_interactive {
+        // Non-interactive mode: quiet output, clear error messages to stderr
+        match run_onboarding(true, preferred_backend.as_deref()) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(_) => ExitCode::from(1),
+        }
+    } else {
+        // Interactive mode: show welcome message and full output
+        eprintln!("🚀 FORGE Setup");
+        eprintln!();
+
+        match run_onboarding(false, preferred_backend.as_deref()) {
+            Ok(()) => {
+                eprintln!("\n✅ Setup complete!");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("❌ Setup failed: {}", e);
+                ExitCode::from(1)
+            }
+        }
+    }
 }
 
 /// Validate the config file and offer recovery if invalid.
