@@ -48,6 +48,7 @@ pub mod claude_api_types;
 pub mod config;
 pub mod context;
 pub mod error;
+pub mod history;
 pub mod provider;
 pub mod rate_limit;
 pub mod tools;
@@ -62,6 +63,7 @@ pub use config::{
 };
 pub use context::{ContextProvider, DashboardContext, MockContextSource, RealContextSource};
 pub use error::{ChatError, Result};
+pub use history::{HistoryEntry, HistoryManager, HistoryMetadata, HistoryStats, HistoryToolCall};
 pub use provider::{
     ChatProvider, ClaudeCliProvider, FinishReason, MockProvider, ProviderResponse, ProviderTool,
     TokenUsage,

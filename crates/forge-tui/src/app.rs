@@ -75,7 +75,7 @@ use crate::theme::ThemeManager;
 use crate::view::{FocusPanel, LayoutMode, View};
 use crate::widget::QuickActionsPanel;
 use crate::error_recovery::{ErrorCategory, ErrorRecoveryManager, ErrorSeverity, SharedErrorRecoveryManager};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 /// Result type for app operations.
 pub type AppResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -244,6 +244,8 @@ pub struct App {
     network_error_message: Option<String>,
     /// Timestamp when network became unavailable
     network_unavailable_since: Option<Instant>,
+    /// Chat history manager for persistence
+    history_manager: Option<forge_chat::HistoryManager>,
 }
 
 /// Temporary storage for chat exchange data during streaming display.
@@ -259,26 +261,31 @@ struct PendingChatExchange {
 }
 
 /// A single chat exchange (user query + assistant response).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ChatExchange {
     pub user_query: String,
     pub assistant_response: String,
     pub timestamp: String,
     pub is_error: bool,
     /// Tool calls made during this exchange
+    #[serde(default)]
     pub tool_calls: Vec<ToolCallInfo>,
     /// Side effects from tool execution
+    #[serde(default)]
     pub side_effects: Vec<SideEffectInfo>,
     /// Confirmation prompt if action requires approval
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confirmation: Option<ConfirmationInfo>,
     /// Response metadata (duration, cost, provider)
+    #[serde(default)]
     pub metadata: ResponseMetadata,
     /// Actionable guidance for errors (how to fix)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_guidance: Option<String>,
 }
 
 /// Information about a tool call for display.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ToolCallInfo {
     /// Tool name (e.g., "spawn_worker", "get_worker_status")
     pub name: String,
@@ -289,7 +296,7 @@ pub struct ToolCallInfo {
 }
 
 /// Information about a side effect for display.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SideEffectInfo {
     /// Type of effect (e.g., "spawn", "kill", "assign")
     pub effect_type: String,
@@ -298,7 +305,7 @@ pub struct SideEffectInfo {
 }
 
 /// Confirmation prompt information for display.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ConfirmationInfo {
     /// Title of the confirmation
     pub title: String,
@@ -307,15 +314,17 @@ pub struct ConfirmationInfo {
     /// Warning level (info, warning, danger)
     pub level: ConfirmationLevel,
     /// Estimated cost impact
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_impact: Option<f64>,
     /// Items that will be affected
+    #[serde(default)]
     pub affected_items: Vec<String>,
     /// Whether this action is reversible
     pub reversible: bool,
 }
 
 /// Warning level for confirmation prompts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ConfirmationLevel {
     /// Informational (no danger)
     Info,
@@ -326,13 +335,16 @@ pub enum ConfirmationLevel {
 }
 
 /// Response metadata for display.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct ResponseMetadata {
     /// Duration in milliseconds
+    #[serde(default)]
     pub duration_ms: u64,
     /// Estimated cost in USD
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_usd: Option<f64>,
     /// Provider name
+    #[serde(default)]
     pub provider: String,
 }
 
@@ -516,6 +528,9 @@ impl App {
             forge_config.notifications.visual_flash_on_critical,
         );
 
+        // Initialize history manager and load previous history
+        let history_manager = forge_chat::HistoryManager::new().ok();
+
         info!("⏱️ App::new() completed in {:?}", start.elapsed());
 
         Self {
@@ -587,6 +602,7 @@ impl App {
             network_available: true,
             network_error_message: None,
             network_unavailable_since: None,
+            history_manager,
         }
     }
 
@@ -666,6 +682,7 @@ impl App {
             network_available: true,
             network_error_message: None,
             network_unavailable_since: None,
+            history_manager: None, // Don't initialize in test mode
         }
     }
 
@@ -834,6 +851,432 @@ impl App {
         self.dirty = true;
     }
 
+    /// Handle local chat commands (commands processed by TUI, not sent to backend).
+    ///
+    /// Returns true if the command was handled locally, false if it should be sent to backend.
+    fn handle_chat_command(&mut self, query: &str) -> bool {
+        let trimmed = query.trim();
+
+        // Check for slash commands
+        if !trimmed.starts_with('/') {
+            return false;
+        }
+
+        // Parse command and arguments
+        let parts: Vec<&str> = trimmed[1..].splitn(2, ' ').collect();
+        let command = parts[0].to_lowercase();
+        let args = parts.get(1).map(|s| s.trim());
+
+        match command.as_str() {
+            "save" => {
+                self.save_chat_history();
+                true
+            }
+            "load" => {
+                self.load_chat_history();
+                true
+            }
+            "export" => {
+                let path = args.map(|s| std::path::PathBuf::from(s));
+                self.export_chat_history(path);
+                true
+            }
+            "clear" => {
+                self.chat_history.clear();
+                self.chat_scroll_offset = 0;
+                self.status_message = Some("Chat history cleared".to_string());
+                info!("Chat history cleared by user command");
+                true
+            }
+            "history" => {
+                // Show history info
+                let count = self.chat_history.len();
+                let msg = if count == 0 {
+                    "No chat history. Use /load to restore previous sessions.".to_string()
+                } else {
+                    format!("Chat history: {} exchanges in current session", count)
+                };
+                self.status_message = Some(msg);
+                true
+            }
+            "stats" => {
+                self.show_history_stats();
+                true
+            }
+            "help" => {
+                // Show available commands
+                let help_text = "Commands: /save /load /export [path] /clear /history /stats /help";
+                self.chat_history.push(ChatExchange {
+                    user_query: "/help".to_string(),
+                    assistant_response: help_text.to_string(),
+                    timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+                    is_error: false,
+                    tool_calls: vec![],
+                    side_effects: vec![],
+                    confirmation: None,
+                    metadata: ResponseMetadata::default(),
+                    error_guidance: None,
+                });
+                // Limit history to 10 exchanges
+                if self.chat_history.len() > 10 {
+                    self.chat_history.remove(0);
+                }
+                true
+            }
+            _ => {
+                // Unknown slash command - let it go to the backend
+                false
+            }
+        }
+    }
+
+    /// Save current chat history to disk.
+    fn save_chat_history(&mut self) {
+        let history_manager = match &self.history_manager {
+            Some(hm) => hm,
+            None => {
+                self.status_message = Some("History manager not initialized".to_string());
+                return;
+            }
+        };
+
+        // Convert ChatExchange to HistoryEntry
+        let entries: Vec<forge_chat::HistoryEntry> = self
+            .chat_history
+            .iter()
+            .map(|exchange| forge_chat::HistoryEntry {
+                timestamp: exchange.timestamp.clone(),
+                user_query: exchange.user_query.clone(),
+                assistant_response: exchange.assistant_response.clone(),
+                is_error: exchange.is_error,
+                metadata: Some(forge_chat::HistoryMetadata {
+                    duration_ms: exchange.metadata.duration_ms,
+                    cost_usd: exchange.metadata.cost_usd,
+                    provider: exchange.metadata.provider.clone(),
+                }),
+                tool_calls: exchange
+                    .tool_calls
+                    .iter()
+                    .map(|tc| forge_chat::HistoryToolCall {
+                        name: tc.name.clone(),
+                        success: tc.success,
+                        message: Some(tc.message.clone()),
+                    })
+                    .collect(),
+                session_id: None,
+            })
+            .collect();
+
+        // Save in background (avoid blocking UI)
+        let history_path = history_manager.history_path().clone();
+        let session_id = history_manager.session_id().to_string();
+        std::thread::spawn(move || {
+            use std::io::Write;
+            match std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&history_path)
+            {
+                Ok(mut file) => {
+                    let mut saved = 0;
+                    for mut entry in entries {
+                        entry.session_id = Some(session_id.clone());
+                        if let Ok(json) = serde_json::to_string(&entry) {
+                            if writeln!(file, "{}", json).is_ok() {
+                                saved += 1;
+                            }
+                        }
+                    }
+                    info!("Saved {} entries to history", saved);
+                }
+                Err(e) => {
+                    error!("Failed to save history: {}", e);
+                }
+            }
+        });
+
+        self.status_message = Some(format!(
+            "Saved {} exchanges to history",
+            self.chat_history.len()
+        ));
+    }
+
+    /// Load chat history from disk.
+    fn load_chat_history(&mut self) {
+        let history_manager = match &self.history_manager {
+            Some(hm) => hm,
+            None => {
+                self.status_message = Some("History manager not initialized".to_string());
+                return;
+            }
+        };
+
+        let history_path = history_manager.history_path().clone();
+
+        // Load history synchronously (quick operation)
+        if !history_path.exists() {
+            self.status_message = Some("No saved history found".to_string());
+            return;
+        }
+
+        match std::fs::File::open(&history_path) {
+            Ok(file) => {
+                use std::io::{BufRead, BufReader};
+                let reader = BufReader::new(file);
+                let mut loaded = 0;
+
+                // Load last 10 entries
+                let mut entries: Vec<forge_chat::HistoryEntry> = Vec::new();
+                for line in reader.lines() {
+                    if let Ok(line) = line {
+                        if line.trim().is_empty() {
+                            continue;
+                        }
+                        if let Ok(entry) = serde_json::from_str::<forge_chat::HistoryEntry>(&line) {
+                            entries.push(entry);
+                        }
+                    }
+                }
+
+                // Take last 10 entries
+                let start = entries.len().saturating_sub(10);
+                for entry in &entries[start..] {
+                    self.chat_history.push(ChatExchange {
+                        user_query: entry.user_query.clone(),
+                        assistant_response: entry.assistant_response.clone(),
+                        timestamp: entry.timestamp.clone(),
+                        is_error: entry.is_error,
+                        tool_calls: entry
+                            .tool_calls
+                            .iter()
+                            .map(|tc| ToolCallInfo {
+                                name: tc.name.clone(),
+                                success: tc.success,
+                                message: tc.message.clone().unwrap_or_default(),
+                            })
+                            .collect(),
+                        side_effects: vec![],
+                        confirmation: None,
+                        metadata: entry.metadata.as_ref().map(|m| ResponseMetadata {
+                            duration_ms: m.duration_ms,
+                            cost_usd: m.cost_usd,
+                            provider: m.provider.clone(),
+                        }).unwrap_or_default(),
+                        error_guidance: None,
+                    });
+                    loaded += 1;
+                }
+
+                // Trim to 10 entries if we loaded more than we had room for
+                while self.chat_history.len() > 10 {
+                    self.chat_history.remove(0);
+                }
+
+                self.status_message = Some(format!("Loaded {} exchanges from history", loaded));
+                info!("Loaded {} entries from history", loaded);
+            }
+            Err(e) => {
+                self.status_message = Some(format!("Failed to load history: {}", e));
+                error!("Failed to load history: {}", e);
+            }
+        }
+    }
+
+    /// Export chat history to a file.
+    fn export_chat_history(&mut self, path: Option<std::path::PathBuf>) {
+        let history_manager = match &self.history_manager {
+            Some(hm) => hm,
+            None => {
+                self.status_message = Some("History manager not initialized".to_string());
+                return;
+            }
+        };
+
+        let export_path = path.unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("chat-export.json")
+        });
+
+        let history_path = history_manager.history_path().clone();
+
+        // Load and export in background
+        let export_path_clone = export_path.clone();
+        std::thread::spawn(move || {
+            // Load all entries
+            let entries: Vec<forge_chat::HistoryEntry> = if history_path.exists() {
+                use std::io::{BufRead, BufReader};
+                match std::fs::File::open(&history_path) {
+                    Ok(file) => {
+                        let reader = BufReader::new(file);
+                        reader
+                            .lines()
+                            .filter_map(|line| line.ok())
+                            .filter(|line| !line.trim().is_empty())
+                            .filter_map(|line| serde_json::from_str(&line).ok())
+                            .collect()
+                    }
+                    Err(_) => Vec::new(),
+                }
+            } else {
+                Vec::new()
+            };
+
+            // Export as pretty JSON
+            match serde_json::to_string_pretty(&entries) {
+                Ok(json) => {
+                    if let Err(e) = std::fs::write(&export_path_clone, json) {
+                        error!("Failed to write export file: {}", e);
+                    } else {
+                        info!("Exported {} entries to {}", entries.len(), export_path_clone.display());
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to serialize history: {}", e);
+                }
+            }
+        });
+
+        self.status_message = Some(format!("Exporting history to {}", export_path.display()));
+    }
+
+    /// Show history statistics.
+    fn show_history_stats(&mut self) {
+        let history_manager = match &self.history_manager {
+            Some(hm) => hm,
+            None => {
+                self.status_message = Some("History manager not initialized".to_string());
+                return;
+            }
+        };
+
+        let history_path = history_manager.history_path().clone();
+
+        // Calculate stats
+        if !history_path.exists() {
+            self.chat_history.push(ChatExchange {
+                user_query: "/stats".to_string(),
+                assistant_response: "No saved history. Session has {} exchanges.".replace("{}", &self.chat_history.len().to_string()),
+                timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+                is_error: false,
+                tool_calls: vec![],
+                side_effects: vec![],
+                confirmation: None,
+                metadata: ResponseMetadata::default(),
+                error_guidance: None,
+            });
+            if self.chat_history.len() > 10 {
+                self.chat_history.remove(0);
+            }
+            return;
+        }
+
+        // Load and calculate stats
+        use std::io::{BufRead, BufReader};
+        match std::fs::File::open(&history_path) {
+            Ok(file) => {
+                let reader = BufReader::new(file);
+                let entries: Vec<forge_chat::HistoryEntry> = reader
+                    .lines()
+                    .filter_map(|line| line.ok())
+                    .filter(|line| !line.trim().is_empty())
+                    .filter_map(|line| serde_json::from_str(&line).ok())
+                    .collect();
+
+                let total = entries.len();
+                let errors = entries.iter().filter(|e| e.is_error).count();
+                let total_cost: f64 = entries
+                    .iter()
+                    .filter_map(|e| e.metadata.as_ref()?.cost_usd)
+                    .sum();
+                let sessions: std::collections::HashSet<_> = entries
+                    .iter()
+                    .filter_map(|e| e.session_id.as_ref())
+                    .collect();
+
+                let stats_text = format!(
+                    "History Stats:\n• Total exchanges: {}\n• Errors: {} ({:.1}%)\n• Sessions: {}\n• Est. cost: ${:.4}\n• Current session: {} exchanges",
+                    total,
+                    errors,
+                    if total > 0 { (errors as f64 / total as f64) * 100.0 } else { 0.0 },
+                    sessions.len(),
+                    total_cost,
+                    self.chat_history.len()
+                );
+
+                self.chat_history.push(ChatExchange {
+                    user_query: "/stats".to_string(),
+                    assistant_response: stats_text,
+                    timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+                    is_error: false,
+                    tool_calls: vec![],
+                    side_effects: vec![],
+                    confirmation: None,
+                    metadata: ResponseMetadata::default(),
+                    error_guidance: None,
+                });
+                if self.chat_history.len() > 10 {
+                    self.chat_history.remove(0);
+                }
+            }
+            Err(e) => {
+                self.status_message = Some(format!("Failed to read history: {}", e));
+            }
+        }
+    }
+
+    /// Persist a single chat exchange to history file (called after each exchange).
+    fn persist_chat_exchange(&self, exchange: &ChatExchange) {
+        let history_manager = match &self.history_manager {
+            Some(hm) => hm,
+            None => return,
+        };
+
+        let entry = forge_chat::HistoryEntry {
+            timestamp: exchange.timestamp.clone(),
+            user_query: exchange.user_query.clone(),
+            assistant_response: exchange.assistant_response.clone(),
+            is_error: exchange.is_error,
+            metadata: Some(forge_chat::HistoryMetadata {
+                duration_ms: exchange.metadata.duration_ms,
+                cost_usd: exchange.metadata.cost_usd,
+                provider: exchange.metadata.provider.clone(),
+            }),
+            tool_calls: exchange
+                .tool_calls
+                .iter()
+                .map(|tc| forge_chat::HistoryToolCall {
+                    name: tc.name.clone(),
+                    success: tc.success,
+                    message: Some(tc.message.clone()),
+                })
+                .collect(),
+            session_id: Some(history_manager.session_id().to_string()),
+        };
+
+        // Persist in background
+        let history_path = history_manager.history_path().clone();
+        std::thread::spawn(move || {
+            use std::io::Write;
+            match std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&history_path)
+            {
+                Ok(mut file) => {
+                    if let Ok(json) = serde_json::to_string(&entry) {
+                        if let Err(e) = writeln!(file, "{}", json) {
+                            error!("Failed to persist chat exchange: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to open history file for persistence: {}", e);
+                }
+            }
+        });
+    }
+
     /// Check if UI needs redraw and clear the dirty flag.
     fn take_dirty(&mut self) -> bool {
         if self.dirty {
@@ -965,7 +1408,7 @@ impl App {
                         let error_msg = response.error.clone().unwrap_or_else(|| "Unknown error".to_string());
                         let guidance = get_error_guidance(&error_msg);
 
-                        self.chat_history.push(ChatExchange {
+                        let exchange = ChatExchange {
                             user_query: query,
                             assistant_response: response.text.clone(),
                             timestamp,
@@ -979,7 +1422,9 @@ impl App {
                                 provider: response.provider.clone(),
                             },
                             error_guidance: guidance,
-                        });
+                        };
+                        self.persist_chat_exchange(&exchange);
+                        self.chat_history.push(exchange);
                         self.status_message = Some(format!("❌ Chat error: {}", error_msg));
                     } else {
                         info!(
@@ -1113,7 +1558,7 @@ impl App {
                         self.error_recovery.mark_degraded("chat", error_id);
                     }
 
-                    self.chat_history.push(ChatExchange {
+                    let exchange = ChatExchange {
                         user_query: query,
                         assistant_response: error_msg,
                         timestamp,
@@ -1123,7 +1568,9 @@ impl App {
                         confirmation: None,
                         metadata: ResponseMetadata::default(),
                         error_guidance: guidance,
-                    });
+                    };
+                    self.persist_chat_exchange(&exchange);
+                    self.chat_history.push(exchange);
 
                     if is_retryable {
                         self.status_message = Some(format!("❌ {}: {} | Press 'r' to retry", e, e.suggested_action()));
@@ -1190,7 +1637,7 @@ impl App {
                 let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
                 let query = self.streaming_query.take().unwrap_or_default();
 
-                self.chat_history.push(ChatExchange {
+                let exchange = ChatExchange {
                     user_query: query,
                     assistant_response: format!("Error: {}", err),
                     timestamp,
@@ -1200,7 +1647,9 @@ impl App {
                     confirmation: None,
                     metadata: ResponseMetadata::default(),
                     error_guidance: Some("Streaming error occurred. Try again.".to_string()),
-                });
+                };
+                self.persist_chat_exchange(&exchange);
+                self.chat_history.push(exchange);
 
                 self.finalize_real_streaming();
                 return;
@@ -1263,7 +1712,7 @@ impl App {
                         self.streaming_response.clone()
                     };
 
-                    self.chat_history.push(ChatExchange {
+                    let exchange = ChatExchange {
                         user_query: query,
                         assistant_response: response_text,
                         timestamp,
@@ -1273,7 +1722,9 @@ impl App {
                         confirmation: None,
                         metadata,
                         error_guidance: None,
-                    });
+                    };
+                    self.persist_chat_exchange(&exchange);
+                    self.chat_history.push(exchange);
 
                     // Keep only last 10 exchanges
                     if self.chat_history.len() > 10 {
@@ -1287,7 +1738,7 @@ impl App {
                         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
                         let query = self.streaming_query.take().unwrap_or_default();
 
-                        self.chat_history.push(ChatExchange {
+                        let exchange = ChatExchange {
                             user_query: query,
                             assistant_response: self.streaming_response.clone(),
                             timestamp,
@@ -1297,7 +1748,9 @@ impl App {
                             confirmation: None,
                             metadata: ResponseMetadata::default(),
                             error_guidance: None,
-                        });
+                        };
+                        self.persist_chat_exchange(&exchange);
+                        self.chat_history.push(exchange);
 
                         if self.chat_history.len() > 10 {
                             self.chat_history.remove(0);
@@ -1385,7 +1838,7 @@ impl App {
 
         // Get the pending exchange data
         if let Some(pending) = self.pending_chat_exchange.take() {
-            self.chat_history.push(ChatExchange {
+            let exchange = ChatExchange {
                 user_query: pending.query,
                 assistant_response: pending.response_text,
                 timestamp: pending.timestamp,
@@ -1395,7 +1848,12 @@ impl App {
                 confirmation: pending.confirmation,
                 metadata: pending.metadata,
                 error_guidance: None,
-            });
+            };
+
+            // Persist to disk before adding to in-memory history
+            self.persist_chat_exchange(&exchange);
+
+            self.chat_history.push(exchange);
 
             // Keep only last 10 exchanges
             if self.chat_history.len() > 10 {
@@ -2010,6 +2468,12 @@ impl App {
                 if !self.chat_input.is_empty() {
                     let query = self.chat_input.clone();
                     self.chat_input.clear();
+
+                    // Check for local commands first (commands handled by the TUI, not the backend)
+                    if self.handle_chat_command(&query) {
+                        self.mark_dirty();
+                        return;
+                    }
 
                     // Process chat request in background thread
                     if let Some(backend) = &self.chat_backend {
