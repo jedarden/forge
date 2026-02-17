@@ -70,6 +70,10 @@ use forge_core::Result;
 
 use crate::crash_recovery::{CrashRecoveryConfig, CrashRecoveryManager};
 use crate::health::{HealthMonitor, HealthMonitorConfig, WorkerHealthStatus};
+use crate::memory::{MemoryConfig, MemoryMonitor};
+
+/// Default memory kill threshold in MB (8GB).
+pub const DEFAULT_MEMORY_KILL_THRESHOLD_MB: u64 = 8192;
 
 /// Recovery policy for different types of issues.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -110,11 +114,15 @@ pub struct RecoveryConfig {
     /// Policy for restarting dead workers.
     pub dead_worker_policy: RecoveryPolicy,
 
-    /// Policy for killing workers with high memory usage.
+    /// Policy for killing workers with high memory usage (warning level).
     pub memory_leak_policy: RecoveryPolicy,
 
-    /// Memory threshold in MB before considering it a leak.
+    /// Memory warning threshold in MB (triggers alerts, default 4GB).
     pub memory_threshold_mb: u64,
+
+    /// Memory kill threshold in MB (auto-terminates runaway workers, default 8GB).
+    /// Workers exceeding this will be forcefully terminated regardless of policy.
+    pub memory_kill_threshold_mb: u64,
 
     /// Policy for timing out stuck tasks.
     pub stuck_task_policy: RecoveryPolicy,
@@ -145,7 +153,8 @@ impl Default for RecoveryConfig {
             check_interval_secs: 30,
             dead_worker_policy: RecoveryPolicy::NotifyOnly,
             memory_leak_policy: RecoveryPolicy::NotifyOnly,
-            memory_threshold_mb: 2048, // 2GB
+            memory_threshold_mb: 4096, // 4GB warning threshold (per task requirements)
+            memory_kill_threshold_mb: DEFAULT_MEMORY_KILL_THRESHOLD_MB, // 8GB kill threshold
             stuck_task_policy: RecoveryPolicy::NotifyOnly,
             stuck_task_timeout_mins: 30,
             stale_assignee_policy: RecoveryPolicy::AutoRecover {
@@ -174,7 +183,8 @@ impl RecoveryConfig {
                 max_attempts: 2,
                 cooldown: Duration::from_secs(300),
             },
-            memory_threshold_mb: 2048,
+            memory_threshold_mb: 4096, // 4GB warning
+            memory_kill_threshold_mb: DEFAULT_MEMORY_KILL_THRESHOLD_MB, // 8GB hard kill
             stuck_task_policy: RecoveryPolicy::AutoRecover {
                 max_attempts: 1,
                 cooldown: Duration::from_secs(600),
@@ -346,6 +356,8 @@ pub struct AutoRecoveryManager {
     config: RecoveryConfig,
     /// Health monitor for worker health checks.
     health_monitor: HealthMonitor,
+    /// Memory monitor for RSS tracking and growth rate.
+    memory_monitor: MemoryMonitor,
     /// Crash recovery manager (reserved for crash history tracking).
     #[allow(dead_code)]
     crash_recovery: CrashRecoveryManager,
@@ -375,12 +387,23 @@ impl AutoRecoveryManager {
                 RecoveryPolicy::AutoRecover { .. }
             ),
             memory_limit_mb: config.memory_threshold_mb,
+            memory_kill_limit_mb: config.memory_kill_threshold_mb,
             enable_memory_check: !matches!(config.memory_leak_policy, RecoveryPolicy::Disabled),
             task_stuck_threshold_mins: config.stuck_task_timeout_mins,
             ..Default::default()
         };
 
         let health_monitor = HealthMonitor::new(health_config)?;
+
+        // Create memory monitor config
+        let memory_config = MemoryConfig {
+            warning_limit_mb: config.memory_threshold_mb,
+            kill_limit_mb: config.memory_kill_threshold_mb,
+            track_growth_rate: true,
+            ..Default::default()
+        };
+
+        let memory_monitor = MemoryMonitor::new(memory_config);
 
         // Create crash recovery config
         let crash_config = CrashRecoveryConfig {
@@ -414,6 +437,7 @@ impl AutoRecoveryManager {
         Ok(Self {
             config,
             health_monitor,
+            memory_monitor,
             crash_recovery,
             stuck_detector,
             status_reader,
@@ -492,12 +516,60 @@ impl AutoRecoveryManager {
 
     /// Check worker health and handle dead/unhealthy workers.
     async fn check_worker_health(&mut self) -> Result<Vec<RecoveryAction>> {
+        use crate::memory::MemorySeverity;
+
         let mut actions = Vec::new();
 
         // Get all worker health statuses
         let health_results = self.health_monitor.check_all_health()?;
 
+        // First pass: check memory and handle runaway workers (>8GB)
+        // This happens regardless of policy - runaway workers are always killed
+        let mut runaway_workers = Vec::new();
+        for (worker_id, _health) in &health_results {
+            if let Some(pid) = self.get_worker_pid(worker_id) {
+                // Check memory and track growth rate
+                if let Ok(Some(mem_stats)) =
+                    self.memory_monitor.check_worker_memory(pid, worker_id)
+                {
+                    // Log memory status with growth rate
+                    if mem_stats.growth_rate_mb_per_min.abs() > 1.0 {
+                        info!(
+                            worker_id,
+                            rss_mb = mem_stats.rss_mb,
+                            growth_rate = mem_stats.growth_rate_mb_per_min,
+                            "Worker memory: {} (growth: {})",
+                            mem_stats.format_rss(),
+                            mem_stats.format_growth_rate()
+                        );
+                    }
+
+                    // Handle runaway workers (>8GB) - always kill regardless of policy
+                    if mem_stats.severity() == MemorySeverity::Critical {
+                        runaway_workers.push((worker_id.clone(), pid, mem_stats));
+                    }
+                }
+            }
+        }
+
+        // Kill runaway workers
+        for (worker_id, pid, mem_stats) in runaway_workers {
+            let action = self.handle_runaway_worker(&worker_id, pid, &mem_stats).await;
+            if let Some(a) = action {
+                actions.push(a);
+            }
+        }
+
+        // Second pass: handle other health issues based on policy
         for (worker_id, health) in health_results {
+            // Skip workers that were already handled as runaway
+            if actions
+                .iter()
+                .any(|a| a.target == worker_id && a.action_type == RecoveryActionType::TerminateWorker)
+            {
+                continue;
+            }
+
             if health.is_healthy {
                 // Worker is healthy, reset tracking
                 if let Some(tracker) = self.worker_attempts.get_mut(&worker_id) {
@@ -531,6 +603,75 @@ impl AutoRecoveryManager {
         }
 
         Ok(actions)
+    }
+
+    /// Get worker PID from status files.
+    fn get_worker_pid(&self, worker_id: &str) -> Option<u32> {
+        self.status_reader
+            .read_worker(worker_id)
+            .ok()
+            .flatten()
+            .and_then(|info| info.pid)
+    }
+
+    /// Handle a runaway worker (>8GB memory).
+    ///
+    /// This always kills the worker, regardless of policy, as runaway workers
+    /// can destabilize the system.
+    async fn handle_runaway_worker(
+        &mut self,
+        worker_id: &str,
+        pid: u32,
+        mem_stats: &crate::memory::WorkerMemoryStats,
+    ) -> Option<RecoveryAction> {
+        let reason = format!(
+            "RUNAWAY: Memory {} exceeds kill limit ({}MB > {}MB), growth rate: {}",
+            mem_stats.format_rss(),
+            mem_stats.rss_mb,
+            self.config.memory_kill_threshold_mb,
+            mem_stats.format_growth_rate()
+        );
+
+        error!(
+            worker_id,
+            pid,
+            rss_mb = mem_stats.rss_mb,
+            growth_rate = mem_stats.growth_rate_mb_per_min,
+            "Killing runaway worker"
+        );
+
+        let mut action =
+            RecoveryAction::new(RecoveryActionType::TerminateWorker, worker_id, &reason);
+
+        // First try to clear any bead assignment
+        if let Ok(Some(info)) = self.status_reader.read_worker(worker_id) {
+            if let (Some(workspace), Some(bead_id)) = (&info.workspace, &info.current_task) {
+                let _ = self.clear_assignee(workspace, bead_id).await;
+            }
+        }
+
+        // Kill the worker (always, regardless of policy)
+        match self.memory_monitor.kill_runaway_worker(pid, worker_id) {
+            Ok(true) => {
+                action = action.with_result(format!(
+                    "Runaway worker terminated (was using {} MB)",
+                    mem_stats.rss_mb
+                ));
+                self.memory_monitor.clear_worker(worker_id);
+                info!(worker_id, pid, "Runaway worker killed successfully");
+            }
+            Ok(false) => {
+                action =
+                    action.with_result("Failed to kill runaway worker (process may have exited)");
+                warn!(worker_id, pid, "Could not kill runaway worker");
+            }
+            Err(e) => {
+                action = action.with_result(format!("Error killing runaway worker: {}", e));
+                error!(worker_id, pid, error = %e, "Error killing runaway worker");
+            }
+        }
+
+        Some(action)
     }
 
     /// Classify a health issue into an action type.
@@ -1062,7 +1203,8 @@ mod tests {
         let config = RecoveryConfig::default();
         assert!(config.enabled);
         assert_eq!(config.check_interval_secs, 30);
-        assert_eq!(config.memory_threshold_mb, 2048);
+        assert_eq!(config.memory_threshold_mb, 4096); // 4GB warning threshold
+        assert_eq!(config.memory_kill_threshold_mb, 8192); // 8GB kill threshold
     }
 
     #[test]
