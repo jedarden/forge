@@ -65,6 +65,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
 
+use crate::config_menu::{ConfigMenuType, build_budget_items, build_settings_items, build_worker_items, draw_config_menu};
 use crate::config_watcher::{ConfigEvent, ConfigWatcher, ForgeConfig};
 use crate::cost_panel::CostPanel;
 use crate::data::DataManager;
@@ -152,6 +153,8 @@ pub struct App {
     update_progress: UpdateProgress,
     /// Channel receiver for update completion results
     update_result_rx: Option<Receiver<UpdateResult>>,
+    /// Whether an update is downloaded and ready for restart
+    update_ready_for_restart: bool,
     /// Last time we checked for updates
     last_update_check: Instant,
     /// Chat backend (None if initialization failed)
@@ -246,6 +249,16 @@ pub struct App {
     network_unavailable_since: Option<Instant>,
     /// Chat history manager for persistence
     history_manager: Option<forge_chat::HistoryManager>,
+    /// Whether to show the config menu overlay
+    show_config_menu: bool,
+    /// Type of config menu being displayed
+    config_menu_type: Option<crate::config_menu::ConfigMenuType>,
+    /// Currently selected item in config menu
+    config_menu_selected: usize,
+    /// Whether we're editing a config value
+    config_menu_editing: bool,
+    /// Input buffer for config editing
+    config_menu_input: String,
 }
 
 /// Temporary storage for chat exchange data during streaming display.
@@ -556,6 +569,7 @@ impl App {
             update_in_progress: false,
             update_progress: UpdateProgress::default(),
             update_result_rx: None,
+            update_ready_for_restart: false,
             last_update_check: now,
             chat_backend,
             chat_response_tx: None,
@@ -603,6 +617,11 @@ impl App {
             network_error_message: None,
             network_unavailable_since: None,
             history_manager,
+            show_config_menu: false,
+            config_menu_type: None,
+            config_menu_selected: 0,
+            config_menu_editing: false,
+            config_menu_input: String::new(),
         }
     }
 
@@ -633,6 +652,7 @@ impl App {
             update_in_progress: false,
             update_progress: UpdateProgress::default(),
             update_result_rx: None,
+            update_ready_for_restart: false,
             last_update_check: now,
             chat_backend: None, // Don't initialize in test mode
             chat_response_tx: None,
@@ -683,6 +703,11 @@ impl App {
             network_error_message: None,
             network_unavailable_since: None,
             history_manager: None, // Don't initialize in test mode
+            show_config_menu: false,
+            config_menu_type: None,
+            config_menu_selected: 0,
+            config_menu_editing: false,
+            config_menu_input: String::new(),
         }
     }
 
@@ -2207,6 +2232,12 @@ impl App {
             return;
         }
 
+        // Handle config menu if active
+        if self.show_config_menu {
+            self.handle_config_menu_key(key);
+            return;
+        }
+
         // Handle priority filter keys (0-4) when in Tasks view
         // Also handle search mode activation with '/' key
         if self.current_view == View::Tasks {
@@ -2565,19 +2596,31 @@ impl App {
                 self.mark_dirty();
             }
             AppEvent::OpenConfig => {
-                self.status_message = Some("Opening configuration menu...".to_string());
+                self.show_config_menu = true;
+                self.config_menu_type = Some(ConfigMenuType::Settings);
+                self.config_menu_selected = 0;
+                self.config_menu_editing = false;
+                self.config_menu_input.clear();
+                self.status_message = None;
                 self.mark_dirty();
-                // TODO: Implement config menu
             }
             AppEvent::OpenBudgetConfig => {
-                self.status_message = Some("Opening budget configuration...".to_string());
+                self.show_config_menu = true;
+                self.config_menu_type = Some(ConfigMenuType::Budget);
+                self.config_menu_selected = 0;
+                self.config_menu_editing = false;
+                self.config_menu_input.clear();
+                self.status_message = None;
                 self.mark_dirty();
-                // TODO: Implement budget config
             }
             AppEvent::OpenWorkerConfig => {
-                self.status_message = Some("Opening worker configuration...".to_string());
+                self.show_config_menu = true;
+                self.config_menu_type = Some(ConfigMenuType::Worker);
+                self.config_menu_selected = 0;
+                self.config_menu_editing = false;
+                self.config_menu_input.clear();
+                self.status_message = None;
                 self.mark_dirty();
-                // TODO: Implement worker config
             }
             AppEvent::CycleTheme => {
                 let new_theme = self.theme_manager.cycle_theme();
@@ -3295,6 +3338,70 @@ impl App {
         }
     }
 
+    /// Handle config menu overlay key navigation.
+    fn handle_config_menu_key(&mut self, key: KeyEvent) {
+        use crossterm::event::KeyCode;
+
+        match key.code {
+            KeyCode::Esc => {
+                // Close config menu
+                self.show_config_menu = false;
+                self.config_menu_editing = false;
+                self.mark_dirty();
+            }
+            KeyCode::Char('\n') | KeyCode::Enter => {
+                if self.config_menu_editing {
+                    // Save the edited value (placeholder - would validate and save)
+                    self.config_menu_editing = false;
+                } else {
+                    // Enter editing mode for selected item
+                    self.config_menu_editing = true;
+                    self.config_menu_input.clear();
+                }
+                self.mark_dirty();
+            }
+            KeyCode::Char(c) if !self.config_menu_editing => {
+                // Navigation in non-editing mode
+                match c {
+                    'j' | 'k' => {
+                        // TODO: Implement up/down navigation with proper bounds checking
+                        if c == 'k' && self.config_menu_selected > 0 {
+                            self.config_menu_selected -= 1;
+                        } else if c == 'j' {
+                            self.config_menu_selected += 1;
+                        }
+                        self.mark_dirty();
+                    }
+                    'q' => {
+                        self.show_config_menu = false;
+                        self.mark_dirty();
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Char(c) if self.config_menu_editing => {
+                // Add character to input buffer
+                self.config_menu_input.push(c);
+                self.mark_dirty();
+            }
+            KeyCode::Backspace if self.config_menu_editing => {
+                self.config_menu_input.pop();
+                self.mark_dirty();
+            }
+            KeyCode::Up if !self.config_menu_editing => {
+                if self.config_menu_selected > 0 {
+                    self.config_menu_selected -= 1;
+                    self.mark_dirty();
+                }
+            }
+            KeyCode::Down if !self.config_menu_editing => {
+                self.config_menu_selected += 1;
+                self.mark_dirty();
+            }
+            _ => {}
+        }
+    }
+
     /// Check if an update is available by comparing source binary timestamp.
     fn check_for_update(&mut self) {
         use std::env;
@@ -3459,11 +3566,12 @@ impl App {
                         new_version,
                     } => {
                         self.status_message = Some(format!(
-                            "Updated forge v{} -> v{}! Please restart.",
+                            "Updated forge v{} -> v{}! Restarting...",
                             old_version, new_version
                         ));
                         self.update_available = false;
                         self.update_progress.percent = 100;
+                        self.update_ready_for_restart = true;
                     }
                     UpdateResult::AlreadyUpToDate => {
                         self.status_message =
@@ -3502,6 +3610,28 @@ impl App {
             crossterm::event::DisableMouseCapture
         )?;
         terminal.show_cursor()?;
+
+        // If an update was downloaded, restart with the new binary
+        // This replaces the current process via exec() - does not return on success
+        #[cfg(feature = "self-update")]
+        if self.update_ready_for_restart {
+            use tracing::info;
+            info!("Update ready, restarting with new binary...");
+            eprintln!("\n🔄 Restarting forge with the new version...\n");
+
+            match forge_core::restart_with_new_binary() {
+                Ok(()) => {
+                    // This should not be reached - exec() replaces the process
+                    unreachable!("exec() returned, which should never happen");
+                }
+                Err(e) => {
+                    eprintln!("❌ Failed to restart with new binary: {}", e);
+                    eprintln!("You may need to manually restart forge.");
+                    // Return the original result since restart failed
+                    return result;
+                }
+            }
+        }
 
         result
     }
@@ -3655,6 +3785,28 @@ impl App {
         // Draw confirmation dialog if active
         if self.show_confirmation {
             self.draw_confirmation_dialog(frame, area);
+        }
+
+        // Draw config menu overlay if active
+        if self.show_config_menu {
+            if let Some(menu_type) = self.config_menu_type {
+                let items = match menu_type {
+                    ConfigMenuType::Settings => build_settings_items(&self.forge_config),
+                    ConfigMenuType::Budget => build_budget_items(&self.forge_config),
+                    ConfigMenuType::Worker => build_worker_items(&self.forge_config),
+                };
+                let theme = self.theme_manager.current();
+                draw_config_menu(
+                    frame,
+                    area,
+                    menu_type,
+                    &items,
+                    self.config_menu_selected,
+                    self.config_menu_editing,
+                    &self.config_menu_input,
+                    theme,
+                );
+            }
         }
 
         // Draw task detail overlay if active
