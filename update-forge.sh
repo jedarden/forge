@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
-# Update forge binary
-# Can be called externally or via Ctrl+U hotkey within forge
+# Update forge binary from local source
+#
+# NOTE: This script should only be used when forge is NOT running.
+# If forge is running, use Ctrl+U within the TUI to trigger the self-update
+# mechanism which handles the "Text file busy" issue properly.
+#
+# This script is for:
+# - Manual updates when forge is not running
+# - CI/CD deployment
+# - Development updates
 
 set -e
 

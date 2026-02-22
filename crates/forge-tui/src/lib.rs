@@ -40,6 +40,7 @@ pub mod alert;
 pub mod app;
 pub mod bead;
 pub mod config_error_handler;
+pub mod config_menu;
 pub mod config_watcher;
 pub mod cost_panel;
 pub mod data;
@@ -59,6 +60,7 @@ pub mod view;
 pub mod widget;
 pub mod worker_panel;
 
+pub use config_menu::{ConfigInputType, ConfigMenuItem, ConfigMenuType, build_budget_items, build_settings_items, build_worker_items, draw_config_menu};
 pub use config_watcher::{ConfigEvent, ConfigLoadError, ConfigWatcher, ForgeConfig};
 pub use widget::{
     HotkeyHints, ProgressBar, ProgressColorMode, ProgressFillStyle, QuickAction, QuickActionType,
