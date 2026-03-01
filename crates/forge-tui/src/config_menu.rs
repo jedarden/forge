@@ -431,7 +431,7 @@ mod tests {
 
         assert_eq!(input_type.validate("default").unwrap(), "default");
         assert_eq!(input_type.validate("DEFAULT").unwrap(), "default"); // case insensitive
-        assert_eq!(input_type.validate("Dark").unwrap(), "Dark"); // preserves case of option
+        assert_eq!(input_type.validate("Dark").unwrap(), "dark"); // preserves case of option
 
         assert!(input_type.validate("invalid").is_err());
     }

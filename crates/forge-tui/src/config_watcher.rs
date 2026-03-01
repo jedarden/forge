@@ -25,7 +25,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
@@ -153,7 +153,7 @@ pub enum ConfigEvent {
 ///
 /// This represents the subset of config.yaml that can be hot-reloaded.
 /// Changes to these fields will take effect immediately.
-#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct ForgeConfig {
     /// Dashboard configuration
     #[serde(default)]
@@ -459,10 +459,46 @@ impl ForgeConfig {
 
         config
     }
+
+    /// Save configuration to a file.
+    ///
+    /// Writes the configuration as YAML to the specified path.
+    /// Creates parent directories if they don't exist.
+    pub fn save_to(&self, path: &PathBuf) -> Result<(), ConfigLoadError> {
+        // Create parent directory if needed
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                std::fs::create_dir_all(parent).map_err(|e| ConfigLoadError::ValidationError(
+                    format!("Failed to create config directory: {}", e)
+                ))?;
+            }
+        }
+
+        // Serialize to YAML
+        let yaml = serde_yaml::to_string(self)
+            .map_err(|e| ConfigLoadError::ValidationError(
+                format!("Failed to serialize config: {}", e)
+            ))?;
+
+        // Write to file
+        std::fs::write(path, yaml)
+            .map_err(|e| ConfigLoadError::ValidationError(
+                format!("Failed to write config file: {}", e)
+            ))?;
+
+        info!("Saved configuration to {:?}", path);
+        Ok(())
+    }
+
+    /// Save configuration to the default path (~/.forge/config.yaml).
+    pub fn save(&self) -> Result<(), ConfigLoadError> {
+        let path = config_path().ok_or(ConfigLoadError::NoHomePath)?;
+        self.save_to(&path)
+    }
 }
 
 /// Dashboard configuration.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct DashboardConfig {
     /// Refresh interval in milliseconds.
     #[serde(default = "default_refresh_interval")]
@@ -500,7 +536,7 @@ fn default_layout() -> String {
 }
 
 /// Theme configuration.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ThemeConfig {
     /// Theme name (default, dark, light, cyberpunk).
     #[serde(default)]
@@ -514,7 +550,7 @@ impl Default for ThemeConfig {
 }
 
 /// Cost tracking configuration.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct CostTrackingConfig {
     /// Whether cost tracking is enabled.
     #[serde(default = "default_cost_enabled")]
@@ -545,7 +581,7 @@ impl Default for CostTrackingConfig {
 }
 
 /// Auto-recovery configuration.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct AutoRecoveryConfig {
     /// Enable/disable auto-recovery.
     #[serde(default)]
@@ -606,7 +642,7 @@ impl Default for AutoRecoveryConfig {
 }
 
 /// Notification configuration for alerts.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct NotificationsConfig {
     /// Enable terminal bell for critical alerts.
     #[serde(default = "default_bell_enabled")]

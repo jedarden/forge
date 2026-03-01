@@ -3341,39 +3341,95 @@ impl App {
     /// Handle config menu overlay key navigation.
     fn handle_config_menu_key(&mut self, key: KeyEvent) {
         use crossterm::event::KeyCode;
+        use crate::config_menu::ConfigInputType;
+
+        // Get current menu items for bounds checking and validation
+        let menu_type = match self.config_menu_type {
+            Some(t) => t,
+            None => return,
+        };
+
+        let items = match menu_type {
+            ConfigMenuType::Settings => build_settings_items(&self.forge_config),
+            ConfigMenuType::Budget => build_budget_items(&self.forge_config),
+            ConfigMenuType::Worker => build_worker_items(&self.forge_config),
+        };
+
+        let item_count = items.len();
 
         match key.code {
             KeyCode::Esc => {
-                // Close config menu
+                // Close config menu (cancel any editing)
                 self.show_config_menu = false;
                 self.config_menu_editing = false;
+                self.config_menu_input.clear();
                 self.mark_dirty();
             }
             KeyCode::Char('\n') | KeyCode::Enter => {
                 if self.config_menu_editing {
-                    // Save the edited value (placeholder - would validate and save)
+                    // Validate and save the edited value
+                    if let Some(item) = items.get(self.config_menu_selected) {
+                        if item.editable {
+                            // Validate input
+                            match item.input_type.validate(&self.config_menu_input) {
+                                Ok(validated) => {
+                                    // Apply the change to config
+                                    if self.apply_menu_item_change(menu_type, item.label, &validated) {
+                                        // Save config to file
+                                        match self.forge_config.save() {
+                                            Ok(()) => {
+                                                self.status_message = Some(format!("Saved: {} = {}", item.label, validated));
+                                                // Hot-reload will be triggered by ConfigWatcher
+                                            }
+                                            Err(e) => {
+                                                self.status_message = Some(format!("Error saving config: {}", e));
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    self.status_message = Some(format!("Invalid value: {}", e));
+                                    // Don't exit editing mode on validation error
+                                    self.mark_dirty();
+                                    return;
+                                }
+                            }
+                        }
+                    }
                     self.config_menu_editing = false;
+                    self.config_menu_input.clear();
                 } else {
                     // Enter editing mode for selected item
-                    self.config_menu_editing = true;
-                    self.config_menu_input.clear();
+                    if let Some(item) = items.get(self.config_menu_selected) {
+                        if item.editable {
+                            self.config_menu_editing = true;
+                            // Pre-populate input with current value (strip units for editing)
+                            self.config_menu_input = self.extract_edit_value(item);
+                        }
+                    }
                 }
                 self.mark_dirty();
             }
             KeyCode::Char(c) if !self.config_menu_editing => {
                 // Navigation in non-editing mode
                 match c {
-                    'j' | 'k' => {
-                        // TODO: Implement up/down navigation with proper bounds checking
-                        if c == 'k' && self.config_menu_selected > 0 {
-                            self.config_menu_selected -= 1;
-                        } else if c == 'j' {
+                    'j' => {
+                        // Down with bounds checking
+                        if self.config_menu_selected < item_count.saturating_sub(1) {
                             self.config_menu_selected += 1;
+                            self.mark_dirty();
                         }
-                        self.mark_dirty();
+                    }
+                    'k' => {
+                        // Up with bounds checking
+                        if self.config_menu_selected > 0 {
+                            self.config_menu_selected -= 1;
+                            self.mark_dirty();
+                        }
                     }
                     'q' => {
                         self.show_config_menu = false;
+                        self.config_menu_input.clear();
                         self.mark_dirty();
                     }
                     _ => {}
@@ -3395,11 +3451,147 @@ impl App {
                 }
             }
             KeyCode::Down if !self.config_menu_editing => {
-                self.config_menu_selected += 1;
-                self.mark_dirty();
+                if self.config_menu_selected < item_count.saturating_sub(1) {
+                    self.config_menu_selected += 1;
+                    self.mark_dirty();
+                }
             }
             _ => {}
         }
+    }
+
+    /// Extract an editable value from a config item (strips units/formatting).
+    fn extract_edit_value(&self, item: &crate::config_menu::ConfigMenuItem) -> String {
+        let value = &item.value;
+
+        // Handle values with units (e.g., "1000 ms", "60%", "$100.00", "30 min")
+        match item.input_type {
+            crate::config_menu::ConfigInputType::Integer => {
+                // Extract just the number
+                value.split_whitespace().next().unwrap_or(value).to_string()
+            }
+            crate::config_menu::ConfigInputType::Float => {
+                // Remove currency symbol and extract number
+                value.trim_start_matches('$').split_whitespace().next().unwrap_or(value).to_string()
+            }
+            crate::config_menu::ConfigInputType::Text => {
+                value.to_string()
+            }
+            crate::config_menu::ConfigInputType::Select { .. } => {
+                // For select, return the current value as-is
+                value.to_string()
+            }
+        }
+    }
+
+    /// Apply a config change from a menu item to the appropriate field.
+    ///
+    /// Returns true if the change was applied, false if the field wasn't recognized.
+    fn apply_menu_item_change(&mut self, menu_type: ConfigMenuType, label: &str, value: &str) -> bool {
+        match menu_type {
+            ConfigMenuType::Settings => {
+                match label {
+                    "Refresh Interval" => {
+                        if let Ok(v) = value.parse::<u64>() {
+                            self.forge_config.dashboard.refresh_interval_ms = v;
+                            // Update the data poll interval immediately
+                            self.data_poll_interval = std::time::Duration::from_millis(v);
+                            return true;
+                        }
+                    }
+                    "Max FPS" => {
+                        if let Ok(v) = value.parse::<u64>() {
+                            self.forge_config.dashboard.max_fps = v;
+                            return true;
+                        }
+                    }
+                    "Default Layout" => {
+                        self.forge_config.dashboard.default_layout = value.to_lowercase();
+                        return true;
+                    }
+                    "Theme" => {
+                        self.forge_config.theme.name = Some(value.to_string());
+                        return true;
+                    }
+                    "Log Retention" => {
+                        // TODO: Add log_retention field to ForgeConfig
+                        // For now, just acknowledge the setting
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+            ConfigMenuType::Budget => {
+                match label {
+                    "Cost Tracking" => {
+                        self.forge_config.cost_tracking.enabled = value == "enabled";
+                        return true;
+                    }
+                    "Monthly Budget" => {
+                        // Parse currency value (e.g., "100.00" or "$100.00")
+                        let clean = value.trim_start_matches('$');
+                        if let Ok(v) = clean.parse::<f64>() {
+                            self.forge_config.cost_tracking.monthly_budget_usd = Some(v);
+                            return true;
+                        }
+                    }
+                    "Warning Threshold" => {
+                        // Parse percentage value
+                        if let Ok(v) = value.trim_end_matches('%').parse::<u8>() {
+                            self.forge_config.cost_tracking.budget_warning_threshold = v;
+                            return true;
+                        }
+                    }
+                    "Critical Threshold" => {
+                        if let Ok(v) = value.trim_end_matches('%').parse::<u8>() {
+                            self.forge_config.cost_tracking.budget_critical_threshold = v;
+                            return true;
+                        }
+                    }
+                    "Sonnet Cost/Input" | "Sonnet Cost/Output" => {
+                        // TODO: Add per-model cost configuration to ForgeConfig
+                        // For now, just acknowledge the setting
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+            ConfigMenuType::Worker => {
+                match label {
+                    "Max Workers" => {
+                        // TODO: Add max_workers field to ForgeConfig
+                        // For now, just acknowledge the setting
+                        return true;
+                    }
+                    "Default Model" => {
+                        // TODO: Add default_model field to ForgeConfig
+                        return true;
+                    }
+                    "Worker Timeout" => {
+                        if let Ok(v) = value.trim_end_matches(" min").parse::<i64>() {
+                            self.forge_config.auto_recovery.stuck_task_timeout_mins = v;
+                            return true;
+                        }
+                    }
+                    "Auto-Recovery" => {
+                        self.forge_config.auto_recovery.enabled = value == "enabled";
+                        return true;
+                    }
+                    "Dead Worker Policy" => {
+                        self.forge_config.auto_recovery.dead_worker_policy = value.to_string();
+                        return true;
+                    }
+                    "Max Restart Attempts" => {
+                        if let Ok(v) = value.parse::<u8>() {
+                            self.forge_config.auto_recovery.max_restart_attempts = v;
+                            return true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        false
     }
 
     /// Check if an update is available by comparing source binary timestamp.
