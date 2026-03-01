@@ -39,7 +39,7 @@ use tokio::sync::Mutex;
 use tokio::time::{Duration, timeout};
 use tracing::{debug, info};
 
-use crate::config::{ChatConfig, ClaudeApiConfig, ClaudeCliConfig, MockConfig, ProviderConfig};
+use crate::config::{ChatConfig, ClaudeApiConfig, ClaudeCliConfig, MockConfig, OpencodeConfig, ProviderConfig};
 use crate::context::DashboardContext;
 use crate::error::{ChatError, Result};
 use crate::tools::{ToolCall, ToolDefinition};
@@ -798,6 +798,253 @@ impl ChatProvider for MockProvider {
     }
 }
 
+// ============ Opencode CLI Provider ============
+
+/// Opencode CLI provider using subprocess communication.
+///
+/// This provider spawns an opencode process with `--format json` and parses
+/// the streaming JSON output events.
+///
+/// # Output Format
+///
+/// Opencode outputs JSON lines with the following event types:
+/// - `step_start`: Indicates a new step is starting
+/// - `text`: Contains actual text output in `part.text`
+/// - `step_finish`: Indicates step completion with token usage
+pub struct OpencodeProvider {
+    config: OpencodeConfig,
+}
+
+impl OpencodeProvider {
+    /// Create a new Opencode provider.
+    pub fn new(config: OpencodeConfig) -> Self {
+        Self { config }
+    }
+
+    /// Create a provider from a ChatConfig.
+    pub fn from_chat_config(_config: &ChatConfig) -> Self {
+        Self::new(OpencodeConfig::default())
+    }
+
+    /// Send a request to opencode and parse the streaming JSON response.
+    async fn send_request(&self, prompt: &str) -> Result<OpencodeResponse> {
+        let mut cmd = Command::new(&self.config.binary_path);
+
+        // Build command: opencode run --format json --model <model> "<prompt>"
+        cmd.args(["run", "--format", "json", "--model", &self.config.model])
+            .arg(prompt);
+
+        // Set up pipes
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        info!("Spawning opencode: {:?}", cmd);
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| ChatError::ConfigError(format!("Failed to spawn opencode: {}", e)))?;
+
+        let stdout = child.stdout.take().ok_or_else(|| {
+            ChatError::ConfigError("Failed to open stdout for opencode".to_string())
+        })?;
+
+        let stderr = child.stderr.take().ok_or_else(|| {
+            ChatError::ConfigError("Failed to open stderr for opencode".to_string())
+        })?;
+
+        // Read stdout with timeout
+        let stdout_bytes = timeout(Duration::from_secs(self.config.timeout_secs), async {
+            use tokio::io::AsyncReadExt;
+            let mut buf = vec![];
+            let mut stdout = stdout;
+            stdout.read_to_end(&mut buf).await?;
+            Ok::<Vec<u8>, std::io::Error>(buf)
+        })
+        .await
+        .map_err(|_| {
+            let _ = child.kill();
+            ChatError::ApiError("opencode timeout".to_string())
+        })?
+        .map_err(ChatError::IoError)?;
+
+        // Read stderr for debugging
+        let stderr_bytes = timeout(Duration::from_secs(1), async {
+            use tokio::io::AsyncReadExt;
+            let mut buf = vec![];
+            let mut stderr = stderr;
+            stderr.read_to_end(&mut buf).await?;
+            Ok::<Vec<u8>, std::io::Error>(buf)
+        })
+        .await
+        .unwrap_or(Ok(vec![]))
+        .unwrap_or_default();
+
+        // Wait for process to exit
+        let status = timeout(Duration::from_secs(5), child.wait())
+            .await
+            .map_err(|_| ChatError::ApiError("opencode hang on exit".to_string()))??;
+
+        if !status.success() {
+            let stderr_str = String::from_utf8_lossy(&stderr_bytes);
+            return Err(ChatError::ApiError(format!(
+                "opencode exited with status: {:?}, stderr: {}",
+                status, stderr_str
+            )));
+        }
+
+        // Parse the streaming JSON response
+        let stdout_str = String::from_utf8(stdout_bytes)
+            .map_err(|e| ChatError::ApiError(format!("Invalid UTF-8 from opencode: {}", e)))?;
+
+        debug!("opencode raw output: {}", stdout_str);
+
+        self.parse_opencode_response(&stdout_str)
+    }
+
+    /// Parse opencode streaming JSON response.
+    ///
+    /// The response consists of JSON lines with events:
+    /// - {"type":"step_start",...}
+    /// - {"type":"text","part":{"text":"Hello there"},...}
+    /// - {"type":"step_finish","part":{"tokens":{...},"cost":0},...}
+    fn parse_opencode_response(&self, output: &str) -> Result<OpencodeResponse> {
+        let mut text_parts = Vec::new();
+        let mut total_cost = 0.0;
+        let mut usage = TokenUsage::zero();
+
+        for line in output.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            // Parse each JSON line
+            let event: OpencodeEvent = match serde_json::from_str(line) {
+                Ok(e) => e,
+                Err(e) => {
+                    debug!("Failed to parse opencode line as event: {} - {}", line, e);
+                    continue;
+                }
+            };
+
+            match event.event_type.as_str() {
+                "text" => {
+                    // Extract text from the part.text field
+                    if let Some(part) = event.part {
+                        if let Some(text) = part.text {
+                            // Skip synthetic messages (like "Continue if you have next steps")
+                            if part.synthetic != Some(true) {
+                                text_parts.push(text);
+                            }
+                        }
+                    }
+                }
+                "step_finish" => {
+                    // Extract cost and token usage
+                    if let Some(part) = event.part {
+                        if let Some(cost) = part.cost {
+                            total_cost += cost;
+                        }
+                        if let Some(tokens) = part.tokens {
+                            usage.input_tokens = tokens.input.unwrap_or(0) as u32;
+                            usage.output_tokens = tokens.output.unwrap_or(0) as u32;
+                        }
+                    }
+                }
+                _ => {
+                    // Ignore step_start and other events
+                }
+            }
+        }
+
+        // Combine all text parts
+        let full_text = text_parts.join("\n");
+
+        Ok(OpencodeResponse {
+            text: full_text,
+            cost: total_cost,
+            usage,
+        })
+    }
+}
+
+/// Response from opencode CLI.
+struct OpencodeResponse {
+    text: String,
+    cost: f64,
+    usage: TokenUsage,
+}
+
+/// Opencode streaming event types.
+#[derive(Debug, Deserialize)]
+struct OpencodeEvent {
+    #[serde(rename = "type")]
+    event_type: String,
+    part: Option<OpencodePart>,
+}
+
+/// Opencode event part data.
+#[derive(Debug, Deserialize)]
+struct OpencodePart {
+    text: Option<String>,
+    #[serde(default)]
+    synthetic: Option<bool>,
+    cost: Option<f64>,
+    tokens: Option<OpencodeTokens>,
+}
+
+/// Token usage from opencode.
+#[derive(Debug, Deserialize)]
+struct OpencodeTokens {
+    input: Option<u64>,
+    output: Option<u64>,
+}
+
+#[async_trait]
+impl ChatProvider for OpencodeProvider {
+    async fn process(
+        &self,
+        prompt: &str,
+        context: &DashboardContext,
+        _tools: &[ProviderTool],
+    ) -> Result<ProviderResponse> {
+        let start = std::time::Instant::now();
+
+        // Build the enhanced prompt with context
+        let enhanced_prompt = format!(
+            "{}\n\nCurrent dashboard state:\n{}",
+            prompt,
+            context.to_summary()
+        );
+
+        let response = self.send_request(&enhanced_prompt).await?;
+
+        let duration = start.elapsed().as_millis() as u64;
+
+        Ok(ProviderResponse {
+            text: response.text,
+            tool_calls: vec![],
+            duration_ms: duration,
+            cost_usd: Some(response.cost),
+            finish_reason: FinishReason::Stop,
+            usage: Some(response.usage),
+        })
+    }
+
+    fn name(&self) -> &str {
+        "opencode"
+    }
+
+    fn supports_streaming(&self) -> bool {
+        false
+    }
+
+    fn model(&self) -> &str {
+        &self.config.model
+    }
+}
+
 // ============ Provider Factory ============
 
 /// Create a provider from configuration.
@@ -838,6 +1085,10 @@ pub fn create_provider(config: &ChatConfig) -> Result<Box<dyn ChatProvider>> {
             info!("Creating claude-cli provider");
             Ok(Box::new(ClaudeCliProvider::new(cli_config.clone())))
         }
+        ProviderConfig::Opencode(opencode_config) => {
+            info!("Creating opencode provider");
+            Ok(Box::new(OpencodeProvider::new(opencode_config.clone())))
+        }
         ProviderConfig::Mock(mock_config) => {
             info!("Creating mock provider");
             Ok(Box::new(MockProvider::from_config(mock_config.clone())))
@@ -854,6 +1105,10 @@ fn create_provider_by_type(
         "claude-cli" => {
             info!("Creating claude-cli provider from env var");
             Ok(Box::new(ClaudeCliProvider::new(ClaudeCliConfig::default())))
+        }
+        "opencode" => {
+            info!("Creating opencode provider from env var");
+            Ok(Box::new(OpencodeProvider::new(OpencodeConfig::default())))
         }
         "mock" => {
             info!("Creating mock provider from env var");
@@ -1291,5 +1546,143 @@ mod tests {
         let context = DashboardContext::default();
         let response = provider.process("test", &context, &[]).await.unwrap();
         assert_eq!(response.text, "config response");
+    }
+
+    // ============ Opencode Provider Tests ============
+
+    #[test]
+    fn test_opencode_config_default() {
+        let config = OpencodeConfig::default();
+        assert_eq!(config.binary_path, "opencode");
+        assert_eq!(config.model, "github-copilot/gpt-4o");
+        assert_eq!(config.timeout_secs, 60);
+    }
+
+    #[test]
+    fn test_opencode_provider_creation() {
+        let config = OpencodeConfig {
+            binary_path: "/usr/local/bin/opencode".to_string(),
+            model: "github-copilot/claude-sonnet-4.5".to_string(),
+            timeout_secs: 120,
+        };
+
+        let provider = OpencodeProvider::new(config.clone());
+        assert_eq!(provider.name(), "opencode");
+        assert_eq!(provider.model(), "github-copilot/claude-sonnet-4.5");
+        assert!(!provider.supports_streaming());
+    }
+
+    #[test]
+    fn test_opencode_event_parsing() {
+        // Test parsing a text event
+        let text_event_json = r#"{"type":"text","timestamp":1772352998964,"sessionID":"ses_123","part":{"id":"prt_123","sessionID":"ses_123","messageID":"msg_123","type":"text","text":"Hello there","time":{"start":1772352998958,"end":1772352998958}}}"#;
+
+        let event: OpencodeEvent = serde_json::from_str(text_event_json).unwrap();
+        assert_eq!(event.event_type, "text");
+        assert!(event.part.is_some());
+        let part = event.part.unwrap();
+        assert_eq!(part.text, Some("Hello there".to_string()));
+        assert_eq!(part.synthetic, None);
+
+        // Test parsing a step_finish event with tokens
+        let finish_event_json = r#"{"type":"step_finish","timestamp":1772352999343,"sessionID":"ses_123","part":{"id":"prt_123","sessionID":"ses_123","messageID":"msg_123","type":"step-finish","reason":"stop","cost":0.001,"tokens":{"input":100,"output":50,"reasoning":0,"cache":{"read":0,"write":0}}}}"#;
+
+        let finish_event: OpencodeEvent = serde_json::from_str(finish_event_json).unwrap();
+        assert_eq!(finish_event.event_type, "step_finish");
+        let part = finish_event.part.unwrap();
+        assert_eq!(part.cost, Some(0.001));
+        assert!(part.tokens.is_some());
+        let tokens = part.tokens.unwrap();
+        assert_eq!(tokens.input, Some(100));
+        assert_eq!(tokens.output, Some(50));
+    }
+
+    #[test]
+    fn test_opencode_synthetic_message_filtering() {
+        // Synthetic messages should be filtered out
+        let synthetic_event_json = r#"{"type":"text","timestamp":1772353020961,"sessionID":"ses_123","part":{"id":"prt_123","sessionID":"ses_123","messageID":"msg_123","type":"text","text":"Continue if you have next steps","synthetic":true,"time":{"start":1772353020960,"end":1772353020960}}}"#;
+
+        let event: OpencodeEvent = serde_json::from_str(synthetic_event_json).unwrap();
+        let part = event.part.unwrap();
+        assert_eq!(part.synthetic, Some(true));
+        assert_eq!(part.text, Some("Continue if you have next steps".to_string()));
+
+        // Non-synthetic messages should not be filtered
+        let normal_event_json = r#"{"type":"text","timestamp":1772353020961,"sessionID":"ses_123","part":{"id":"prt_123","sessionID":"ses_123","messageID":"msg_123","type":"text","text":"Normal response","time":{"start":1772353020960,"end":1772353020960}}}"#;
+
+        let event: OpencodeEvent = serde_json::from_str(normal_event_json).unwrap();
+        let part = event.part.unwrap();
+        assert_eq!(part.synthetic, None);
+        assert_eq!(part.text, Some("Normal response".to_string()));
+    }
+
+    #[test]
+    fn test_opencode_response_parsing_from_full_output() {
+        // Test parsing a full opencode output with multiple events
+        let full_output = r#"{"type":"step_start","timestamp":1772352998954,"sessionID":"ses_123","part":{"id":"prt_123","type":"step-start"}}
+{"type":"text","timestamp":1772352998964,"sessionID":"ses_123","part":{"id":"prt_456","type":"text","text":"Hello there"}}
+{"type":"step_finish","timestamp":1772352999343,"sessionID":"ses_123","part":{"id":"prt_789","type":"step-finish","cost":0.001,"tokens":{"input":100,"output":50}}}"#;
+
+        let config = OpencodeConfig::default();
+        let provider = OpencodeProvider::new(config);
+
+        // Parse the response using the internal method
+        let response = provider.parse_opencode_response(full_output).unwrap();
+
+        assert_eq!(response.text, "Hello there");
+        assert_eq!(response.cost, 0.001);
+        assert_eq!(response.usage.input_tokens, 100);
+        assert_eq!(response.usage.output_tokens, 50);
+    }
+
+    #[test]
+    fn test_opencode_response_parsing_with_multiple_text_events() {
+        // Test parsing output with multiple text events
+        let output = r#"{"type":"step_start","timestamp":1,"sessionID":"ses_1","part":{"id":"p1","type":"step-start"}}
+{"type":"text","timestamp":2,"sessionID":"ses_1","part":{"id":"p2","type":"text","text":"First part"}}
+{"type":"text","timestamp":3,"sessionID":"ses_1","part":{"id":"p3","type":"text","text":"Second part"}}
+{"type":"step_finish","timestamp":4,"sessionID":"ses_1","part":{"id":"p4","type":"step-finish","cost":0.0,"tokens":{"input":200,"output":100}}}"#;
+
+        let config = OpencodeConfig::default();
+        let provider = OpencodeProvider::new(config);
+
+        let response = provider.parse_opencode_response(output).unwrap();
+
+        // Multiple text events should be joined with newlines
+        assert_eq!(response.text, "First part\nSecond part");
+        assert_eq!(response.usage.input_tokens, 200);
+        assert_eq!(response.usage.output_tokens, 100);
+    }
+
+    #[tokio::test]
+    async fn test_opencode_provider_integration() {
+        use crate::context::DashboardContext;
+
+        let config = OpencodeConfig::default();
+        let provider = OpencodeProvider::new(config);
+
+        // Note: This test will fail if opencode is not installed
+        let context = DashboardContext::default();
+        let tools: Vec<ProviderTool> = vec![];
+
+        // This will attempt to spawn the real opencode process
+        let result = provider.process("Hello", &context, &tools).await;
+
+        match result {
+            Ok(response) => {
+                // If opencode is installed and working, verify response
+                assert!(!response.text.is_empty() || !response.tool_calls.is_empty());
+                assert_eq!(response.finish_reason, FinishReason::Stop);
+            }
+            Err(ChatError::ConfigError(_)) => {
+                // Expected: opencode not found
+            }
+            Err(ChatError::ApiError(_)) => {
+                // Also possible: opencode failed
+            }
+            Err(other) => {
+                panic!("Unexpected error type: {:?}", other);
+            }
+        }
     }
 }

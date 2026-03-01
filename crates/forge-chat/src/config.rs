@@ -36,6 +36,9 @@ pub enum ProviderConfig {
     /// Claude CLI via stdin/stdout
     ClaudeCli(ClaudeCliConfig),
 
+    /// Opencode CLI via subprocess
+    Opencode(OpencodeConfig),
+
     /// Mock provider for testing
     Mock(MockConfig),
 }
@@ -46,6 +49,7 @@ impl ProviderConfig {
         match self {
             ProviderConfig::ClaudeApi(_) => "claude-api",
             ProviderConfig::ClaudeCli(_) => "claude-cli",
+            ProviderConfig::Opencode(_) => "opencode",
             ProviderConfig::Mock(_) => "mock",
         }
     }
@@ -53,11 +57,17 @@ impl ProviderConfig {
     /// Detect and create a default provider config based on available environment.
     ///
     /// Priority:
-    /// 1. claude-cli if the binary exists in PATH
-    /// 2. claude-api if ANTHROPIC_API_KEY is set
-    /// 3. Error if neither is available
+    /// 1. opencode if the binary exists in PATH
+    /// 2. claude-cli if the binary exists in PATH
+    /// 3. claude-api if ANTHROPIC_API_KEY is set
+    /// 4. Error if none is available
     pub fn detect_default() -> Result<Self, String> {
-        // First check if claude-code or claude binary exists
+        // First check for opencode (preferred for this environment)
+        if Self::command_exists("opencode") {
+            return Ok(ProviderConfig::Opencode(OpencodeConfig::default()));
+        }
+
+        // Then check if claude-code or claude binary exists
         if let Some(cli_config) = Self::detect_claude_cli() {
             return Ok(ProviderConfig::ClaudeCli(cli_config));
         }
@@ -68,7 +78,7 @@ impl ProviderConfig {
         }
 
         Err(
-            "No suitable provider found. Please either install claude-code/claude CLI \
+            "No suitable provider found. Please either install opencode CLI, claude-code/claude CLI \
              or set ANTHROPIC_API_KEY environment variable."
                 .to_string(),
         )
@@ -257,6 +267,47 @@ impl Default for ClaudeCliConfig {
             timeout_secs: default_timeout_secs(),
             headless: default_headless(),
             extra_args: vec![],
+        }
+    }
+}
+
+/// Configuration for Opencode CLI provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpencodeConfig {
+    /// Path to the opencode binary.
+    /// Default: opencode
+    #[serde(default = "default_opencode_binary_path")]
+    pub binary_path: String,
+
+    /// Model to use in provider/model format (e.g., "github-copilot/gpt-4o", "opencode/minimax-m2.5-free").
+    /// Default: github-copilot/gpt-4o
+    #[serde(default = "default_opencode_model")]
+    pub model: String,
+
+    /// Timeout in seconds.
+    /// Default: 60
+    #[serde(default = "default_opencode_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+fn default_opencode_binary_path() -> String {
+    "opencode".to_string()
+}
+
+fn default_opencode_model() -> String {
+    "github-copilot/gpt-4o".to_string()
+}
+
+fn default_opencode_timeout_secs() -> u64 {
+    60
+}
+
+impl Default for OpencodeConfig {
+    fn default() -> Self {
+        Self {
+            binary_path: default_opencode_binary_path(),
+            model: default_opencode_model(),
+            timeout_secs: default_opencode_timeout_secs(),
         }
     }
 }
@@ -593,12 +644,14 @@ mod tests {
     #[test]
     fn test_chat_config_default() {
         let config = ChatConfig::default();
-        // Verify provider is set to default (ClaudeApi or ClaudeCli depending on environment)
+        // Verify provider is set to default (ClaudeApi, ClaudeCli, or Opencode depending on environment)
         match &config.provider {
-            ProviderConfig::ClaudeApi(_) | ProviderConfig::ClaudeCli(_) => {
+            ProviderConfig::ClaudeApi(_)
+            | ProviderConfig::ClaudeCli(_)
+            | ProviderConfig::Opencode(_) => {
                 // Expected
             }
-            _ => panic!("Expected ClaudeApi or ClaudeCli provider"),
+            _ => panic!("Expected ClaudeApi, ClaudeCli, or Opencode provider"),
         }
     }
 

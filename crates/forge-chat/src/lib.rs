@@ -59,7 +59,8 @@ pub use backend::{ChatBackend, ChatResponse, StreamingChatChunk, estimate_cost_f
 pub use claude_api_types::StreamChunk;
 pub use claude_api::ClaudeApiProvider;
 pub use config::{
-    ChatConfig, ClaudeApiConfig, ClaudeCliConfig, MockConfig, ProviderConfig, ProviderType,
+    ChatConfig, ClaudeApiConfig, ClaudeCliConfig, MockConfig, OpencodeConfig, ProviderConfig,
+    ProviderType,
 };
 pub use context::{ContextProvider, DashboardContext, MockContextSource, RealContextSource};
 pub use error::{ChatError, Result};
