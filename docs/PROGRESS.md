@@ -1,63 +1,61 @@
-# FORGE Marathon Coding Session Progress Tracker
+# FORGE Marathon Progress Tracker
 
-## Session Overview
+## Session: 2026-03-25
 
-- **Start**: 2026-03-25
-- **Current Phase**: Phase A - Fix failing tests [COMPLETE]
-- **Exit Criterion**: `cargo test -p forge-tui` → 0 failures
+### Status: All Phases Complete ✓
 
-## Progress
+## Completed Phases
 
-### Phase A: Fix failing tests [COMPLETED] ✓
+### Phase A — Fix Failing Tests ✅
+- All 510 forge-tui tests passing
+- Fixed file watcher timing issues with PollWatcher configuration
 
-**Status**: All 506 forge-tui tests now pass.
+### Phase B — Wire Cost Tracking to UI ✅
+- CostDatabase connected to TUI Cost view
+- Per-worker cost, session totals, daily/weekly displays
 
-**Fixes applied**:
-1. `status.rs`: Configured PollWatcher with:
-   - Short poll interval matching debounce time (10-50ms)
-   - `with_compare_contents(true)` to detect file modifications reliably
-   - `NoCache::new()` for PollWatcher compatibility
+### Phase C — Log Parsing & Metrics Extraction ✅
+- LogWatcher + LogParser extract metrics from worker logs
+- Metrics persisted to SQLite and displayed in Metrics view
 
-2. `log_watcher.rs`: Same PollWatcher configuration plus:
-   - Store debouncer in struct for proper cleanup (removed `std::mem::forget`)
-   - Fixed resource leak that caused "too many open files" errors
+### Phase D — Task Filtering & Search ✅
+- Search input with `/` key in Tasks view
+- Priority filtering with keys 1-5
+- Sorted by priority then date
 
-**Root cause**: The default `notify::Config::default()` for PollWatcher uses a 30-second
-poll interval and doesn't compare file contents. Tests were timing out before the watcher
-detected file modifications.
+### Phase E — Streaming Chat Tokens ✅
+- Real-time token display as responses arrive
+- Streaming indicator and Escape cancellation
 
-### Phase B: Wire cost tracking to UI [NOT STARTED]
+### Phase F — P1 Bug Fixes ✅
+- fg-1gjn: Panel focus visual indicators
+- fg-jqw3: Chat rendering artifacts
+- fg-16bd: Confirmation dialogs for destructive actions
 
-- Initialize `CostDatabase` in `App::new()`
-- Wire real cost data into `draw_cost()` method
-- Update cost records when workers report token usage
-- Display: per-worker cost, total session cost, daily/weekly totals
+### Phase G — Phase 2 Intelligence (Model Routing) ✅
+- ComplexityScorer for 0-100 task scoring
+- Multi-tier model routing (Budget/Standard/Premium)
+- Routing view with analytics (hotkey `r`)
 
-### Phase C: Log parsing & metrics extraction [NOT STARTED]
+### Phase H — Subscription Tracking ✅
+- SubscriptionTracker with quota management
+- Billing cycle reset automation
+- Subscription view (hotkey `u`)
 
-- Parse worker log lines for token counts, error rates, task timing
-- Store extracted metrics in time-series
-- Feed metrics into Perf view and worker stats
+### Phase I — Advanced Health Monitoring ✅
+- Configurable alert thresholds
+- AutoRecoveryManager with policies
+- StuckTaskDetector, MemoryMonitor, HealthMonitor
 
-### Phase D: Task filtering & search [NOT STARTED]
+### Phase J — CHANGELOG & Release ✅
+- Version bumped to 0.2.0
+- CHANGELOG.md updated
+- Ready for GitHub release
 
-- Add search input field to Tasks view (press `/` to activate)
-- Filter beads by title text, status, priority, label
-- Sort options (by priority, created date, status)
+## Post-Phase Cleanup ✅
+- Clippy lint fixes applied
+- Unused imports removed
+- Code quality improved
 
-### Phase E: Streaming chat tokens [NOT STARTED]
-
-- Update `draw_chat()` to render partial responses as tokens arrive
-- Show streaming indicator while waiting
-- Handle stream cancellation (Escape key)
-
-## Test Results
-
-```
-forge-tui: 506 passed, 0 failed
-forge-core doctests: 3 failing (pre-existing, unrelated to current work)
-```
-
-## Next Session
-
-Continue with Phase B: Wire cost tracking to UI.
+## Current Version
+- **v0.2.0** — All planned features implemented
