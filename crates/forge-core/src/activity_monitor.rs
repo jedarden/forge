@@ -269,7 +269,7 @@ impl HeartbeatWriter {
     pub fn write(&self, data: &HeartbeatData) -> Result<()> {
         let path = self.heartbeat_path();
         let json = serde_json::to_string_pretty(data).map_err(|e| {
-            ForgeError::parse(&format!("Failed to serialize heartbeat: {}", e))
+            ForgeError::parse(format!("Failed to serialize heartbeat: {}", e))
         })?;
 
         // Write atomically using a temp file
@@ -474,12 +474,12 @@ impl ActivityMonitor {
         if let Ok(entries) = fs::read_dir(&self.config.heartbeat_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().map_or(false, |ext| ext == "heartbeat") {
-                    if let Some(stem) = path.file_stem() {
-                        let worker_id = stem.to_string_lossy().to_string();
-                        if let Some(hb) = self.read_heartbeat(&worker_id) {
-                            heartbeats.insert(worker_id, hb);
-                        }
+                if path.extension().is_some_and(|ext| ext == "heartbeat")
+                    && let Some(stem) = path.file_stem()
+                {
+                    let worker_id = stem.to_string_lossy().to_string();
+                    if let Some(hb) = self.read_heartbeat(&worker_id) {
+                        heartbeats.insert(worker_id, hb);
                     }
                 }
             }
@@ -520,21 +520,21 @@ impl ActivityMonitor {
         if let Ok(entries) = fs::read_dir(&self.config.heartbeat_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().map_or(false, |ext| ext == "heartbeat") {
-                    if let Some(stem) = path.file_stem() {
-                        let worker_id = stem.to_string_lossy().to_string();
-                        if !active_worker_ids.contains(&worker_id) {
-                            // Check if heartbeat is old enough to clean up
-                            if let Some(hb) = self.read_heartbeat(&worker_id) {
-                                let age = Utc::now().signed_duration_since(hb.timestamp);
-                                // Clean up heartbeats older than 1 hour for non-existent workers
-                                if age.num_hours() >= 1 {
-                                    if let Err(e) = fs::remove_file(&path) {
-                                        warn!(path = ?path, error = %e, "Failed to clean up stale heartbeat");
-                                    } else {
-                                        info!(worker_id = %worker_id, "Cleaned up stale heartbeat file");
-                                        cleaned += 1;
-                                    }
+                if path.extension().is_some_and(|ext| ext == "heartbeat")
+                    && let Some(stem) = path.file_stem()
+                {
+                    let worker_id = stem.to_string_lossy().to_string();
+                    if !active_worker_ids.contains(&worker_id) {
+                        // Check if heartbeat is old enough to clean up
+                        if let Some(hb) = self.read_heartbeat(&worker_id) {
+                            let age = Utc::now().signed_duration_since(hb.timestamp);
+                            // Clean up heartbeats older than 1 hour for non-existent workers
+                            if age.num_hours() >= 1 {
+                                if let Err(e) = fs::remove_file(&path) {
+                                    warn!(path = ?path, error = %e, "Failed to clean up stale heartbeat");
+                                } else {
+                                    info!(worker_id = %worker_id, "Cleaned up stale heartbeat file");
+                                    cleaned += 1;
                                 }
                             }
                         }

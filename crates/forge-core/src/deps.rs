@@ -214,22 +214,22 @@ fn get_version(name: &str) -> Option<String> {
     let version_args = ["--version", "-v", "-V", "version"];
 
     for arg in &version_args {
-        if let Ok(output) = Command::new(name).arg(arg).output() {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
+        if let Ok(output) = Command::new(name).arg(arg).output()
+            && output.status.success()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
 
-                // Get first line of output (version usually on first line)
-                let version_line = stdout
-                    .lines()
-                    .next()
-                    .or_else(|| stderr.lines().next())
-                    .unwrap_or("")
-                    .trim();
+            // Get first line of output (version usually on first line)
+            let version_line = stdout
+                .lines()
+                .next()
+                .or_else(|| stderr.lines().next())
+                .unwrap_or("")
+                .trim();
 
-                if !version_line.is_empty() {
-                    return Some(version_line.to_string());
-                }
+            if !version_line.is_empty() {
+                return Some(version_line.to_string());
             }
         }
     }

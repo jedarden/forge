@@ -424,7 +424,6 @@ impl ClaudeApiProvider {
         // Convert the byte stream to a stream of StreamChunk
         Ok(async_stream::stream! {
             let mut buffer = Vec::new();
-            let input_tokens: Option<u32> = None;
             let mut output_tokens: u32 = 0;
 
             use futures_util::StreamExt;
@@ -452,7 +451,7 @@ impl ClaudeApiProvider {
                                         text: String::new(),
                                         is_done: true,
                                         usage: Some(ApiUsage {
-                                            input_tokens: input_tokens.unwrap_or(0),
+                                            input_tokens: 0,
                                             output_tokens,
                                             cache_read_tokens: Some(0),
                                             cache_creation_tokens: Some(0),
@@ -501,7 +500,7 @@ impl ClaudeApiProvider {
                                                     text: String::new(),
                                                     is_done: true,
                                                     usage: Some(ApiUsage {
-                                                        input_tokens: input_tokens.unwrap_or(0),
+                                                        input_tokens: 0,
                                                         output_tokens,
                                                         cache_read_tokens: Some(0),
                                                         cache_creation_tokens: Some(0),
@@ -549,7 +548,7 @@ impl ClaudeApiProvider {
                 text: String::new(),
                 is_done: true,
                 usage: Some(ApiUsage {
-                    input_tokens: input_tokens.unwrap_or(0),
+                    input_tokens: 0,
                     output_tokens,
                     cache_read_tokens: Some(0),
                     cache_creation_tokens: Some(0),

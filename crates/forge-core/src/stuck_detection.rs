@@ -190,40 +190,40 @@ impl StuckTaskDetector {
         let mut stuck_tasks = Vec::new();
 
         for bead in in_progress_beads {
-            if let Some(duration) = self.parse_duration_in_progress(&bead.updated_at) {
-                if duration >= self.config.stuck_timeout {
-                    // Check if task is truly stuck
-                    let activity = self.check_activity(workspace, &bead.id, &bead.assignee)?;
+            if let Some(duration) = self.parse_duration_in_progress(&bead.updated_at)
+                && duration >= self.config.stuck_timeout
+            {
+                // Check if task is truly stuck
+                let activity = self.check_activity(workspace, &bead.id, &bead.assignee)?;
 
-                    if !activity.has_activity(self.config.min_activity_threshold) {
-                        let reason = self.determine_stuck_reason(&activity, duration);
+                if !activity.has_activity(self.config.min_activity_threshold) {
+                    let reason = self.determine_stuck_reason(&activity, duration);
 
-                        stuck_tasks.push(StuckTask {
-                            bead_id: bead.id.clone(),
-                            title: bead.title.clone(),
-                            workspace: workspace.to_path_buf(),
-                            worker_id: bead.assignee.clone(),
-                            in_progress_duration: duration,
-                            reason,
-                            activity_checks: activity.clone(),
-                        });
+                    stuck_tasks.push(StuckTask {
+                        bead_id: bead.id.clone(),
+                        title: bead.title.clone(),
+                        workspace: workspace.to_path_buf(),
+                        worker_id: bead.assignee.clone(),
+                        in_progress_duration: duration,
+                        reason,
+                        activity_checks: activity.clone(),
+                    });
 
-                        info!(
-                            bead_id = %bead.id,
-                            duration_secs = duration.as_secs(),
-                            "Detected stuck task"
-                        );
-                    } else {
-                        debug!(
-                            bead_id = %bead.id,
-                            activity = %activity.summary(),
-                            "Task has recent activity, not stuck"
-                        );
-                    }
-
-                    // Cache the activity check
-                    self.activity_cache.insert(bead.id.clone(), activity);
+                    info!(
+                        bead_id = %bead.id,
+                        duration_secs = duration.as_secs(),
+                        "Detected stuck task"
+                    );
+                } else {
+                    debug!(
+                        bead_id = %bead.id,
+                        activity = %activity.summary(),
+                        "Task has recent activity, not stuck"
+                    );
                 }
+
+                // Cache the activity check
+                self.activity_cache.insert(bead.id.clone(), activity);
             }
         }
 
@@ -259,7 +259,7 @@ impl StuckTaskDetector {
         }
 
         let beads: Vec<InProgressBead> = serde_json::from_str(&stdout)
-            .map_err(|e| ForgeError::parse(&format!("Failed to parse br output: {}", e)))?;
+            .map_err(|e| ForgeError::parse(format!("Failed to parse br output: {}", e)))?;
 
         Ok(beads)
     }
@@ -361,26 +361,25 @@ impl StuckTaskDetector {
             let path = entry.path();
 
             // Check if file was modified recently
-            if let Ok(metadata) = fs::metadata(&path) {
-                if let Ok(modified) = metadata.modified() {
-                    if modified >= cutoff {
-                        // Count lines with API call indicators
-                        if let Ok(content) = fs::read_to_string(&path) {
-                            for line in content.lines() {
-                                if line.contains("API call")
-                                    || line.contains("input_tokens")
-                                    || line.contains("output_tokens")
-                                    || line.contains("request_id") {
+            if let Ok(metadata) = fs::metadata(&path)
+                && let Ok(modified) = metadata.modified()
+                && modified >= cutoff
+            {
+                // Count lines with API call indicators
+                if let Ok(content) = fs::read_to_string(&path) {
+                    for line in content.lines() {
+                        if line.contains("API call")
+                            || line.contains("input_tokens")
+                            || line.contains("output_tokens")
+                            || line.contains("request_id") {
 
-                                    // If worker_id is specified, filter by worker
-                                    if let Some(worker) = worker_id {
-                                        if line.contains(worker) {
-                                            api_calls += 1;
-                                        }
-                                    } else {
-                                        api_calls += 1;
-                                    }
+                            // If worker_id is specified, filter by worker
+                            if let Some(worker) = worker_id {
+                                if line.contains(worker) {
+                                    api_calls += 1;
                                 }
+                            } else {
+                                api_calls += 1;
                             }
                         }
                     }

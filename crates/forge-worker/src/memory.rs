@@ -237,10 +237,10 @@ impl MemoryMonitor {
         let history = self
             .sample_history
             .entry(worker_id.to_string())
-            .or_insert_with(Vec::new);
+            .or_default();
 
         // Check if enough time has passed since last sample
-        let should_add_sample = history.last().map_or(true, |last| {
+        let should_add_sample = history.last().is_none_or(|last| {
             let elapsed = now.signed_duration_since(last.timestamp);
             elapsed.num_seconds() >= self.config.min_sample_interval_secs as i64
         });

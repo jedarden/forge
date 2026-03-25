@@ -115,7 +115,7 @@ impl TaskPerfMetrics {
 
     /// Get duration as Duration.
     pub fn duration(&self) -> Option<Duration> {
-        self.duration_ms.map(|ms| Duration::from_millis(ms))
+        self.duration_ms.map(Duration::from_millis)
     }
 }
 
@@ -215,6 +215,7 @@ impl WorkerPerfSummary {
 
 /// Tracks performance metrics for workers over time.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct WorkerPerfTracker {
     /// Active tasks being tracked
     active_tasks: HashMap<String, TaskPerfMetrics>,
@@ -230,6 +231,12 @@ pub struct WorkerPerfTracker {
 
     /// Track active time per worker (for tokens/hour calculation)
     worker_active_time_ms: HashMap<String, u64>,
+}
+
+impl Default for WorkerPerfTracker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WorkerPerfTracker {

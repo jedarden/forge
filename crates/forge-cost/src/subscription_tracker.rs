@@ -277,7 +277,7 @@ impl SubscriptionTracker {
     fn update_summary_cache(&mut self) {
         self.summary_cache = self.subscriptions
             .values()
-            .map(|s| SubscriptionSummary::from(s))
+            .map(SubscriptionSummary::from)
             .collect();
     }
 

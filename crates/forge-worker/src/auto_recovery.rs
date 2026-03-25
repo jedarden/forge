@@ -59,7 +59,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
@@ -76,13 +76,14 @@ use crate::memory::{MemoryConfig, MemoryMonitor};
 pub const DEFAULT_MEMORY_KILL_THRESHOLD_MB: u64 = 8192;
 
 /// Recovery policy for different types of issues.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RecoveryPolicy {
     /// Take no action (visibility only via TUI).
     Disabled,
 
     /// Show notification in TUI but don't take automatic action.
+    #[default]
     NotifyOnly,
 
     /// Automatically attempt recovery with limits.
@@ -93,13 +94,6 @@ pub enum RecoveryPolicy {
         #[serde(with = "humantime_serde")]
         cooldown: Duration,
     },
-}
-
-impl Default for RecoveryPolicy {
-    fn default() -> Self {
-        // Per ADR 0014: visibility first, auto-recovery is opt-in
-        Self::NotifyOnly
-    }
 }
 
 /// Configuration for the auto-recovery system.
@@ -327,10 +321,10 @@ impl RecoveryAttemptTracker {
                     return false;
                 }
                 // Check cooldown
-                if let Some(last) = self.last_attempt {
-                    if last.elapsed() < *cooldown {
-                        return false;
-                    }
+                if let Some(last) = self.last_attempt
+                    && last.elapsed() < *cooldown
+                {
+                    return false;
                 }
                 true
             }
@@ -482,10 +476,10 @@ impl AutoRecoveryManager {
         }
 
         // Check if enough time has passed since last check
-        if let Some(last) = self.last_check {
-            if last.elapsed() < Duration::from_secs(self.config.check_interval_secs) {
-                return Ok(Vec::new());
-            }
+        if let Some(last) = self.last_check
+            && last.elapsed() < Duration::from_secs(self.config.check_interval_secs)
+        {
+            return Ok(Vec::new());
         }
 
         self.last_check = Some(Instant::now());
@@ -526,7 +520,7 @@ impl AutoRecoveryManager {
         // First pass: check memory and handle runaway workers (>8GB)
         // This happens regardless of policy - runaway workers are always killed
         let mut runaway_workers = Vec::new();
-        for (worker_id, _health) in &health_results {
+        for worker_id in health_results.keys() {
             if let Some(pid) = self.get_worker_pid(worker_id) {
                 // Check memory and track growth rate
                 if let Ok(Some(mem_stats)) =
@@ -644,10 +638,10 @@ impl AutoRecoveryManager {
             RecoveryAction::new(RecoveryActionType::TerminateWorker, worker_id, &reason);
 
         // First try to clear any bead assignment
-        if let Ok(Some(info)) = self.status_reader.read_worker(worker_id) {
-            if let (Some(workspace), Some(bead_id)) = (&info.workspace, &info.current_task) {
-                let _ = self.clear_assignee(workspace, bead_id).await;
-            }
+        if let Ok(Some(info)) = self.status_reader.read_worker(worker_id)
+            && let (Some(workspace), Some(bead_id)) = (&info.workspace, &info.current_task)
+        {
+            let _ = self.clear_assignee(workspace, bead_id).await;
         }
 
         // Kill the worker (always, regardless of policy)
@@ -929,7 +923,7 @@ impl AutoRecoveryManager {
     /// Handle a stale assignee based on policy.
     async fn handle_stale_assignee(
         &mut self,
-        workspace: &PathBuf,
+        workspace: &Path,
         bead_id: &str,
         assignee: &str,
         in_progress_mins: i64,
@@ -949,7 +943,7 @@ impl AutoRecoveryManager {
             bead_id,
             &reason,
         )
-        .with_workspace(workspace.clone());
+        .with_workspace(workspace.to_path_buf());
 
         if tracker.can_attempt(&self.config.stale_assignee_policy) {
             tracker.record_attempt();
@@ -978,54 +972,54 @@ impl AutoRecoveryManager {
             .arg(worker_id)
             .output();
 
-        if let Ok(o) = kill_output {
-            if o.status.success() {
-                debug!(worker_id, "Killed existing worker session");
-            }
+        if let Ok(o) = kill_output
+            && o.status.success()
+        {
+            debug!(worker_id, "Killed existing worker session");
         }
 
         // Read worker info from status file to get config
         let worker_info = self.status_reader.read_worker(worker_id)?;
 
-        if let Some(info) = worker_info {
-            if let (Some(workspace), Some(model)) = (info.workspace, info.model) {
-                // Look for launcher script
-                let launcher_paths = [
-                    workspace.join(".forge/launcher.sh"),
-                    PathBuf::from(std::env::var("HOME").unwrap_or_default())
-                        .join(".forge/launcher.sh"),
-                ];
+        if let Some(info) = worker_info
+            && let (Some(workspace), Some(model)) = (info.workspace, info.model)
+        {
+            // Look for launcher script
+            let launcher_paths = [
+                workspace.join(".forge/launcher.sh"),
+                PathBuf::from(std::env::var("HOME").unwrap_or_default())
+                    .join(".forge/launcher.sh"),
+            ];
 
-                for launcher_path in launcher_paths {
-                    if launcher_path.exists() {
-                        let output = Command::new(&launcher_path)
-                            .arg(format!("--model={}", model))
-                            .arg(format!("--workspace={}", workspace.display()))
-                            .arg(format!("--session-name={}", worker_id))
-                            .current_dir(&workspace)
-                            .output()
-                            .map_err(|e| forge_core::ForgeError::LauncherExecution {
-                                model: model.clone(),
-                                message: e.to_string(),
-                            })?;
+            for launcher_path in launcher_paths {
+                if launcher_path.exists() {
+                    let output = Command::new(&launcher_path)
+                        .arg(format!("--model={}", model))
+                        .arg(format!("--workspace={}", workspace.display()))
+                        .arg(format!("--session-name={}", worker_id))
+                        .current_dir(&workspace)
+                        .output()
+                        .map_err(|e| forge_core::ForgeError::LauncherExecution {
+                            model: model.clone(),
+                            message: e.to_string(),
+                        })?;
 
-                        if output.status.success() {
-                            info!(worker_id, "Worker restarted via launcher");
-                            return Ok(());
-                        } else {
-                            let stderr = String::from_utf8_lossy(&output.stderr);
-                            return Err(forge_core::ForgeError::LauncherExecution {
-                                model,
-                                message: stderr.to_string(),
-                            });
-                        }
+                    if output.status.success() {
+                        info!(worker_id, "Worker restarted via launcher");
+                        return Ok(());
+                    } else {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        return Err(forge_core::ForgeError::LauncherExecution {
+                            model,
+                            message: stderr.to_string(),
+                        });
                     }
                 }
-
-                return Err(forge_core::ForgeError::LauncherNotFound {
-                    path: PathBuf::from("launcher.sh"),
-                });
             }
+
+            return Err(forge_core::ForgeError::LauncherNotFound {
+                path: PathBuf::from("launcher.sh"),
+            });
         }
 
         Err(forge_core::ForgeError::WorkerNotFound {
@@ -1039,10 +1033,10 @@ impl AutoRecoveryManager {
         let worker_info = self.status_reader.read_worker(worker_id)?;
 
         // Clear assignee if worker had a bead
-        if let Some(ref info) = worker_info {
-            if let (Some(workspace), Some(bead_id)) = (&info.workspace, &info.current_task) {
-                let _ = self.clear_assignee(workspace, bead_id).await;
-            }
+        if let Some(ref info) = worker_info
+            && let (Some(workspace), Some(bead_id)) = (&info.workspace, &info.current_task)
+        {
+            let _ = self.clear_assignee(workspace, bead_id).await;
         }
 
         // Kill the tmux session
@@ -1069,12 +1063,12 @@ impl AutoRecoveryManager {
     }
 
     /// Timeout a stuck task.
-    async fn timeout_task(&self, workspace: &PathBuf, bead_id: &str) -> Result<()> {
+    async fn timeout_task(&self, workspace: &Path, bead_id: &str) -> Result<()> {
         self.stuck_detector.timeout_task(workspace, bead_id)
     }
 
     /// Clear a stale assignee from a bead.
-    async fn clear_assignee(&self, workspace: &PathBuf, bead_id: &str) -> Result<()> {
+    async fn clear_assignee(&self, workspace: &Path, bead_id: &str) -> Result<()> {
         // Update status to open
         let status_output = Command::new("br")
             .arg("update")

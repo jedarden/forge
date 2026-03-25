@@ -621,7 +621,7 @@ impl Router {
             .into_iter()
             .max_by_key(|(_, score)| *score as u64)
             .map(|(model, _)| model)
-            .ok_or_else(|| RouterError::NoModelsAvailable { tier })?;
+            .ok_or(RouterError::NoModelsAvailable { tier })?;
 
         // Extract all data we need from best before mutating
         let model_id = best.id.clone();
@@ -689,10 +689,10 @@ impl Router {
                 score -= 100.0;
             }
             // Latency penalty
-            if let Some(latency) = avail.avg_latency_ms {
-                if latency > 5000 {
-                    score -= 10.0;
-                }
+            if let Some(latency) = avail.avg_latency_ms
+                && latency > 5000
+            {
+                score -= 10.0;
             }
         }
 
@@ -702,12 +702,11 @@ impl Router {
     /// Determine the routing reason.
     fn determine_reason(&self, model: &ModelConfig, task: &TaskMetadata, tier: WorkerTier) -> RoutingReason {
         // Check subscription preference first
-        if self.config.prefer_subscription && model.has_subscription {
-            if let Some(quota) = self.quotas.get(&model.id) {
-                if quota.is_urgent() {
-                    return RoutingReason::SubscriptionPreference;
-                }
-            }
+        if self.config.prefer_subscription && model.has_subscription
+            && let Some(quota) = self.quotas.get(&model.id)
+            && quota.is_urgent()
+        {
+            return RoutingReason::SubscriptionPreference;
         }
 
         // Check complexity-based
@@ -786,37 +785,37 @@ impl Router {
 
         // Find first available fallback
         for fallback in &decision.fallback_chain {
-            if let Some(avail) = self.availability.get(&fallback.model_id) {
-                if avail.is_available {
-                    let model = self
-                        .config
-                        .models_for_tier(fallback.tier)
-                        .iter()
-                        .find(|m| m.id == fallback.model_id);
+            if let Some(avail) = self.availability.get(&fallback.model_id)
+                && avail.is_available
+            {
+                let model = self
+                    .config
+                    .models_for_tier(fallback.tier)
+                    .iter()
+                    .find(|m| m.id == fallback.model_id);
 
-                    if let Some(model) = model {
-                        let new_decision = RoutingDecision {
-                            model_id: model.id.clone(),
-                            model_name: model.name.clone(),
-                            tier: fallback.tier,
-                            is_available: true,
-                            uses_subscription: model.has_subscription,
-                            reason: RoutingReason::Fallback,
-                            decided_at: Utc::now(),
-                            fallback_chain: self.build_fallback_chain(fallback.tier),
-                            task_id: decision.task_id.clone(),
-                        };
+                if let Some(model) = model {
+                    let new_decision = RoutingDecision {
+                        model_id: model.id.clone(),
+                        model_name: model.name.clone(),
+                        tier: fallback.tier,
+                        is_available: true,
+                        uses_subscription: model.has_subscription,
+                        reason: RoutingReason::Fallback,
+                        decided_at: Utc::now(),
+                        fallback_chain: self.build_fallback_chain(fallback.tier),
+                        task_id: decision.task_id.clone(),
+                    };
 
-                        self.record_decision(&new_decision);
+                    self.record_decision(&new_decision);
 
-                        warn!(
-                            from_model = %decision.model_id,
-                            to_model = %new_decision.model_id,
-                            "Falling back to alternative model"
-                        );
+                    warn!(
+                        from_model = %decision.model_id,
+                        to_model = %new_decision.model_id,
+                        "Falling back to alternative model"
+                    );
 
-                        return Ok(new_decision);
-                    }
+                    return Ok(new_decision);
                 }
             }
         }

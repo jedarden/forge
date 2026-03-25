@@ -243,18 +243,18 @@ impl PauseSignalHandler {
             }
 
             // Check timeout
-            if let Some(max) = max_wait {
-                if start_time.elapsed() >= max {
-                    warn!(
-                        worker_id = %self.worker_id,
-                        max_wait_secs = self.config.max_wait_secs,
-                        "Pause wait timed out"
-                    );
-                    return Err(ForgeError::Timeout {
-                        operation: format!("wait_for_unpause(worker={})", self.worker_id),
-                        timeout_secs: self.config.max_wait_secs,
-                    });
-                }
+            if let Some(max) = max_wait
+                && start_time.elapsed() >= max
+            {
+                warn!(
+                    worker_id = %self.worker_id,
+                    max_wait_secs = self.config.max_wait_secs,
+                    "Pause wait timed out"
+                );
+                return Err(ForgeError::Timeout {
+                    operation: format!("wait_for_unpause(worker={})", self.worker_id),
+                    timeout_secs: self.config.max_wait_secs,
+                });
             }
 
             debug!(
@@ -332,10 +332,10 @@ pub fn is_any_paused(worker_ids: &[String], status_dir: Option<PathBuf>) -> Resu
     let status_reader = StatusReader::new(status_dir)?;
 
     for worker_id in worker_ids {
-        if let Some(info) = status_reader.read_worker(worker_id)? {
-            if info.status == WorkerStatus::Paused {
-                return Ok(true);
-            }
+        if let Some(info) = status_reader.read_worker(worker_id)?
+            && info.status == WorkerStatus::Paused
+        {
+            return Ok(true);
         }
     }
 
@@ -369,11 +369,11 @@ pub fn resume_all(worker_ids: &[String], status_dir: Option<PathBuf>) -> Result<
 
     let mut count = 0;
     for worker_id in worker_ids {
-        if let Some(info) = reader.read_worker(worker_id)? {
-            if info.status == WorkerStatus::Paused {
-                writer.resume_worker(worker_id)?;
-                count += 1;
-            }
+        if let Some(info) = reader.read_worker(worker_id)?
+            && info.status == WorkerStatus::Paused
+        {
+            writer.resume_worker(worker_id)?;
+            count += 1;
         }
     }
 

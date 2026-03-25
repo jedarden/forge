@@ -494,7 +494,7 @@ impl RealContextSource {
         let mut entries = entries;
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "json") {
+            if path.extension().is_some_and(|ext| ext == "json") {
                 match self.read_worker_status(&path).await {
                     Ok(worker) => workers.push(worker),
                     Err(e) => {
@@ -576,23 +576,24 @@ impl RealContextSource {
             .output()
             .await;
 
-        if let Ok(output) = output {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if !stdout.trim().is_empty() && stdout.trim() != "[]" {
-                    if let Ok(beads) = serde_json::from_str::<Vec<BeadJson>>(&stdout) {
-                        for bead in beads {
-                            tasks.push(TaskInfo {
-                                id: bead.id,
-                                title: bead.title,
-                                priority: format!("P{}", bead.priority),
-                                workspace: self.workspace.to_string_lossy().to_string(),
-                                in_progress: false,
-                                assigned_model: bead.assignee,
-                                estimated_tokens: None,
-                            });
-                        }
-                    }
+        if let Ok(output) = output
+            && output.status.success()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if !stdout.trim().is_empty()
+                && stdout.trim() != "[]"
+                && let Ok(beads) = serde_json::from_str::<Vec<BeadJson>>(&stdout)
+            {
+                for bead in beads {
+                    tasks.push(TaskInfo {
+                        id: bead.id,
+                        title: bead.title,
+                        priority: format!("P{}", bead.priority),
+                        workspace: self.workspace.to_string_lossy().to_string(),
+                        in_progress: false,
+                        assigned_model: bead.assignee,
+                        estimated_tokens: None,
+                    });
                 }
             }
         }
@@ -604,23 +605,24 @@ impl RealContextSource {
             .output()
             .await;
 
-        if let Ok(output) = output {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if !stdout.trim().is_empty() && stdout.trim() != "[]" {
-                    if let Ok(beads) = serde_json::from_str::<Vec<BeadJson>>(&stdout) {
-                        for bead in beads {
-                            tasks.push(TaskInfo {
-                                id: bead.id,
-                                title: bead.title,
-                                priority: format!("P{}", bead.priority),
-                                workspace: self.workspace.to_string_lossy().to_string(),
-                                in_progress: true,
-                                assigned_model: bead.assignee,
-                                estimated_tokens: None,
-                            });
-                        }
-                    }
+        if let Ok(output) = output
+            && output.status.success()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if !stdout.trim().is_empty()
+                && stdout.trim() != "[]"
+                && let Ok(beads) = serde_json::from_str::<Vec<BeadJson>>(&stdout)
+            {
+                for bead in beads {
+                    tasks.push(TaskInfo {
+                        id: bead.id,
+                        title: bead.title,
+                        priority: format!("P{}", bead.priority),
+                        workspace: self.workspace.to_string_lossy().to_string(),
+                        in_progress: true,
+                        assigned_model: bead.assignee,
+                        estimated_tokens: None,
+                    });
                 }
             }
         }
@@ -671,14 +673,12 @@ impl RealContextSource {
         };
 
         // Get projected costs
-        let projected = query.get_projected_costs(None).unwrap_or_else(|_| {
-            forge_cost::ProjectedCost {
-                current_total: 0.0,
-                daily_rate: 0.0,
-                days_remaining: 0,
-                projected_total: 0.0,
-                confidence: 0.0,
-            }
+        let projected = query.get_projected_costs(None).unwrap_or(forge_cost::ProjectedCost {
+            current_total: 0.0,
+            daily_rate: 0.0,
+            days_remaining: 0,
+            projected_total: 0.0,
+            confidence: 0.0,
         });
         let costs_projected = CostAnalytics {
             timeframe: "month".to_string(),

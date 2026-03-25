@@ -178,21 +178,18 @@ pub fn detect_cli_tools_with_diagnostics() -> Result<(Vec<CliToolDetection>, Pat
     let mut diagnostics = PathDiagnostics::new();
 
     // Detect Claude Code
-    match detect_claude_code_with_diagnostics(&mut diagnostics)? {
-        Some(tool) => tools.push(tool),
-        None => {}
+    if let Some(tool) = detect_claude_code_with_diagnostics(&mut diagnostics)? {
+        tools.push(tool);
     }
 
     // Detect OpenCode
-    match detect_opencode_with_diagnostics(&mut diagnostics)? {
-        Some(tool) => tools.push(tool),
-        None => {}
+    if let Some(tool) = detect_opencode_with_diagnostics(&mut diagnostics)? {
+        tools.push(tool);
     }
 
     // Detect Aider
-    match detect_aider_with_diagnostics(&mut diagnostics)? {
-        Some(tool) => tools.push(tool),
-        None => {}
+    if let Some(tool) = detect_aider_with_diagnostics(&mut diagnostics)? {
+        tools.push(tool);
     }
 
     // Sort by status (ready tools first)

@@ -424,39 +424,39 @@ fn validate_launchers_comprehensive(
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_file() {
-            if let Some(name) = path.file_name() {
-                let name_str = name.to_string_lossy().to_string();
-                results.launcher_names.push(name_str.clone());
-                launcher_count += 1;
+        if path.is_file()
+            && let Some(name) = path.file_name()
+        {
+            let name_str = name.to_string_lossy().to_string();
+            results.launcher_names.push(name_str.clone());
+            launcher_count += 1;
 
-                // Check if executable
-                if let Ok(metadata) = fs::metadata(&path) {
-                    let permissions = metadata.permissions();
-                    let is_executable = permissions.mode() & 0o111 != 0;
+            // Check if executable
+            if let Ok(metadata) = fs::metadata(&path) {
+                let permissions = metadata.permissions();
+                let is_executable = permissions.mode() & 0o111 != 0;
 
-                    if !is_executable {
-                        non_executable.push(name_str.clone());
+                if !is_executable {
+                    non_executable.push(name_str.clone());
 
-                        if fix {
-                            // Try to make it executable
-                            let mut new_perms = permissions.clone();
-                            new_perms.set_mode(permissions.mode() | 0o755);
-                            if let Err(e) = fs::set_permissions(&path, new_perms) {
-                                warn!("Failed to set executable permissions on {}: {}", path.display(), e);
-                            } else {
-                                results.fixes_applied.push(format!(
-                                    "Set executable permissions on {}",
-                                    name_str
-                                ));
-                            }
+                    if fix {
+                        // Try to make it executable
+                        let mut new_perms = permissions.clone();
+                        new_perms.set_mode(permissions.mode() | 0o755);
+                        if let Err(e) = fs::set_permissions(&path, new_perms) {
+                            warn!("Failed to set executable permissions on {}: {}", path.display(), e);
+                        } else {
+                            results.fixes_applied.push(format!(
+                                "Set executable permissions on {}",
+                                name_str
+                            ));
                         }
                     }
+                }
 
-                    if verbose {
-                        let mode = format!("{:o}", permissions.mode() & 0o777);
-                        results.details.push(format!("Launcher {} has mode {}", name_str, mode));
-                    }
+                if verbose {
+                    let mode = format!("{:o}", permissions.mode() & 0o777);
+                    results.details.push(format!("Launcher {} has mode {}", name_str, mode));
                 }
             }
         }
@@ -588,12 +588,12 @@ fn validate_backend_comprehensive(
                         ));
 
                         // Try to get version
-                        if let Ok(output) = Command::new(&path).arg("--version").output() {
-                            if let Ok(version) = String::from_utf8(output.stdout) {
-                                let version = version.trim();
-                                if !version.is_empty() {
-                                    results.details.push(format!("Backend version: {}", version));
-                                }
+                        if let Ok(output) = Command::new(&path).arg("--version").output()
+                            && let Ok(version) = String::from_utf8(output.stdout)
+                        {
+                            let version = version.trim();
+                            if !version.is_empty() {
+                                results.details.push(format!("Backend version: {}", version));
                             }
                         }
                     }
