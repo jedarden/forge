@@ -1,0 +1,1389 @@
+crates/forge-tui/src/integration_tests.rs-116-    / Integration Test 1: Application Startup and Basic Rendering
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-117-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-118-
+crates/forge-tui/src/integration_tests.rs:119:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-120-    fn test_e2e_application_startup() {
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-121-        // Test that the application starts correctly and renders the default view
+crates/forge-tui/src/integration_tests.rs-122-        let mut app = App::new();
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-148-        );
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-149-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-150-
+crates/forge-tui/src/integration_tests.rs:151:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-152-    fn test_e2e_application_renders_all_views() {
+crates/forge-tui/src/integration_tests.rs-153-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-154-
+--
+crates/forge-tui/src/integration_tests.rs-181-    / Integration Test 2: Worker Status File Monitoring
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-182-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-183-
+crates/forge-tui/src/integration_tests.rs:184:    #[test]
+crates/forge-tui/src/integration_tests.rs:185:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-186-    fn test_e2e_worker_status_monitoring() {
+crates/forge-tui/src/integration_tests.rs-187-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-188-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-214-        assert_eq!(counts.healthy(), 3);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-215-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-216-
+crates/forge-tui/src/integration_tests.rs:217:    #[test]
+crates/forge-tui/src/integration_tests.rs:218:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-219-    fn test_e2e_worker_status_updates() {
+crates/forge-tui/src/integration_tests.rs-220-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-221-        let status_dir = temp_dir.path().join("status");
+--
+crates/forge-tui/src/integration_tests.rs-267-    / Integration Test 3: Log Streaming Integration
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-268-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-269-
+crates/forge-tui/src/integration_tests.rs:270:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-271-    fn test_e2e_log_streaming() {
+crates/forge-tui/src/integration_tests.rs-272-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-273-        let log_dir = temp_dir.path().join("logs");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-308-        }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-309-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-310-
+crates/forge-tui/src/integration_tests.rs:311:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-312-    fn test_e2e_log_buffer_ring_behavior() {
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-313-        // Create a small ring buffer
+crates/forge-tui/src/integration_tests.rs-314-        let mut buffer = LogBuffer::new(5);
+--
+crates/forge-tui/src/integration_tests.rs-341-    / Integration Test 4: View Navigation and Panel Focus
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-342-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-343-
+crates/forge-tui/src/integration_tests.rs:344:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-345-    fn test_e2e_view_navigation_cycle() {
+crates/forge-tui/src/integration_tests.rs-346-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-347-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-372-        }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-373-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-374-
+crates/forge-tui/src/integration_tests.rs:375:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-376-    fn test_e2e_view_navigation_hotkeys() {
+crates/forge-tui/src/integration_tests.rs-377-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-378-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-393-        }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-394-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-395-
+crates/forge-tui/src/integration_tests.rs:396:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-397-    fn test_e2e_panel_focus_changes_with_view() {
+crates/forge-tui/src/integration_tests.rs-398-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-399-
+--
+crates/forge-tui/src/integration_tests.rs-424-    / Integration Test 5: Chat Mode and Text Input
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-425-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-426-
+crates/forge-tui/src/integration_tests.rs:427:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-428-    fn test_e2e_chat_mode_workflow() {
+crates/forge-tui/src/integration_tests.rs-429-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-430-
+--
+crates/forge-tui/src/integration_tests.rs-464-    / Integration Test 6: Help Overlay
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-465-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-466-
+crates/forge-tui/src/integration_tests.rs:467:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-468-    fn test_e2e_help_overlay_toggle() {
+crates/forge-tui/src/integration_tests.rs-469-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-470-
+--
+crates/forge-tui/src/integration_tests.rs-491-    / Integration Test 7: Application Quit Handling
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-492-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-493-
+crates/forge-tui/src/integration_tests.rs:494:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-495-    fn test_e2e_quit_handling() {
+crates/forge-tui/src/integration_tests.rs-496-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-497-
+--
+crates/forge-tui/src/integration_tests.rs-512-    / Integration Test 8: Scroll Navigation
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-513-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-514-
+crates/forge-tui/src/integration_tests.rs:515:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-516-    fn test_e2e_scroll_navigation() {
+crates/forge-tui/src/integration_tests.rs-517-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-518-
+--
+crates/forge-tui/src/integration_tests.rs-543-    / Integration Test 9: Concurrent Worker Operations
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-544-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-545-
+crates/forge-tui/src/integration_tests.rs:546:    #[test]
+crates/forge-tui/src/integration_tests.rs:547:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-548-    fn test_e2e_concurrent_worker_creation() {
+crates/forge-tui/src/integration_tests.rs-549-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-550-        let status_dir = temp_dir.path().join("status");
+--
+crates/forge-tui/src/integration_tests.rs-609-    / Integration Test 10: Stability Under Load
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-610-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-611-
+crates/forge-tui/src/integration_tests.rs:612:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-613-    fn test_e2e_stability_rapid_view_switching() {
+crates/forge-tui/src/integration_tests.rs-614-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-615-
+--
+crates/forge-tui/src/integration_tests.rs-627-        assert_eq!(app.current_view(), View::Chat); // Last view in ALL array
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-628-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-629-
+crates/forge-tui/src/integration_tests.rs:630:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-631-    fn test_e2e_stability_rapid_event_processing() {
+crates/forge-tui/src/integration_tests.rs-632-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-633-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-654-        assert!(!app.should_quit());
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-655-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-656-
+crates/forge-tui/src/integration_tests.rs:657:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-658-    fn test_e2e_stability_large_terminal_sizes() {
+crates/forge-tui/src/integration_tests.rs-659-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-660-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-674-        }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-675-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-676-
+crates/forge-tui/src/integration_tests.rs:677:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-678-    fn test_e2e_stability_log_buffer_overflow() {
+crates/forge-tui/src/integration_tests.rs-679-        let mut buffer = LogBuffer::new(100);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-680-
+--
+crates/forge-tui/src/integration_tests.rs-704-    / Integration Test 11: Full Workflow Simulation
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-705-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-706-
+crates/forge-tui/src/integration_tests.rs:707:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-708-    fn test_e2e_full_workflow_simulation() {
+crates/forge-tui/src/integration_tests.rs-709-        / This test simulates a complete user workflow:
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-710-        // 1. Start the application
+--
+crates/forge-tui/src/integration_tests.rs-771-    / Integration Test 12: Worker and Log Integration
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-772-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-773-
+crates/forge-tui/src/integration_tests.rs:774:    #[test]
+crates/forge-tui/src/integration_tests.rs:775:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-776-    fn test_e2e_worker_log_correlation() {
+crates/forge-tui/src/integration_tests.rs-777-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-778-        let status_dir = temp_dir.path().join("status");
+--
+crates/forge-tui/src/integration_tests.rs-839-    / Integration Test 13: Input Handler Integration
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-840-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-841-
+crates/forge-tui/src/integration_tests.rs:842:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-843-    fn test_e2e_input_handler_mode_transitions() {
+crates/forge-tui/src/integration_tests.rs-844-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-845-
+--
+crates/forge-tui/src/integration_tests.rs-875-    / Integration Test 14: Status Event Processing
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-876-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-877-
+crates/forge-tui/src/integration_tests.rs:878:    #[test]
+crates/forge-tui/src/integration_tests.rs:879:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-880-    fn test_e2e_status_event_lifecycle() {
+crates/forge-tui/src/integration_tests.rs-881-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-882-        let status_dir = temp_dir.path().join("status");
+--
+crates/forge-tui/src/integration_tests.rs-927-    / Integration Test 15: Edge Cases and Error Handling
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-928-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-929-
+crates/forge-tui/src/integration_tests.rs:930:    #[test]
+crates/forge-tui/src/integration_tests.rs:931:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-932-    fn test_e2e_invalid_status_file_handling() {
+crates/forge-tui/src/integration_tests.rs-933-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-934-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-952-        assert!(watcher.get_worker("valid-worker").is_some());
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-953-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-954-
+crates/forge-tui/src/integration_tests.rs:955:    #[test]
+crates/forge-tui/src/integration_tests.rs:956:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-957-    fn test_e2e_non_json_files_ignored() {
+crates/forge-tui/src/integration_tests.rs-958-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-959-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-977-        assert!(watcher.get_worker("real-worker").is_some());
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-978-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-979-
+crates/forge-tui/src/integration_tests.rs:980:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-981-    fn test_e2e_empty_log_file_handling() {
+crates/forge-tui/src/integration_tests.rs-982-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-983-        let log_path = temp_dir.path().join("empty.log");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-993-        assert!(entries.is_empty());
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-994-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-995-
+crates/forge-tui/src/integration_tests.rs:996:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-997-    fn test_e2e_view_back_navigation() {
+crates/forge-tui/src/integration_tests.rs-998-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-999-
+--
+crates/forge-tui/src/integration_tests.rs-1018-    / Tests the complete data flow when a worker starts:
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1019-    // Status file created → StatusWatcher detects → App updates → UI displays
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1020-
+crates/forge-tui/src/integration_tests.rs:1021:    #[test]
+crates/forge-tui/src/integration_tests.rs:1022:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1023-    fn test_data_flow_worker_starts() {
+crates/forge-tui/src/integration_tests.rs-1024-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1025-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1083-        assert_eq!(worker_data.pid, Some(12345));
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1084-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1085-
+crates/forge-tui/src/integration_tests.rs:1086:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1087-    fn test_data_flow_worker_starts_ui_display() {
+crates/forge-tui/src/integration_tests.rs-1088-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1089-        let status_dir = temp_dir.path().join("status");
+--
+crates/forge-tui/src/integration_tests.rs-1123-    / Tests the data flow when a worker completes a task:
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1124-    // Worker active with task → Task completed → Status updated → UI reflects completion
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1125-
+crates/forge-tui/src/integration_tests.rs:1126:    #[test]
+crates/forge-tui/src/integration_tests.rs:1127:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1128-    fn test_data_flow_worker_completes_task() {
+crates/forge-tui/src/integration_tests.rs-1129-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1130-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1202-        assert_eq!(counts.idle, 1, "One worker should be idle");
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1203-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1204-
+crates/forge-tui/src/integration_tests.rs:1205:    #[test]
+crates/forge-tui/src/integration_tests.rs:1206:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1207-    fn test_data_flow_multiple_task_completions() {
+crates/forge-tui/src/integration_tests.rs-1208-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1209-        let status_dir = temp_dir.path().join("status");
+--
+crates/forge-tui/src/integration_tests.rs-1273-    / Tests the data flow when a worker transitions to idle:
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1274-    // Active → Idle transition, UI reflects the change
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1275-
+crates/forge-tui/src/integration_tests.rs:1276:    #[test]
+crates/forge-tui/src/integration_tests.rs:1277:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1278-    fn test_data_flow_worker_goes_idle() {
+crates/forge-tui/src/integration_tests.rs-1279-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1280-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1329-        assert_eq!(counts.healthy(), 1, "One worker should be healthy");
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1330-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1331-
+crates/forge-tui/src/integration_tests.rs:1332:    #[test]
+crates/forge-tui/src/integration_tests.rs:1333:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1334-    fn test_data_flow_idle_to_active_transition() {
+crates/forge-tui/src/integration_tests.rs-1335-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1336-        let status_dir = temp_dir.path().join("status");
+--
+crates/forge-tui/src/integration_tests.rs-1387-    / Tests the data flow when a worker crashes/fails:
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1388-    // Active/Starting → Failed/Error, UI shows unhealthy worker
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1389-
+crates/forge-tui/src/integration_tests.rs:1390:    #[test]
+crates/forge-tui/src/integration_tests.rs:1391:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1392-    fn test_data_flow_worker_crashes_from_active() {
+crates/forge-tui/src/integration_tests.rs-1393-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1394-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1447-        assert_eq!(counts.unhealthy(), 1, "One worker should be unhealthy");
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1448-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1449-
+crates/forge-tui/src/integration_tests.rs:1450:    #[test]
+crates/forge-tui/src/integration_tests.rs:1451:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1452-    fn test_data_flow_worker_crashes_from_starting() {
+crates/forge-tui/src/integration_tests.rs-1453-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1454-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1496-        assert_eq!(counts.starting, 0);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1497-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1498-
+crates/forge-tui/src/integration_tests.rs:1499:    #[test]
+crates/forge-tui/src/integration_tests.rs:1500:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1501-    fn test_data_flow_worker_recovery_after_crash() {
+crates/forge-tui/src/integration_tests.rs-1502-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1503-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1545-        assert_eq!(counts.healthy(), 1);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1546-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1547-
+crates/forge-tui/src/integration_tests.rs:1548:    #[test]
+crates/forge-tui/src/integration_tests.rs:1549:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1550-    fn test_data_flow_worker_file_deletion_as_crash() {
+crates/forge-tui/src/integration_tests.rs-1551-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1552-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1591-    //
+crates/forge-tui/src/integration_tests.rs-1592-    / Tests the full lifecycle: start → active → complete tasks → idle → shutdown
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1593-
+crates/forge-tui/src/integration_tests.rs:1594:    #[test]
+crates/forge-tui/src/integration_tests.rs:1595:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1596-    fn test_data_flow_complete_worker_lifecycle() {
+crates/forge-tui/src/integration_tests.rs-1597-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1598-        let status_dir = temp_dir.path().join("status");
+--
+crates/forge-tui/src/integration_tests.rs-1739-    / Integration Test 21: Multi-Worker Data Flow Scenarios
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1740-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1741-
+crates/forge-tui/src/integration_tests.rs:1742:    #[test]
+crates/forge-tui/src/integration_tests.rs:1743:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1744-    fn test_data_flow_mixed_worker_states() {
+crates/forge-tui/src/integration_tests.rs-1745-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1746-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1795-        assert_eq!(unhealthy[0].worker_id, "worker-failed");
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1796-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1797-
+crates/forge-tui/src/integration_tests.rs:1798:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1799-    fn test_data_flow_ui_updates_with_multiple_workers() {
+crates/forge-tui/src/integration_tests.rs-1800-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1801-        let status_dir = temp_dir.path().join("status");
+--
+crates/forge-tui/src/integration_tests.rs-1839-    / Integration Test 22: Data Flow Error Handling
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1840-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1841-
+crates/forge-tui/src/integration_tests.rs:1842:    #[test]
+crates/forge-tui/src/integration_tests.rs:1843:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1844-    fn test_data_flow_corrupted_status_file_recovery() {
+crates/forge-tui/src/integration_tests.rs-1845-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1846-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1889-        }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1890-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1891-
+crates/forge-tui/src/integration_tests.rs:1892:    #[test]
+crates/forge-tui/src/integration_tests.rs:1893:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1894-    fn test_data_flow_rapid_status_changes() {
+crates/forge-tui/src/integration_tests.rs-1895-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1896-        let status_dir = temp_dir.path().join("status");
+--
+crates/forge-tui/src/integration_tests.rs-1935-    / Integration Test 23: Cost Panel Rendering
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1936-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1937-
+crates/forge-tui/src/integration_tests.rs:1938:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1939-    fn test_cost_panel_empty_state() {
+crates/forge-tui/src/integration_tests.rs-1940-        use crate::cost_panel::CostPanelData;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1941-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1946-        assert_eq!(data.monthly_usage_pct(), 0.0);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1947-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1948-
+crates/forge-tui/src/integration_tests.rs:1949:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1950-    fn test_cost_panel_loading_state() {
+crates/forge-tui/src/integration_tests.rs-1951-        use crate::cost_panel::CostPanelData;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1952-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1955-        assert!(!data.has_data());
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1956-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1957-
+crates/forge-tui/src/integration_tests.rs:1958:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1959-    fn test_cost_panel_error_state() {
+crates/forge-tui/src/integration_tests.rs-1960-        use crate::cost_panel::CostPanelData;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1961-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1964-        assert_eq!(data.error.as_ref().unwrap(), "Database connection failed");
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1965-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1966-
+crates/forge-tui/src/integration_tests.rs:1967:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1968-    fn test_cost_panel_with_data() {
+crates/forge-tui/src/integration_tests.rs-1969-        use crate::cost_panel::{BudgetAlertLevel, BudgetConfig, CostPanelData};
+crates/forge-tui/src/integration_tests.rs-1970-        use chrono::Utc;
+--
+crates/forge-tui/src/integration_tests.rs-1992-        assert_eq!(data.monthly_alert(), BudgetAlertLevel::Normal);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1993-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1994-
+crates/forge-tui/src/integration_tests.rs:1995:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1996-    fn test_cost_panel_budget_alerts() {
+crates/forge-tui/src/integration_tests.rs-1997-        use crate::cost_panel::{BudgetAlertLevel, BudgetConfig, CostPanelData};
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-1998-
+--
+crates/forge-tui/src/integration_tests.rs-2016-        assert_eq!(data.monthly_alert(), BudgetAlertLevel::Exceeded);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2017-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2018-
+crates/forge-tui/src/integration_tests.rs:2019:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2020-    fn test_cost_panel_sparkline_rendering() {
+crates/forge-tui/src/integration_tests.rs-2021-        use crate::cost_panel::render_sparkline;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2022-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2035-        assert_eq!(single.chars().count(), 5);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2036-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2037-
+crates/forge-tui/src/integration_tests.rs:2038:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2039-    fn test_cost_panel_bar_rendering() {
+crates/forge-tui/src/integration_tests.rs-2040-        use crate::cost_panel::render_bar;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2041-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2053-        assert_eq!(zero_max.chars().filter(|&c| c == '░').count(), 10);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2054-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2055-
+crates/forge-tui/src/integration_tests.rs:2056:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2057-    fn test_cost_formatting_functions() {
+crates/forge-tui/src/integration_tests.rs-2058-        use crate::cost_panel::{format_tokens, format_usd, truncate_model_name};
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2059-
+--
+crates/forge-tui/src/integration_tests.rs-2078-    / Integration Test 24: Subscription Panel Rendering
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2079-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2080-
+crates/forge-tui/src/integration_tests.rs:2081:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2082-    fn test_subscription_data_demo_initialization() {
+crates/forge-tui/src/integration_tests.rs-2083-        use crate::subscription_panel::{SubscriptionData, SubscriptionService};
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2084-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2097-        assert_eq!(claude.limit, Some(500));
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2098-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2099-
+crates/forge-tui/src/integration_tests.rs:2100:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2101-    fn test_subscription_status_calculations() {
+crates/forge-tui/src/integration_tests.rs-2102-        use crate::subscription_panel::{ResetPeriod, SubscriptionService, SubscriptionStatus};
+crates/forge-tui/src/integration_tests.rs-2103-        use chrono::{Duration, Utc};
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2112-        assert!(status.time_until_reset().is_some());
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2113-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2114-
+crates/forge-tui/src/integration_tests.rs:2115:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2116-    fn test_subscription_recommended_actions() {
+crates/forge-tui/src/integration_tests.rs-2117-        use crate::subscription_panel::{
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2118-            ResetPeriod, SubscriptionAction, SubscriptionService, SubscriptionStatus,
+--
+crates/forge-tui/src/integration_tests.rs-2137-        assert_eq!(over.recommended_action(), SubscriptionAction::OverQuota);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2138-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2139-
+crates/forge-tui/src/integration_tests.rs:2140:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2141-    fn test_subscription_format_reset_timer() {
+crates/forge-tui/src/integration_tests.rs-2142-        use crate::subscription_panel::{ResetPeriod, SubscriptionService, SubscriptionStatus};
+crates/forge-tui/src/integration_tests.rs-2143-        use chrono::{Duration, Utc};
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2155-        assert_eq!(pay.format_reset_timer(), "Monthly");
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2156-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2157-
+crates/forge-tui/src/integration_tests.rs:2158:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2159-    fn test_subscription_summary_formatting() {
+crates/forge-tui/src/integration_tests.rs-2160-        use crate::subscription_panel::{SubscriptionData, format_subscription_summary};
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2161-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2178-        assert!(empty_summary.contains("No subscriptions"));
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2179-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2180-
+crates/forge-tui/src/integration_tests.rs:2181:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2182-    fn test_subscription_usage_colors() {
+crates/forge-tui/src/integration_tests.rs-2183-        use crate::subscription_panel::{SubscriptionService, SubscriptionStatus};
+crates/forge-tui/src/integration_tests.rs-2184-        use ratatui::style::Color;
+--
+crates/forge-tui/src/integration_tests.rs-2203-    / Integration Test 25: Responsive Layout Tests
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2204-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2205-
+crates/forge-tui/src/integration_tests.rs:2206:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2207-    fn test_layout_mode_transitions() {
+crates/forge-tui/src/integration_tests.rs-2208-        use crate::view::LayoutMode;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2209-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2231-        }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2232-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2233-
+crates/forge-tui/src/integration_tests.rs:2234:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2235-    fn test_responsive_rendering_all_modes() {
+crates/forge-tui/src/integration_tests.rs-2236-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2237-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2253-        assert!(buffer_contains(&ultrawide, "Quick Actions"));
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2254-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2255-
+crates/forge-tui/src/integration_tests.rs:2256:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2257-    fn test_responsive_panel_visibility() {
+crates/forge-tui/src/integration_tests.rs-2258-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2259-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2282-        assert!(buffer_contains(&ultrawide, "Quick Actions"));
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2283-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2284-
+crates/forge-tui/src/integration_tests.rs:2285:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2286-    fn test_responsive_min_height_requirements() {
+crates/forge-tui/src/integration_tests.rs-2287-        use crate::view::LayoutMode;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2288-
+--
+crates/forge-tui/src/integration_tests.rs-2295-    / Integration Test 26: Chat Commands Integration
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2296-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2297-
+crates/forge-tui/src/integration_tests.rs:2298:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2299-    fn test_chat_command_text_input() {
+crates/forge-tui/src/integration_tests.rs-2300-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2301-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2314-        assert!(buffer_contains(&buffer, "Chat") || buffer_contains(&buffer, "Input"));
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2315-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2316-
+crates/forge-tui/src/integration_tests.rs:2317:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2318-    fn test_chat_submit_clears_input() {
+crates/forge-tui/src/integration_tests.rs-2319-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2320-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2333-        // The status_message should show execution message
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2334-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2335-
+crates/forge-tui/src/integration_tests.rs:2336:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2337-    fn test_chat_escape_cancels() {
+crates/forge-tui/src/integration_tests.rs-2338-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2339-
+--
+crates/forge-tui/src/integration_tests.rs-2355-    / Integration Test 27: Bead Manager Tests
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2356-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2357-
+crates/forge-tui/src/integration_tests.rs:2358:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2359-    fn test_bead_status_checks() {
+crates/forge-tui/src/integration_tests.rs-2360-        use crate::bead::Bead;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2361-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2374-        assert!(!ready_bead.is_closed());
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2375-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2376-
+crates/forge-tui/src/integration_tests.rs:2377:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2378-    fn test_bead_blocked_status() {
+crates/forge-tui/src/integration_tests.rs-2379-        use crate::bead::Bead;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2380-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2391-        assert!(blocked.is_blocked());
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2392-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2393-
+crates/forge-tui/src/integration_tests.rs:2394:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2395-    fn test_bead_priority_indicators() {
+crates/forge-tui/src/integration_tests.rs-2396-        use crate::bead::Bead;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2397-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2423-        assert_eq!(p4.priority_indicator(), "⚪");
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2424-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2425-
+crates/forge-tui/src/integration_tests.rs:2426:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2427-    fn test_bead_status_indicators() {
+crates/forge-tui/src/integration_tests.rs-2428-        use crate::bead::Bead;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2429-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2451-        }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2452-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2453-
+crates/forge-tui/src/integration_tests.rs:2454:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2455-    fn test_bead_manager_initialization() {
+crates/forge-tui/src/integration_tests.rs-2456-        use crate::bead::BeadManager;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2457-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2460-        assert!(!manager.is_loaded());
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2461-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2462-
+crates/forge-tui/src/integration_tests.rs:2463:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2464-    fn test_bead_aggregated_data_formatting() {
+crates/forge-tui/src/integration_tests.rs-2465-        use crate::bead::AggregatedBeadData;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2466-
+--
+crates/forge-tui/src/integration_tests.rs-2485-    / Integration Test 28: Widget Tests
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2486-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2487-
+crates/forge-tui/src/integration_tests.rs:2488:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2489-    fn test_progress_bar_widget() {
+crates/forge-tui/src/integration_tests.rs-2490-        use crate::widget::ProgressBar;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2491-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2499-        assert!(rendered.contains("75%"));
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2500-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2501-
+crates/forge-tui/src/integration_tests.rs:2502:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2503-    fn test_progress_bar_edge_cases() {
+crates/forge-tui/src/integration_tests.rs-2504-        use crate::widget::ProgressBar;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2505-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2514-        assert!(rendered.contains("0%"));
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2515-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2516-
+crates/forge-tui/src/integration_tests.rs:2517:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2518-    fn test_status_indicators() {
+crates/forge-tui/src/integration_tests.rs-2519-        use crate::widget::StatusIndicator;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2520-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2536-        assert!(idle_span.content.contains("Waiting"));
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2537-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2538-
+crates/forge-tui/src/integration_tests.rs:2539:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2540-    fn test_hotkey_hints_widget() {
+crates/forge-tui/src/integration_tests.rs-2541-        use crate::widget::HotkeyHints;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2542-
+--
+crates/forge-tui/src/integration_tests.rs-2554-    / Integration Test 29: Full View Rendering Tests
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2555-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2556-
+crates/forge-tui/src/integration_tests.rs:2557:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2558-    fn test_all_views_render_without_panic() {
+crates/forge-tui/src/integration_tests.rs-2559-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2560-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2582-        }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2583-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2584-
+crates/forge-tui/src/integration_tests.rs:2585:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2586-    fn test_each_view_has_correct_title() {
+crates/forge-tui/src/integration_tests.rs-2587-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2588-
+--
+crates/forge-tui/src/integration_tests.rs-2614-    / Integration Test 30: Error Recovery Tests
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2615-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2616-
+crates/forge-tui/src/integration_tests.rs:2617:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2618-    fn test_app_recovers_from_invalid_view_state() {
+crates/forge-tui/src/integration_tests.rs-2619-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2620-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2632-        assert!(buffer_contains(&buffer, "FORGE v0.1.9"));
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2633-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2634-
+crates/forge-tui/src/integration_tests.rs:2635:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2636-    fn test_app_handles_extreme_scroll_offsets() {
+crates/forge-tui/src/integration_tests.rs-2637-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2638-
+--
+crates/forge-tui/src/integration_tests.rs-2649-        app.handle_app_event(AppEvent::GoToTop);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2650-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2651-
+crates/forge-tui/src/integration_tests.rs:2652:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2653-    fn test_app_handles_rapid_help_toggle() {
+crates/forge-tui/src/integration_tests.rs-2654-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2655-
+--
+crates/forge-tui/src/integration_tests.rs-2667-    / Integration Test 31: Data Manager Integration
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2668-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2669-
+crates/forge-tui/src/integration_tests.rs:2670:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2671-    fn test_data_manager_worker_data_formatting() {
+crates/forge-tui/src/integration_tests.rs-2672-        use crate::data::WorkerData;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2673-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2685-        assert!(empty_summary.contains("No workers"));
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2686-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2687-
+crates/forge-tui/src/integration_tests.rs:2688:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2689-    fn test_data_manager_activity_log_formatting() {
+crates/forge-tui/src/integration_tests.rs-2690-        use crate::data::WorkerData;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2691-
+--
+crates/forge-tui/src/integration_tests.rs-2703-    / Integration Test 32: Focus Panel Management
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2704-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2705-
+crates/forge-tui/src/integration_tests.rs:2706:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2707-    fn test_focus_panel_highlighting() {
+crates/forge-tui/src/integration_tests.rs-2708-        use crate::view::FocusPanel;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2709-
+--
+crates/forge-tui/src/integration_tests.rs-2715-        assert!(FocusPanel::ChatInput.is_highlighted());
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2716-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2717-
+crates/forge-tui/src/integration_tests.rs:2718:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2719-    fn test_focus_changes_correctly_on_view_switch() {
+crates/forge-tui/src/integration_tests.rs-2720-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2721-
+--
+crates/forge-tui/src/integration_tests.rs-2745-    / Integration Test 33: Log Level and Entry Tests
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2746-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2747-
+crates/forge-tui/src/integration_tests.rs:2748:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2749-    fn test_log_level_parsing() {
+crates/forge-tui/src/integration_tests.rs-2750-        use crate::log::LogLevel;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2751-
+--
+crates/forge-tui/src/integration_tests.rs-2758-        assert_eq!(LogLevel::from_str("unknown"), LogLevel::Info); // Default
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2759-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2760-
+crates/forge-tui/src/integration_tests.rs:2761:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2762-    fn test_log_level_symbols() {
+crates/forge-tui/src/integration_tests.rs-2763-        use crate::log::LogLevel;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2764-
+--
+crates/forge-tui/src/integration_tests.rs-2769-        assert_eq!(LogLevel::Error.symbol(), "✖");
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2770-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2771-
+crates/forge-tui/src/integration_tests.rs:2772:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2773-    fn test_log_entry_creation() {
+crates/forge-tui/src/integration_tests.rs-2774-        use crate::log::{LogEntry, LogLevel};
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2775-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2781-        assert_eq!(entry.source, Some("test-worker".to_string()));
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2782-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2783-
+crates/forge-tui/src/integration_tests.rs:2784:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2785-    fn test_log_buffer_operations() {
+crates/forge-tui/src/integration_tests.rs-2786-        use crate::log::{LogBuffer, LogEntry, LogLevel};
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2787-
+--
+crates/forge-tui/src/integration_tests.rs-2806-    / Integration Test 34: Keyboard Event Handler Tests
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2807-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2808-
+crates/forge-tui/src/integration_tests.rs:2809:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2810-    fn test_input_handler_view_hotkeys() {
+crates/forge-tui/src/integration_tests.rs-2811-        use crate::event::WorkerExecutor;
+crates/forge-tui/src/integration_tests.rs-2812-        use crossterm::event::{KeyCode, KeyModifiers};
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2848-        );
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2849-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2850-
+crates/forge-tui/src/integration_tests.rs:2851:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2852-    fn test_input_handler_control_keys() {
+crates/forge-tui/src/integration_tests.rs-2853-        use crossterm::event::{KeyCode, KeyModifiers};
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2854-
+--
+crates/forge-tui/src/integration_tests.rs-2869-        assert_eq!(event, AppEvent::Refresh);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2870-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2871-
+crates/forge-tui/src/integration_tests.rs:2872:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2873-    fn test_input_handler_navigation() {
+crates/forge-tui/src/integration_tests.rs-2874-        use crossterm::event::{KeyCode, KeyModifiers};
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2875-
+--
+crates/forge-tui/src/integration_tests.rs-2906-    / Integration Test 35: End-to-End Cost Panel with Widget
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2907-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2908-
+crates/forge-tui/src/integration_tests.rs:2909:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2910-    fn test_cost_panel_widget_rendering() {
+crates/forge-tui/src/integration_tests.rs-2911-        use crate::cost_panel::{BudgetConfig, CostPanel, CostPanelData};
+crates/forge-tui/src/integration_tests.rs-2912-        use ratatui::Terminal;
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2938-        assert!(content.contains("Cost Analytics"));
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2939-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2940-
+crates/forge-tui/src/integration_tests.rs:2941:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2942-    fn test_subscription_panel_widget_rendering() {
+crates/forge-tui/src/integration_tests.rs-2943-        use crate::subscription_panel::{SubscriptionData, SubscriptionPanel};
+crates/forge-tui/src/integration_tests.rs-2944-        use ratatui::Terminal;
+--
+crates/forge-tui/src/integration_tests.rs-2968-    / Integration Test 36: Subscription Panel Comprehensive Tests
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2969-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2970-
+crates/forge-tui/src/integration_tests.rs:2971:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2972-    fn test_subscription_status_usage_calculations() {
+crates/forge-tui/src/integration_tests.rs-2973-        use crate::subscription_panel::{ResetPeriod, SubscriptionService, SubscriptionStatus};
+crates/forge-tui/src/integration_tests.rs-2974-        use chrono::{Duration, Utc};
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2984-        assert!(status.is_active);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2985-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2986-
+crates/forge-tui/src/integration_tests.rs:2987:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2988-    fn test_subscription_status_over_quota() {
+crates/forge-tui/src/integration_tests.rs-2989-        use crate::subscription_panel::{
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-2990-            ResetPeriod, SubscriptionAction, SubscriptionService, SubscriptionStatus,
+--
+crates/forge-tui/src/integration_tests.rs-3000-        assert_eq!(status.recommended_action(), SubscriptionAction::OverQuota);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3001-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3002-
+crates/forge-tui/src/integration_tests.rs:3003:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3004-    fn test_subscription_status_pay_per_use() {
+crates/forge-tui/src/integration_tests.rs-3005-        use crate::subscription_panel::{
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3006-            ResetPeriod, SubscriptionAction, SubscriptionService, SubscriptionStatus,
+--
+crates/forge-tui/src/integration_tests.rs-3015-        assert_eq!(status.recommended_action(), SubscriptionAction::Active);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3016-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3017-
+crates/forge-tui/src/integration_tests.rs:3018:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3019-    fn test_subscription_status_inactive() {
+crates/forge-tui/src/integration_tests.rs-3020-        use crate::subscription_panel::{
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3021-            SubscriptionAction, SubscriptionService, SubscriptionStatus,
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3029-        assert!(!status.is_active);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3030-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3031-
+crates/forge-tui/src/integration_tests.rs:3032:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3033-    fn test_subscription_status_accelerate_recommendation() {
+crates/forge-tui/src/integration_tests.rs-3034-        use crate::subscription_panel::{
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3035-            ResetPeriod, SubscriptionAction, SubscriptionService, SubscriptionStatus,
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3056-        );
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3057-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3058-
+crates/forge-tui/src/integration_tests.rs:3059:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3060-    fn test_subscription_status_on_pace() {
+crates/forge-tui/src/integration_tests.rs-3061-        use crate::subscription_panel::{
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3062-            ResetPeriod, SubscriptionAction, SubscriptionService, SubscriptionStatus,
+--
+crates/forge-tui/src/integration_tests.rs-3072-        assert_eq!(status.recommended_action(), SubscriptionAction::OnPace);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3073-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3074-
+crates/forge-tui/src/integration_tests.rs:3075:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3076-    fn test_subscription_data_demo_data() {
+crates/forge-tui/src/integration_tests.rs-3077-        use crate::subscription_panel::{SubscriptionData, SubscriptionService};
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3078-
+--
+crates/forge-tui/src/integration_tests.rs-3091-        assert!(data.get(SubscriptionService::DeepSeekAPI).is_some());
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3092-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3093-
+crates/forge-tui/src/integration_tests.rs:3094:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3095-    fn test_subscription_data_empty() {
+crates/forge-tui/src/integration_tests.rs-3096-        use crate::subscription_panel::SubscriptionData;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3097-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3103-        assert_eq!(data.active_count(), 0);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3104-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3105-
+crates/forge-tui/src/integration_tests.rs:3106:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3107-    fn test_subscription_data_loading() {
+crates/forge-tui/src/integration_tests.rs-3108-        use crate::subscription_panel::SubscriptionData;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3109-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3113-        assert!(!data.has_data());
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3114-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3115-
+crates/forge-tui/src/integration_tests.rs:3116:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3117-    fn test_subscription_reset_timer_formatting() {
+crates/forge-tui/src/integration_tests.rs-3118-        use crate::subscription_panel::{ResetPeriod, SubscriptionService, SubscriptionStatus};
+crates/forge-tui/src/integration_tests.rs-3119-        use chrono::{Duration, Utc};
+--
+crates/forge-tui/src/integration_tests.rs-3145-        assert!(timer.contains("m"), "Timer should show minutes: {}", timer);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3146-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3147-
+crates/forge-tui/src/integration_tests.rs:3148:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3149-    fn test_subscription_action_colors() {
+crates/forge-tui/src/integration_tests.rs-3150-        use crate::subscription_panel::SubscriptionAction;
+crates/forge-tui/src/integration_tests.rs-3151-        use ratatui::style::Color;
+--
+crates/forge-tui/src/integration_tests.rs-3158-        assert_eq!(SubscriptionAction::OverQuota.color(), Color::Red);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3159-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3160-
+crates/forge-tui/src/integration_tests.rs:3161:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3162-    fn test_subscription_usage_color_gradient() {
+crates/forge-tui/src/integration_tests.rs-3163-        use crate::subscription_panel::{SubscriptionService, SubscriptionStatus};
+crates/forge-tui/src/integration_tests.rs-3164-        use ratatui::style::Color;
+--
+crates/forge-tui/src/integration_tests.rs-3189-        assert_eq!(critical.usage_color(), Color::Red);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3190-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3191-
+crates/forge-tui/src/integration_tests.rs:3192:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3193-    fn test_subscription_format_summary() {
+crates/forge-tui/src/integration_tests.rs-3194-        use crate::subscription_panel::{SubscriptionData, format_subscription_summary};
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3195-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3214-        assert!(empty_summary.contains("No subscriptions"));
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3215-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3216-
+crates/forge-tui/src/integration_tests.rs:3217:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3218-    fn test_subscription_panel_compact_widget() {
+crates/forge-tui/src/integration_tests.rs-3219-        use crate::subscription_panel::{SubscriptionData, SubscriptionSummaryCompact};
+crates/forge-tui/src/integration_tests.rs-3220-        use ratatui::Terminal;
+--
+crates/forge-tui/src/integration_tests.rs-3242-    / Integration Test 37: Responsive Layout Tests
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3243-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3244-
+crates/forge-tui/src/integration_tests.rs:3245:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3246-    fn test_layout_mode_detection() {
+crates/forge-tui/src/integration_tests.rs-3247-        use crate::view::LayoutMode;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3248-
+--
+crates/forge-tui/src/integration_tests.rs-3263-        assert_eq!(LayoutMode::from_width(0), LayoutMode::Narrow);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3264-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3265-
+crates/forge-tui/src/integration_tests.rs:3266:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3267-    fn test_layout_mode_min_heights() {
+crates/forge-tui/src/integration_tests.rs-3268-        use crate::view::LayoutMode;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3269-
+--
+crates/forge-tui/src/integration_tests.rs-3272-        assert_eq!(LayoutMode::Narrow.min_height(), 20);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3273-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3274-
+crates/forge-tui/src/integration_tests.rs:3275:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3276-    fn test_layout_mode_requirements() {
+crates/forge-tui/src/integration_tests.rs-3277-        use crate::view::LayoutMode;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3278-
+--
+crates/forge-tui/src/integration_tests.rs-3295-        assert!(!LayoutMode::Narrow.meets_requirements(120, 20)); // Width triggers Wide
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3296-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3297-
+crates/forge-tui/src/integration_tests.rs:3298:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3299-    fn test_layout_boundary_conditions() {
+crates/forge-tui/src/integration_tests.rs-3300-        use crate::view::LayoutMode;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3301-
+--
+crates/forge-tui/src/integration_tests.rs-3306-        assert_eq!(LayoutMode::from_width(199), LayoutMode::UltraWide);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3307-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3308-
+crates/forge-tui/src/integration_tests.rs:3309:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3310-    fn test_responsive_rendering_ultrawide() {
+crates/forge-tui/src/integration_tests.rs-3311-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3312-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3317-        assert!(buffer_contains(&buffer, "Worker Pool"));
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3318-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3319-
+crates/forge-tui/src/integration_tests.rs:3320:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3321-    fn test_responsive_rendering_wide() {
+crates/forge-tui/src/integration_tests.rs-3322-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3323-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3328-        assert!(buffer_contains(&buffer, "Worker Pool"));
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3329-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3330-
+crates/forge-tui/src/integration_tests.rs:3331:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3332-    fn test_responsive_rendering_narrow() {
+crates/forge-tui/src/integration_tests.rs-3333-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3334-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3339-        assert!(buffer_contains(&buffer, "FORGE"));
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3340-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3341-
+crates/forge-tui/src/integration_tests.rs:3342:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3343-    fn test_responsive_rendering_minimum() {
+crates/forge-tui/src/integration_tests.rs-3344-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3345-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3351-        assert_eq!(buffer.area.height, 15);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3352-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3353-
+crates/forge-tui/src/integration_tests.rs:3354:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3355-    fn test_responsive_rendering_extreme_wide() {
+crates/forge-tui/src/integration_tests.rs-3356-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3357-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3363-        assert!(buffer_contains(&buffer, "FORGE v0.1.9"));
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3364-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3365-
+crates/forge-tui/src/integration_tests.rs:3366:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3367-    fn test_responsive_all_views_at_different_sizes() {
+crates/forge-tui/src/integration_tests.rs-3368-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3369-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3382-        }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3383-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3384-
+crates/forge-tui/src/integration_tests.rs:3385:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3386-    fn test_view_hotkey_navigation_comprehensive() {
+crates/forge-tui/src/integration_tests.rs-3387-        use crate::view::View;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3388-
+--
+crates/forge-tui/src/integration_tests.rs-3405-        assert_eq!(View::from_hotkey('1'), None);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3406-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3407-
+crates/forge-tui/src/integration_tests.rs:3408:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3409-    fn test_view_cycling_comprehensive() {
+crates/forge-tui/src/integration_tests.rs-3410-        use crate::view::View;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3411-
+--
+crates/forge-tui/src/integration_tests.rs-3429-        assert_eq!(View::Perf.prev(), View::Metrics);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3430-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3431-
+crates/forge-tui/src/integration_tests.rs:3432:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3433-    fn test_view_display_names() {
+crates/forge-tui/src/integration_tests.rs-3434-        use crate::view::View;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3435-
+--
+crates/forge-tui/src/integration_tests.rs-3442-        assert_eq!(View::Chat.title(), "Chat");
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3443-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3444-
+crates/forge-tui/src/integration_tests.rs:3445:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3446-    fn test_view_hotkey_hints() {
+crates/forge-tui/src/integration_tests.rs-3447-        use crate::view::View;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3448-
+--
+crates/forge-tui/src/integration_tests.rs-3455-    / Integration Test 38: End-to-End Data Flow Tests
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3456-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3457-
+crates/forge-tui/src/integration_tests.rs:3458:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3459-    fn test_e2e_data_flow_subscription_updates_ui() {
+crates/forge-tui/src/integration_tests.rs-3460-        use crate::subscription_panel::{
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3461-            ResetPeriod, SubscriptionData, SubscriptionService, SubscriptionStatus,
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3497-        );
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3498-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3499-
+crates/forge-tui/src/integration_tests.rs:3500:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3501-    fn test_e2e_data_flow_cost_updates_ui() {
+crates/forge-tui/src/integration_tests.rs-3502-        use crate::cost_panel::{BudgetAlertLevel, BudgetConfig, CostPanelData};
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3503-
+--
+crates/forge-tui/src/integration_tests.rs-3524-        assert_eq!(data.monthly_alert(), BudgetAlertLevel::Exceeded);
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3525-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3526-
+crates/forge-tui/src/integration_tests.rs:3527:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3528-    fn test_e2e_full_session_workflow() {
+crates/forge-tui/src/integration_tests.rs-3529-        / Simulate a complete user session:
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3530-        // 1. Start app
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3586-        assert!(app.should_quit());
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3587-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3588-
+crates/forge-tui/src/integration_tests.rs:3589:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3590-    fn test_e2e_stress_test_subscription_updates() {
+crates/forge-tui/src/integration_tests.rs-3591-        use crate::subscription_panel::{
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3592-            ResetPeriod, SubscriptionData, SubscriptionService, SubscriptionStatus,
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3614-        }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3615-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3616-
+crates/forge-tui/src/integration_tests.rs:3617:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3618-    fn test_e2e_stress_test_cost_updates() {
+crates/forge-tui/src/integration_tests.rs-3619-        use crate::cost_panel::{BudgetConfig, CostPanelData};
+crates/forge-tui/src/integration_tests.rs-3620-        use chrono::Utc;
+--
+crates/forge-tui/src/integration_tests.rs-3646-    / Integration Test: Worker Kill Dialog
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3647-    // ============================================================
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3648-
+crates/forge-tui/src/integration_tests.rs:3649:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3650-    fn test_kill_dialog_shows_on_kill_event() {
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3651-        // Test that the kill dialog is shown when KillWorker event is triggered
+crates/forge-tui/src/integration_tests.rs-3652-        let mut app = App::new();
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3668-        );
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3669-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3670-
+crates/forge-tui/src/integration_tests.rs:3671:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3672-    fn test_kill_dialog_closes_on_escape() {
+crates/forge-tui/src/integration_tests.rs-3673-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3674-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3686-        assert!(!app.show_kill_dialog());
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3687-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3688-
+crates/forge-tui/src/integration_tests.rs:3689:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3690-    fn test_kill_dialog_closes_on_q() {
+crates/forge-tui/src/integration_tests.rs-3691-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3692-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3704-        assert!(!app.show_kill_dialog());
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3705-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3706-
+crates/forge-tui/src/integration_tests.rs:3707:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3708-    fn test_kill_dialog_toggles() {
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3709-        // Test that KillWorker event toggles the dialog
+crates/forge-tui/src/integration_tests.rs-3710-        let mut app = App::new();
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3722-        assert!(app.show_kill_dialog());
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3723-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3724-
+crates/forge-tui/src/integration_tests.rs:3725:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3726-    fn test_kill_dialog_navigation() {
+crates/forge-tui/src/integration_tests.rs-3727-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3728-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3749-        assert!(app.show_kill_dialog());
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3750-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3751-
+crates/forge-tui/src/integration_tests.rs:3752:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3753-    fn test_kill_dialog_no_workers_message() {
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3754-        // Test that dialog shows appropriate message when no workers are found
+crates/forge-tui/src/integration_tests.rs-3755-        let mut app = App::new();
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3771-        );
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3772-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3773-
+crates/forge-tui/src/integration_tests.rs:3774:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3775-    fn test_kill_dialog_shows_worker_details() {
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3776-        // Test that when workers are discovered, the dialog shows their details
+crates/forge-tui/src/integration_tests.rs-3777-        let mut app = App::new();
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3801-        }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3802-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3803-
+crates/forge-tui/src/integration_tests.rs:3804:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3805-    fn test_kill_dialog_navigation_keys() {
+crates/forge-tui/src/integration_tests.rs-3806-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3807-
+--
+crates/forge-tui/src/integration_tests.rs-3844-    / - Left: Worker Pool + Subscriptions
+crates/forge-tui/src/integration_tests.rs-3845-    / - Middle: Task Queue + Activity Log
+crates/forge-tui/src/integration_tests.rs-3846-    / - Right: Cost Breakdown + Quick Actions
+crates/forge-tui/src/integration_tests.rs:3847:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3848-    fn test_responsive_layout_ultrawide_six_panels() {
+crates/forge-tui/src/integration_tests.rs-3849-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3850-
+--
+crates/forge-tui/src/integration_tests.rs-3888-    / Layout: 2x2 grid
+crates/forge-tui/src/integration_tests.rs-3889-    / - Top: Worker Pool + Subscriptions
+crates/forge-tui/src/integration_tests.rs-3890-    / - Bottom: Task Queue + Activity Log
+crates/forge-tui/src/integration_tests.rs:3891:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3892-    fn test_responsive_layout_wide_four_panels() {
+crates/forge-tui/src/integration_tests.rs-3893-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3894-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3929-    /// - Worker Pool (top)
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3930-    /// - Task Queue (middle)
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3931-    /// - Activity Log (bottom)
+crates/forge-tui/src/integration_tests.rs:3932:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3933-    fn test_responsive_layout_narrow_three_panels() {
+crates/forge-tui/src/integration_tests.rs-3934-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3935-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3962-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3963-    /// Test real-time resize from UltraWide to Wide.
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3964-    /// Verifies that layout adapts correctly when terminal narrows.
+crates/forge-tui/src/integration_tests.rs:3965:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3966-    fn test_responsive_resize_ultrawide_to_wide() {
+crates/forge-tui/src/integration_tests.rs-3967-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-3968-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4005-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4006-    /// Test real-time resize from Wide to Narrow.
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4007-    /// Verifies that layout adapts correctly when terminal becomes very narrow.
+crates/forge-tui/src/integration_tests.rs:4008:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4009-    fn test_responsive_resize_wide_to_narrow() {
+crates/forge-tui/src/integration_tests.rs-4010-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4011-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4038-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4039-    /// Test layout restoration after resize cycle.
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4040-    /// UltraWide -> Narrow -> UltraWide should restore all panels.
+crates/forge-tui/src/integration_tests.rs:4041:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4042-    fn test_responsive_resize_restore_cycle() {
+crates/forge-tui/src/integration_tests.rs-4043-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4044-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4083-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4084-    /// Test multiple rapid resizes don't cause crashes.
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4085-    /// Simulates user rapidly resizing terminal.
+crates/forge-tui/src/integration_tests.rs:4086:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4087-    fn test_responsive_rapid_resize_no_crash() {
+crates/forge-tui/src/integration_tests.rs-4088-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4089-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4112-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4113-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4114-    /// Test that footer hotkey hints adapt to layout mode.
+crates/forge-tui/src/integration_tests.rs:4115:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4116-    fn test_responsive_footer_hotkey_hints() {
+crates/forge-tui/src/integration_tests.rs-4117-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4118-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4136-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4137-
+crates/forge-tui/src/integration_tests.rs-4138-    / Test boundary conditions: exactly 199 columns (UltraWide threshold).
+crates/forge-tui/src/integration_tests.rs:4139:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4140-    fn test_responsive_boundary_199_columns() {
+crates/forge-tui/src/integration_tests.rs-4141-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4142-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4155-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4156-
+crates/forge-tui/src/integration_tests.rs-4157-    / Test boundary conditions: exactly 198 columns (Wide upper bound).
+crates/forge-tui/src/integration_tests.rs:4158:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4159-    fn test_responsive_boundary_198_columns() {
+crates/forge-tui/src/integration_tests.rs-4160-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4161-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4174-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4175-
+crates/forge-tui/src/integration_tests.rs-4176-    / Test boundary conditions: exactly 120 columns (Wide lower bound).
+crates/forge-tui/src/integration_tests.rs:4177:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4178-    fn test_responsive_boundary_120_columns() {
+crates/forge-tui/src/integration_tests.rs-4179-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4180-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4193-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4194-
+crates/forge-tui/src/integration_tests.rs-4195-    / Test boundary conditions: exactly 119 columns (Narrow upper bound).
+crates/forge-tui/src/integration_tests.rs:4196:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4197-    fn test_responsive_boundary_119_columns() {
+crates/forge-tui/src/integration_tests.rs-4198-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4199-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4216-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4217-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4218-    /// Test that content reflows correctly in each layout mode.
+crates/forge-tui/src/integration_tests.rs:4219:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4220-    fn test_responsive_content_reflow() {
+crates/forge-tui/src/integration_tests.rs-4221-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4222-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4260-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4261-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4262-    /// Test minimum height requirements for each layout mode.
+crates/forge-tui/src/integration_tests.rs:4263:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4264-    fn test_responsive_minimum_heights() {
+crates/forge-tui/src/integration_tests.rs-4265-        use crate::view::LayoutMode;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4266-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4285-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4286-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4287-    /// Test that all views work correctly at each layout size.
+crates/forge-tui/src/integration_tests.rs:4288:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4289-    fn test_responsive_all_views_at_all_sizes() {
+crates/forge-tui/src/integration_tests.rs-4290-        use crate::view::View;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4291-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4319-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4320-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4321-    /// Test resize across all boundary transitions.
+crates/forge-tui/src/integration_tests.rs:4322:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4323-    fn test_responsive_all_boundary_transitions() {
+crates/forge-tui/src/integration_tests.rs-4324-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4325-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4365-    /// Test that status updates are detected within 2 seconds of file modification.
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4366-    ///
+crates/forge-tui/src/integration_tests.rs-4367-    / Success Criteria: Status updates within 1-2 seconds
+crates/forge-tui/src/integration_tests.rs:4368:    #[test]
+crates/forge-tui/src/integration_tests.rs:4369:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4370-    fn test_realtime_status_update_latency() {
+crates/forge-tui/src/integration_tests.rs-4371-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4372-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4417-    /// Test that 'starting' status is visible immediately after worker spawn.
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4418-    ///
+crates/forge-tui/src/integration_tests.rs-4419-    / Success Criteria: 'starting' status visible within 500ms
+crates/forge-tui/src/integration_tests.rs:4420:    #[test]
+crates/forge-tui/src/integration_tests.rs:4421:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4422-    fn test_realtime_starting_status_immediate() {
+crates/forge-tui/src/integration_tests.rs-4423-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4424-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4483-    /// Test that all status transitions are visible in sequence.
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4484-    ///
+crates/forge-tui/src/integration_tests.rs-4485-    / Success Criteria: All transitions visible, no stale data
+crates/forge-tui/src/integration_tests.rs:4486:    #[test]
+crates/forge-tui/src/integration_tests.rs:4487:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4488-    fn test_realtime_all_status_transitions_visible() {
+crates/forge-tui/src/integration_tests.rs-4489-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4490-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4570-    /// Test that current_task field updates in real-time when worker picks up a task.
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4571-    ///
+crates/forge-tui/src/integration_tests.rs-4572-    / Success Criteria: current_task field updates within 1 second
+crates/forge-tui/src/integration_tests.rs:4573:    #[test]
+crates/forge-tui/src/integration_tests.rs:4574:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4575-    fn test_realtime_current_task_updates() {
+crates/forge-tui/src/integration_tests.rs-4576-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4577-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4658-    /// Test that tasks_completed increments in real-time.
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4659-    ///
+crates/forge-tui/src/integration_tests.rs-4660-    / Success Criteria: tasks_completed field updates within 1 second
+crates/forge-tui/src/integration_tests.rs:4661:    #[test]
+crates/forge-tui/src/integration_tests.rs:4662:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4663-    fn test_realtime_tasks_completed_increments() {
+crates/forge-tui/src/integration_tests.rs-4664-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4665-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4737-    /// or updated to show stopped/failed status.
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4738-    ///
+crates/forge-tui/src/integration_tests.rs-4739-    / Success Criteria: Status shows 'stopped' or worker is removed within 2 seconds
+crates/forge-tui/src/integration_tests.rs:4740:    #[test]
+crates/forge-tui/src/integration_tests.rs:4741:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4742-    fn test_realtime_external_worker_kill_file_deletion() {
+crates/forge-tui/src/integration_tests.rs-4743-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4744-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4805-    ///
+crates/forge-tui/src/integration_tests.rs-4806-    / Alternative scenario: Worker has time to update its status to 'stopped'
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4807-    /// before terminating (graceful shutdown).
+crates/forge-tui/src/integration_tests.rs:4808:    #[test]
+crates/forge-tui/src/integration_tests.rs:4809:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4810-    fn test_realtime_external_worker_kill_graceful_shutdown() {
+crates/forge-tui/src/integration_tests.rs-4811-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4812-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4874-    /// Test no stale data is displayed after rapid status changes.
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4875-    ///
+crates/forge-tui/src/integration_tests.rs-4876-    / Success Criteria: Final state is correctly reflected, no intermediate stale data
+crates/forge-tui/src/integration_tests.rs:4877:    #[test]
+crates/forge-tui/src/integration_tests.rs:4878:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4879-    fn test_realtime_no_stale_data_after_rapid_changes() {
+crates/forge-tui/src/integration_tests.rs-4880-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4881-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4926-    /// Test that status watcher handles concurrent worker spawns gracefully.
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4927-    ///
+crates/forge-tui/src/integration_tests.rs-4928-    / Success Criteria: All workers tracked correctly, no missing or duplicate events
+crates/forge-tui/src/integration_tests.rs:4929:    #[test]
+crates/forge-tui/src/integration_tests.rs:4930:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4931-    fn test_realtime_concurrent_worker_spawns() {
+crates/forge-tui/src/integration_tests.rs-4932-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4933-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4992-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4993-    /// Test that the watcher correctly handles worker status transitions
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4994-    /// with current_task as both string and object formats.
+crates/forge-tui/src/integration_tests.rs:4995:    #[test]
+crates/forge-tui/src/integration_tests.rs:4996:    #[serial(file_watcher)]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4997-    fn test_realtime_current_task_format_variations() {
+crates/forge-tui/src/integration_tests.rs-4998-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-4999-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5061-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5062-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5063-    /// Test that the UI correctly reflects worker status changes.
+crates/forge-tui/src/integration_tests.rs:5064:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5065-    fn test_realtime_ui_reflects_status_changes() {
+crates/forge-tui/src/integration_tests.rs-5066-        let temp_dir = TempDir::new().unwrap();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5067-        let status_dir = temp_dir.path().join("status");
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5135-    // | 250x60       | UltraWide     | 6              |
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5136-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5137-    /// Test narrow mode at 80x24 (typical small terminal)
+crates/forge-tui/src/integration_tests.rs:5138:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5139-    fn test_boundary_80x24_narrow() {
+crates/forge-tui/src/integration_tests.rs-5140-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5141-        let buffer = render_app(&mut app, 80, 24);
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5152-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5153-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5154-    /// Test narrow mode at 100x25
+crates/forge-tui/src/integration_tests.rs:5155:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5156-    fn test_boundary_100x25_narrow() {
+crates/forge-tui/src/integration_tests.rs-5157-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5158-        let buffer = render_app(&mut app, 100, 25);
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5164-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5165-    /// Test narrow mode at 119x40 (width limit boundary)
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5166-    /// 119 cols is just under the 120 wide threshold
+crates/forge-tui/src/integration_tests.rs:5167:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5168-    fn test_boundary_119x40_narrow_width_limit() {
+crates/forge-tui/src/integration_tests.rs-5169-        use crate::view::LayoutMode;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5170-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5184-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5185-    /// Test narrow mode at 120x29 (height limit boundary)
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5186-    /// 120 cols qualifies for wide, but 29 rows is below 30 minimum
+crates/forge-tui/src/integration_tests.rs:5187:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5188-    fn test_boundary_120x29_narrow_height_limit() {
+crates/forge-tui/src/integration_tests.rs-5189-        use crate::view::LayoutMode;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5190-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5202-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5203-    /// Test wide mode at 120x30 (exact wide threshold)
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5204-    /// Minimum size that qualifies for wide mode
+crates/forge-tui/src/integration_tests.rs:5205:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5206-    fn test_boundary_120x30_wide_threshold() {
+crates/forge-tui/src/integration_tests.rs-5207-        use crate::view::LayoutMode;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5208-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5222-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5223-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5224-    /// Test wide mode at 150x40 (typical wide terminal)
+crates/forge-tui/src/integration_tests.rs:5225:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5226-    fn test_boundary_150x40_wide() {
+crates/forge-tui/src/integration_tests.rs-5227-        use crate::view::LayoutMode;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5228-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5245-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5246-    /// Test wide mode at 198x38 (upper wide boundary)
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5247-    /// 198 cols is the maximum wide width, but 38 height qualifies for wide
+crates/forge-tui/src/integration_tests.rs:5248:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5249-    fn test_boundary_198x38_wide_upper_limit() {
+crates/forge-tui/src/integration_tests.rs-5250-        use crate::view::LayoutMode;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5251-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5262-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5263-    /// Test wide mode at 199x37 (height limit for ultrawide)
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5264-    /// 199 cols qualifies for ultrawide, but 37 rows is below 38 minimum
+crates/forge-tui/src/integration_tests.rs:5265:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5266-    fn test_boundary_199x37_wide_height_limit() {
+crates/forge-tui/src/integration_tests.rs-5267-        use crate::view::LayoutMode;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5268-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5280-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5281-    /// Test ultrawide mode at 199x38 (exact ultrawide threshold)
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5282-    /// Minimum size that qualifies for ultrawide mode
+crates/forge-tui/src/integration_tests.rs:5283:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5284-    fn test_boundary_199x38_ultrawide_threshold() {
+crates/forge-tui/src/integration_tests.rs-5285-        use crate::view::LayoutMode;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5286-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5303-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5304-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5305-    /// Test ultrawide mode at 250x60 (large ultrawide terminal)
+crates/forge-tui/src/integration_tests.rs:5306:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5307-    fn test_boundary_250x60_ultrawide() {
+crates/forge-tui/src/integration_tests.rs-5308-        use crate::view::LayoutMode;
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5309-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5327-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5328-
+crates/forge-tui/src/integration_tests.rs-5329-    / Test dynamic resize transitions: narrow -> wide -> ultrawide
+crates/forge-tui/src/integration_tests.rs:5330:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5331-    fn test_boundary_dynamic_resize_transitions() {
+crates/forge-tui/src/integration_tests.rs-5332-        let mut app = App::new();
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5333-
+--
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5352-    }
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5353-
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5354-    /// Test that all 10 sizes render without crash
+crates/forge-tui/src/integration_tests.rs:5355:    #[test]
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5356-    fn test_boundary_all_sizes_no_crash() {
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5357-        let sizes = [
+/home/coding/FORGE/crates/forge-tui/src/integration_tests.rs-5358-            (80, 24),   // Narrow - small

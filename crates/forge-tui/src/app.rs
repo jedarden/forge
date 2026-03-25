@@ -2361,6 +2361,19 @@ impl App {
                 if self.show_help {
                     self.show_help = false;
                 } else if self.current_view == View::Chat {
+                    // Cancel streaming if active
+                    if self.streaming_active {
+                        self.streaming_active = false;
+                        self.real_streaming_active = false;
+                        self.streaming_response.clear();
+                        self.streaming_position = 0;
+                        self.streaming_chunk_rx = None;
+                        self.streaming_query = None;
+                        self.pending_chat_exchange = None;
+                        self.status_message = Some("Streaming cancelled".to_string());
+                        self.mark_dirty();
+                        return;
+                    }
                     self.chat_input.clear();
                     self.go_back();
                 } else if self.task_search_mode {
@@ -4693,11 +4706,39 @@ impl App {
             }
         }
 
-        let list_block = Block::default()
-            .title(" Alerts ")
-            .title_style(Style::default().fg(theme.colors.header))
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.colors.border_dim));
+        let list_block = {
+            // Enhanced focus indicator for alerts panel
+            let focused = self.focus_panel == FocusPanel::AlertList;
+            let focus_icon = if focused { "▶" } else { "▪" };
+            let border_type = if focused {
+                BorderType::Double
+            } else {
+                BorderType::Plain
+            };
+            let border_style = if focused {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.colors.border_dim)
+            };
+            let title_style = if focused {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+            } else {
+                Style::default().fg(Color::Rgb(80, 80, 80))
+            };
+
+            Block::default()
+                .title(Span::styled(
+                    format!(" {} Alerts ", focus_icon),
+                    title_style,
+                ))
+                .borders(Borders::ALL)
+                .border_type(border_type)
+                .border_style(border_style)
+        };
 
         let list_paragraph = Paragraph::new(list_lines)
             .block(list_block)
@@ -4849,11 +4890,39 @@ impl App {
             ));
         }
 
-        let detail_block = Block::default()
-            .title(" Details ")
-            .title_style(Style::default().fg(theme.colors.header))
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.colors.border_dim));
+        let detail_block = {
+            // Enhanced focus indicator for details panel
+            let focused = self.focus_panel == FocusPanel::AlertList;
+            let focus_icon = if focused { "▶" } else { "▪" };
+            let border_type = if focused {
+                BorderType::Double
+            } else {
+                BorderType::Plain
+            };
+            let border_style = if focused {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.colors.border_dim)
+            };
+            let title_style = if focused {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+            } else {
+                Style::default().fg(Color::Rgb(80, 80, 80))
+            };
+
+            Block::default()
+                .title(Span::styled(
+                    format!(" {} Details ", focus_icon),
+                    title_style,
+                ))
+                .borders(Borders::ALL)
+                .border_type(border_type)
+                .border_style(border_style)
+        };
 
         let detail_paragraph = Paragraph::new(detail_lines)
             .block(detail_block)
@@ -5097,25 +5166,68 @@ impl App {
             Text::from(lines)
         };
 
-        // Draw history panel with styled text
-        let border_style = Style::default().fg(theme.colors.border_dim);
-        let title_style = Style::default()
-            .fg(theme.colors.header)
-            .add_modifier(Modifier::BOLD);
+        // Draw history panel with enhanced focus indicator
+        let history_focused = self.focus_panel == FocusPanel::ChatInput;
+        let history_focus_icon = if history_focused { "▶" } else { "▪" };
+        let history_border_type = if history_focused {
+            BorderType::Double
+        } else {
+            BorderType::Plain
+        };
+        let history_border_style = if history_focused {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.colors.border_dim)
+        };
+        let history_title_style = if history_focused {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+        } else {
+            Style::default().fg(Color::Rgb(80, 80, 80))
+        };
 
         let history_panel = Paragraph::new(history_text)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(border_style)
-                    .title(Span::styled(" Chat History ", title_style)),
+                    .border_type(history_border_type)
+                    .border_style(history_border_style)
+                    .title(Span::styled(
+                        format!(" {} Chat History ", history_focus_icon),
+                        history_title_style,
+                    )),
             )
             .wrap(Wrap { trim: false });
 
         frame.render_widget(history_panel, chunks[0]);
 
-        // Input field
-        let input_style = if self.focus_panel == FocusPanel::ChatInput {
+        // Input field with enhanced focus indicator
+        let input_focused = self.focus_panel == FocusPanel::ChatInput;
+        let input_focus_icon = if input_focused { "▶" } else { "▪" };
+        let input_border_type = if input_focused {
+            BorderType::Double
+        } else {
+            BorderType::Plain
+        };
+        let input_border_style = if input_focused {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.colors.border_dim)
+        };
+        let input_title_style = if input_focused {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+        } else {
+            Style::default().fg(Color::Rgb(80, 80, 80))
+        };
+
+        let input_style = if input_focused {
             Style::default().fg(theme.colors.hotkey)
         } else {
             Style::default().fg(theme.colors.text_dim)
@@ -5132,8 +5244,12 @@ impl App {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(theme.colors.header))
-                    .title(" Input "),
+                    .border_type(input_border_type)
+                    .border_style(input_border_style)
+                    .title(Span::styled(
+                        format!(" {} Input ", input_focus_icon),
+                        input_title_style,
+                    )),
             );
 
         frame.render_widget(input, chunks[1]);

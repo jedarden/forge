@@ -1,0 +1,559 @@
+1-//! Data management for the FORGE TUI.
+2-//!
+3-//! This module provides the data layer for the TUI, managing worker state,
+4-//! task information, cost analytics, and formatting data for display. It integrates with
+5://! forge-core's StatusWatcher to provide real-time updates, forge-worker's
+6-//! tmux discovery for additional session information, the BeadManager
+7-//! for task queue data from monitored workspaces, forge-cost for cost analytics,
+8://! LogWatcher for real-time log parsing, HealthMonitor for worker health tracking,
+9-//! and AlertManager for worker health alerts.
+10-
+11-use std::collections::HashMap;
+12-use std::path::PathBuf;
+13-
+14-use crate::activity_panel::{ActivityEntry, ActivityEventType, ActivityLogData};
+15-use crate::alert::{AlertBadge, AlertManager, AlertNotifier, AlertSeverity, AlertType};
+16-use crate::bead::BeadManager;
+17-use crate::cost_panel::{BudgetConfig, CostPanelData};
+18:use crate::log_watcher::{LogWatcher, LogWatcherConfig, LogWatcherEvent, RealtimeMetrics};
+19-use crate::metrics_panel::MetricsPanelData;
+20-use crate::perf_metrics::{get_memory_rss, PerfMetrics};
+21:use crate::status::{StatusWatcher, StatusWatcherConfig, WorkerCounts, WorkerStatusFile};
+22-use crate::subscription_panel::SubscriptionData;
+23-use forge_core::activity_monitor::{ActivityMonitor, ActivityState, WorkerActivity};
+24-use forge_core::types::WorkerStatus;
+25-use forge_cost::{CostDatabase, CostQuery, SubscriptionTracker};
+26-use forge_worker::discovery::DiscoveryResult;
+27-use forge_worker::health::{
+28-    HealthCheckType, HealthLevel, HealthMonitor, HealthMonitorConfig, WorkerHealthStatus,
+29-};
+30-
+31-/// Aggregated worker data for TUI display.
+32-#[derive(Debug, Default)]
+33-pub struct WorkerData {
+34-    /// All known workers by ID (from status files)
+35-    pub workers: HashMap<String, WorkerStatusFile>,
+36-    /// Counts by status
+37-    pub counts: WorkerCounts,
+38-    /// Last update timestamp
+39-    pub last_update: Option<std::time::Instant>,
+40-    /// Discovered tmux sessions (supplement to status files)
+41-    pub tmux_sessions: Option<DiscoveryResult>,
+42-    /// Last tmux discovery timestamp
+43-    pub tmux_last_update: Option<std::time::Instant>,
+44-    /// Health status per worker
+45-    pub health_status: HashMap<String, WorkerHealthStatus>,
+46-    /// Last health check timestamp
+47-    pub health_last_update: Option<std::time::Instant>,
+48-    /// Activity status per worker (idle/working/stuck)
+49-    pub activity_status: HashMap<String, WorkerActivity>,
+50-    /// Last activity check timestamp
+51-    pub activity_last_update: Option<std::time::Instant>,
+52-}
+53-
+54-impl WorkerData {
+55-    /// Create empty worker data (loading state).
+56:    pub fn new() -> Self {
+57-        Self::default()
+58-    }
+59-
+60:    /// Update from a StatusWatcher.
+61:    pub fn update_from_watcher(&mut self, watcher: &StatusWatcher) {
+62-        self.workers = watcher.workers().clone();
+63-        self.counts = watcher.worker_counts();
+64-        self.last_update = Some(std::time::Instant::now());
+65-    }
+66-
+67-    /// Update from tmux discovery result.
+68-    pub fn update_from_tmux(&mut self, result: DiscoveryResult) {
+69-        self.tmux_sessions = Some(result);
+70-        self.tmux_last_update = Some(std::time::Instant::now());
+71-    }
+72-
+73-    /// Update health status from health monitor.
+74-    pub fn update_health_status(&mut self, health: HashMap<String, WorkerHealthStatus>) {
+75-        self.health_status = health;
+76-        self.health_last_update = Some(std::time::Instant::now());
+77-    }
+78-
+79-    /// Get health status for a specific worker.
+80-    pub fn get_health(&self, worker_id: &str) -> Option<&WorkerHealthStatus> {
+81-        self.health_status.get(worker_id)
+--
+540-const TMUX_DISCOVERY_INTERVAL_SECS: u64 = 5;
+541-
+542-/// Interval for cost data polling (10 seconds).
+543-const COST_POLL_INTERVAL_SECS: u64 = 10;
+544-
+545-/// Interval for metrics data polling (10 seconds).
+546-const METRICS_POLL_INTERVAL_SECS: u64 = 10;
+547-
+548-/// Interval for log watcher polling (500ms).
+549-const LOG_WATCHER_POLL_INTERVAL_MS: u64 = 500;
+550-
+551-/// Interval for subscription data polling (60 seconds).
+552-const SUBSCRIPTION_POLL_INTERVAL_SECS: u64 = 60;
+553-
+554-/// Interval for health monitoring (30 seconds).
+555-const HEALTH_POLL_INTERVAL_SECS: u64 = 30;
+556-
+557-/// Interval for activity monitoring (15 seconds).
+558-const ACTIVITY_POLL_INTERVAL_SECS: u64 = 15;
+559-
+560:/// Data manager that handles the StatusWatcher, BeadManager, CostDatabase, LogWatcher, HealthMonitor, AlertManager, ActivityMonitor, and provides formatted data.
+561-pub struct DataManager {
+562:    /// StatusWatcher for real-time updates
+563:    watcher: Option<StatusWatcher>,
+564-    /// Cached worker data
+565-    pub worker_data: WorkerData,
+566-    /// Bead manager for task queue data
+567-    pub bead_manager: BeadManager,
+568-    /// Cost database for analytics
+569-    cost_db: Option<CostDatabase>,
+570-    /// Cached cost panel data
+571-    pub cost_data: CostPanelData,
+572-    /// Subscription tracker for subscription management
+573-    subscription_tracker: SubscriptionTracker,
+574-    /// Subscription tracking data
+575-    pub subscription_data: SubscriptionData,
+576-    /// Performance metrics data
+577-    pub metrics_data: MetricsPanelData,
+578-    /// Real-time metrics from log parsing
+579-    pub realtime_metrics: RealtimeMetrics,
+580-    /// Health monitor for worker health checks
+581-    health_monitor: Option<HealthMonitor>,
+582-    /// Activity monitor for idle/stuck detection
+583-    activity_monitor: ActivityMonitor,
+--
+597-    last_cost_poll: Option<std::time::Instant>,
+598-    /// Last metrics poll time
+599-    last_metrics_poll: Option<std::time::Instant>,
+600-    /// Last log watcher poll time
+601-    last_log_poll: Option<std::time::Instant>,
+602-    /// Last subscription poll time
+603-    last_subscription_poll: Option<std::time::Instant>,
+604-    /// Last health check time
+605-    last_health_poll: Option<std::time::Instant>,
+606-    /// Last activity monitor poll time
+607-    last_activity_poll: Option<std::time::Instant>,
+608-    /// Tokio runtime for async tmux discovery
+609-    runtime: Option<tokio::runtime::Runtime>,
+610-    /// Dirty flag - whether data changed since last check
+611-    dirty: bool,
+612-    /// Cached worker count for quick comparison
+613-    cached_worker_count: usize,
+614-    /// Cached bead count for quick comparison
+615-    cached_bead_count: usize,
+616-    /// Log watcher for real-time API usage parsing
+617:    log_watcher: Option<LogWatcher>,
+618-    /// Log watcher event receiver
+619:    log_rx: Option<std::sync::mpsc::Receiver<LogWatcherEvent>>,
+620-    /// Previous worker statuses for change detection
+621-    prev_worker_statuses: HashMap<String, WorkerStatus>,
+622-}
+623-
+624:impl DataManager {
+625-    /// Check if data changed since last poll.
+626-    pub fn is_dirty(&self) -> bool {
+627-        self.dirty
+628-    }
+629-
+630-    /// Clear the dirty flag.
+631-    pub fn clear_dirty(&mut self) {
+632-        self.dirty = false;
+633-    }
+634-
+635-    /// Take and clear the dirty flag.
+636-    pub fn take_dirty(&mut self) -> bool {
+637-        if self.dirty {
+638-            self.dirty = false;
+639-            true
+640-        } else {
+641-            false
+642-        }
+643-    }
+644-
+645:    /// Create a new DataManager, initializing the StatusWatcher, BeadManager, and CostDatabase.
+646:    pub fn new() -> Self {
+647-        use std::time::Instant;
+648-        use tracing::info;
+649-
+650-        let start = Instant::now();
+651-        info!("⏱️ DataManager::new() started");
+652-
+653:        // In test mode, skip creating the StatusWatcher to avoid exhausting inotify limits
+654-        // Tests that need file watching should create their own watchers with isolated directories
+655-        let (watcher, init_error) = if cfg!(test) {
+656-            (None, None)
+657-        } else {
+658:            match StatusWatcher::new(StatusWatcherConfig::default()) {
+659-                Ok(w) => (Some(w), None),
+660-                Err(e) => (
+661-                    None,
+662-                    Some(format!("Failed to initialize status watcher: {}", e)),
+663-                ),
+664-            }
+665-        };
+666:        info!("⏱️ StatusWatcher initialized in {:?}", start.elapsed());
+667-
+668-        // Create a tokio runtime for async tmux discovery
+669-        let runtime_start = Instant::now();
+670-        let runtime = tokio::runtime::Builder::new_current_thread()
+671-            .enable_all()
+672-            .build()
+673-            .ok();
+674-        info!("⏱️ Tokio runtime created in {:?}", runtime_start.elapsed());
+675-
+676-        // Initialize bead manager with default workspaces
+677-        let bead_start = Instant::now();
+678-        let mut bead_manager = BeadManager::new();
+679-        bead_manager.add_default_workspaces();
+680-        info!("⏱️ BeadManager initialized in {:?}", bead_start.elapsed());
+681-
+682-        // Initialize cost database from default location
+683-        let cost_start = Instant::now();
+684-        let cost_db = Self::init_cost_database();
+685-        let cost_data = CostPanelData::loading();
+686-        info!("⏱️ Cost database initialized in {:?}", cost_start.elapsed());
+687-
+688-        // Initialize metrics data
+689-        let metrics_data = MetricsPanelData::loading();
+690-
+691-        // Initialize subscription tracker and data
+692-        let sub_start = Instant::now();
+693-        let subscription_tracker = SubscriptionTracker::with_default_config();
+694-        let subscription_data = Self::build_subscription_data(&subscription_tracker);
+695-        info!(
+696-            "⏱️ Subscription tracker initialized in {:?}",
+697-            sub_start.elapsed()
+698-        );
+699-
+700-        // Initialize real-time metrics from log parsing
+701-        let realtime_metrics = RealtimeMetrics::new();
+702-
+703-        // Initialize log watcher for real-time API usage parsing
+704:        let (log_watcher, log_rx) = match LogWatcher::new(LogWatcherConfig::default()) {
+705-            Ok((watcher, rx)) => (Some(watcher), Some(rx)),
+706-            Err(e) => {
+707-                info!("Failed to initialize log watcher: {}", e);
+708-                (None, None)
+709-            }
+710-        };
+711-
+712-        // Initialize health monitor
+713-        let health_start = Instant::now();
+714-        let health_monitor = match HealthMonitor::new(HealthMonitorConfig::default()) {
+715-            Ok(m) => {
+716-                info!(
+717-                    "⏱️ HealthMonitor initialized in {:?}",
+718-                    health_start.elapsed()
+719-                );
+720-                Some(m)
+721-            }
+722-            Err(e) => {
+723-                info!("Failed to initialize health monitor: {}", e);
+724-                None
+--
+784-
+785-    /// Initialize the cost database.
+786-    fn init_cost_database() -> Option<CostDatabase> {
+787-        / Try default location: ~/.forge/costs.db
+788-        let home = std::env::var("HOME").ok()?;
+789-        let db_path = PathBuf::from(home).join(".forge").join("costs.db");
+790-
+791-        if db_path.exists() {
+792-            CostDatabase::open(&db_path).ok()
+793-        } else {
+794-            // Try to create it
+795-            if let Some(parent) = db_path.parent() {
+796-                std::fs::create_dir_all(parent).ok()?;
+797-            }
+798-            CostDatabase::open(&db_path).ok()
+799-        }
+800-    }
+801-
+802-    /// Create a DataManager with a custom status directory.
+803-    pub fn with_status_dir(status_dir: std::path::PathBuf) -> Self {
+804:        let config = StatusWatcherConfig::default().with_status_dir(status_dir);
+805:        let (watcher, init_error) = match StatusWatcher::new(config) {
+806-            Ok(w) => (Some(w), None),
+807-            Err(e) => (
+808-                None,
+809-                Some(format!("Failed to initialize status watcher: {}", e)),
+810-            ),
+811-        };
+812-
+813-        let runtime = tokio::runtime::Builder::new_current_thread()
+814-            .enable_all()
+815-            .build()
+816-            .ok();
+817-
+818-        // Initialize bead manager with default workspaces
+819-        let mut bead_manager = BeadManager::new();
+820-        bead_manager.add_default_workspaces();
+821-
+822-        // Initialize cost database
+823-        let cost_db = Self::init_cost_database();
+824-        let cost_data = CostPanelData::loading();
+825-
+826-        // Initialize metrics data
+827-        let metrics_data = MetricsPanelData::loading();
+828-
+829-        // Initialize subscription tracker and data
+830-        let subscription_tracker = SubscriptionTracker::with_default_config();
+831-        let subscription_data = Self::build_subscription_data(&subscription_tracker);
+832-
+833-        // Initialize real-time metrics from log parsing
+834-        let realtime_metrics = RealtimeMetrics::new();
+835-
+836-        // Initialize log watcher for real-time API usage parsing
+837:        let (log_watcher, log_rx) = match LogWatcher::new(LogWatcherConfig::default()) {
+838-            Ok((watcher, rx)) => (Some(watcher), Some(rx)),
+839-            Err(_) => (None, None),
+840-        };
+841-
+842-        // Initialize health monitor
+843-        let health_monitor = HealthMonitor::new(HealthMonitorConfig::default()).ok();
+844-
+845-        // Initialize alert manager for worker health alerts
+846-        let alert_manager = AlertManager::new(100);
+847-
+848-        // Initialize alert notifier for terminal bell and visual notifications
+849-        let alert_notifier = AlertNotifier::new();
+850-
+851-        // Initialize activity monitor for idle/stuck detection
+852-        let activity_monitor = ActivityMonitor::with_defaults();
+853-
+854-        // Initialize activity log data
+855-        let activity_data = ActivityLogData::with_default_capacity();
+856-
+857-        // Initialize FORGE internal performance metrics
+--
+962-            let alert = tracker.get_alert(&summary.name);
+963-            if alert.is_alert() {
+964-                // Mark as critical/high usage in the status
+965-                if matches!(
+966-                    alert,
+967-                    forge_cost::SubscriptionAlert::Critical
+968-                        | forge_cost::SubscriptionAlert::Depleted
+969-                ) {
+970-                    // Override action to show urgency
+971-                    status.current_usage = status.limit.unwrap_or(100) - 1; // Show 99% used
+972-                }
+973-            }
+974-
+975-            data.subscriptions.push(status);
+976-        }
+977-
+978-        data.last_updated = Some(Utc::now());
+979-        data
+980-    }
+981-
+982:    /// Poll for updates from the StatusWatcher, BeadManager, CostDatabase, and tmux discovery.
+983-    ///
+984-    /// This should be called regularly (e.g., in the event loop).
+985-    /// Returns true if any data changed.
+986-    pub fn poll_updates(&mut self) -> bool {
+987-        let mut changed = false;
+988-        let previous_worker_count = self.cached_worker_count;
+989-        let previous_bead_count = self.cached_bead_count;
+990-
+991-        // Poll status watcher
+992-        if let Some(ref mut watcher) = self.watcher {
+993-            // Drain all available events and check if any were received
+994-            let mut events_received = false;
+995-            while watcher.try_recv().is_some() {
+996-                events_received = true;
+997-            }
+998-
+999-            // Only update if events were received
+1000-            if events_received {
+1001-                // Clone current workers to detect changes (avoids borrow issues)
+1002-                let current_workers = watcher.workers().clone();
+--
+1813-        }
+1814-
+1815-        // Get average cost by model
+1816-        match db.get_avg_cost_per_task_by_model() {
+1817-            Ok(data) => {
+1818-                self.metrics_data.set_avg_cost_by_model(data);
+1819-            }
+1820-            Err(_) => {}
+1821-        }
+1822-    }
+1823-
+1824-    /// Poll log watcher for real-time API usage updates.
+1825-    fn poll_log_watcher(&mut self) {
+1826-        // Collect calls to persist to database
+1827-        let mut calls_to_persist: Vec<forge_cost::ApiCall> = Vec::new();
+1828-
+1829-        // Process events from log watcher channel
+1830-        if let Some(ref rx) = self.log_rx {
+1831-            while let Ok(event) = rx.try_recv() {
+1832-                match event {
+1833:                    LogWatcherEvent::ApiCallParsed { call } => {
+1834-                        // Update real-time metrics
+1835-                        self.realtime_metrics.record_call(&call);
+1836-
+1837-                        // Collect for database persistence
+1838-                        calls_to_persist.push(call.clone());
+1839-
+1840-                        // Add activity entry for API call
+1841-                        let cost_str = if call.cost_usd >= 1.0 {
+1842-                            format!("${:.2}", call.cost_usd)
+1843-                        } else if call.cost_usd >= 0.01 {
+1844-                            format!("${:.3}", call.cost_usd)
+1845-                        } else {
+1846-                            format!("${:.4}", call.cost_usd)
+1847-                        };
+1848-                        let msg = format!(
+1849-                            "{} API call - {} in, {} out ({})",
+1850-                            call.model, call.input_tokens, call.output_tokens, cost_str
+1851-                        );
+1852-                        self.activity_data.push(
+1853-                            ActivityEntry::new(ActivityEventType::ApiCall, msg)
+1854-                                .with_source(&call.worker_id),
+1855-                        );
+1856-
+1857-                        // The real-time metrics are now available for panels
+1858-                        // via self.realtime_metrics
+1859-                        self.dirty = true;
+1860-                    }
+1861:                    LogWatcherEvent::FileDiscovered { path, worker_id } => {
+1862-                        tracing::debug!("Log file discovered: {:?} for worker {}", path, worker_id);
+1863-                    }
+1864:                    LogWatcherEvent::FileRotated { path, worker_id } => {
+1865-                        tracing::debug!("Log file rotated: {:?} for worker {}", path, worker_id);
+1866-                    }
+1867:                    LogWatcherEvent::Error { message } => {
+1868-                        tracing::warn!("Log watcher error: {}", message);
+1869-                    }
+1870-                }
+1871-            }
+1872-        }
+1873-
+1874-        // Also poll the log watcher directly for any new content
+1875-        if let Some(ref mut watcher) = self.log_watcher {
+1876-            let events = watcher.poll();
+1877-            for event in events {
+1878:                if let LogWatcherEvent::ApiCallParsed { call } = event {
+1879-                    self.realtime_metrics.record_call(&call);
+1880-                    calls_to_persist.push(call);
+1881-                    self.dirty = true;
+1882-                }
+1883-            }
+1884-        }
+1885-
+1886-        // Persist collected API calls to the database for historical tracking
+1887-        if !calls_to_persist.is_empty() {
+1888-            if let Some(ref db) = self.cost_db {
+1889-                if let Err(e) = db.insert_api_calls(&calls_to_persist) {
+1890-                    tracing::warn!(
+1891-                        "Failed to persist {} API calls to database: {}",
+1892-                        calls_to_persist.len(),
+1893-                        e
+1894-                    );
+1895-                } else {
+1896-                    tracing::debug!("Persisted {} API calls to database", calls_to_persist.len());
+1897-                }
+1898-            }
+--
+2095-        let start = Instant::now();
+2096-        let manager = DataManager::with_status_dir(status_dir);
+2097-        let elapsed = start.elapsed();
+2098-
+2099-        assert!(
+2100-            elapsed < Duration::from_secs(2),
+2101-            "DataManager with empty status dir took {:?}",
+2102-            elapsed
+2103-        );
+2104-
+2105-        // Verify manager works correctly (initial state has no workers from status files)
+2106-        / Note: worker_counts() returns 0 before first poll, which is correct for fast init
+2107-        assert_eq!(manager.worker_counts().total, 0);
+2108-    }
+2109-
+2110-    /// Test initialization with 100 status files to verify O(n) scaling.
+2111-    /// This tests the scenario described in fg-2ir where users may have
+2112-    /// many workers running.
+2113-    #[test]
+2114-    fn test_datamanager_init_100_status_files() {
+2115:        use crate::status::{StatusWatcher, StatusWatcherConfig};
+2116-        use std::time::{Duration, Instant};
+2117-        use tempfile::TempDir;
+2118-
+2119-        let temp_dir = TempDir::new().unwrap();
+2120-        let status_dir = temp_dir.path().join("status");
+2121-        std::fs::create_dir_all(&status_dir).unwrap();
+2122-
+2123-        // Create 100 status files
+2124-        for i in 0..100 {
+2125-            let content = format!(
+2126-                r#"{{"worker_id": "worker-{}", "status": "active", "model": "test-model"}}"#,
+2127-                i
+2128-            );
+2129-            std::fs::write(status_dir.join(format!("worker-{}.json", i)), content).unwrap();
+2130-        }
+2131-
+2132:        // Test StatusWatcher directly (which is responsible for loading status files)
+2133:        let config = StatusWatcherConfig::default().with_status_dir(&status_dir);
+2134-
+2135-        let start = Instant::now();
+2136:        let watcher = StatusWatcher::new(config).unwrap();
+2137-        let elapsed = start.elapsed();
+2138-
+2139-        // Even with 100 files, should complete well under 500ms
+2140-        assert!(
+2141-            elapsed < Duration::from_millis(500),
+2142:            "StatusWatcher with 100 status files took {:?}",
+2143-            elapsed
+2144-        );
+2145-
+2146-        // Verify all workers were loaded during initial scan
+2147-        assert_eq!(
+2148-            watcher.workers().len(),
+2149-            100,
+2150-            "Should have loaded all 100 workers"
+2151-        );
+2152-    }
+2153-
+2154:    /// Test that StatusWatcher initialization is fast (< 100ms target).
+2155-    #[test]
+2156-    fn test_statuswatcher_init_performance() {
+2157:        use crate::status::{StatusWatcher, StatusWatcherConfig};
+2158-        use std::time::{Duration, Instant};
+2159-        use tempfile::TempDir;
+2160-
+2161-        let temp_dir = TempDir::new().unwrap();
+2162-        let status_dir = temp_dir.path().join("status");
+2163-        std::fs::create_dir_all(&status_dir).unwrap();
+2164-
+2165:        let config = StatusWatcherConfig::default().with_status_dir(&status_dir);
+2166-
+2167-        let start = Instant::now();
+2168:        let _watcher = StatusWatcher::new(config).unwrap();
+2169-        let elapsed = start.elapsed();
+2170-
+2171-        assert!(
+2172-            elapsed < Duration::from_millis(100),
+2173:            "StatusWatcher init took {:?}, exceeds 100ms target",
+2174-            elapsed
+2175-        );
+2176-    }
+2177-
+2178-    /// Test that BeadManager initialization is fast (< 50ms target).
+2179-    #[test]
+2180-    fn test_beadmanager_init_performance() {
+2181-        use crate::bead::BeadManager;
+2182-        use std::time::{Duration, Instant};
+2183-
+2184-        let start = Instant::now();
+2185-        let mut manager = BeadManager::new();
+2186-        manager.add_default_workspaces();
+2187-        let elapsed = start.elapsed();
+2188-
+2189-        assert!(
+2190-            elapsed < Duration::from_millis(50),
+2191-            "BeadManager init took {:?}, exceeds 50ms target",
+2192-            elapsed
+2193-        );
