@@ -81,9 +81,24 @@ All tasks implemented:
   - `show_confirmation` flag triggers confirmation overlay
   - Kill/Pause/Resume actions all show y/n confirmation before executing
 
-### Phase G — Phase 2 Intelligence (Model Routing)
+### Phase G — Phase 2 Intelligence (Model Routing) ✅ COMPLETE
 
-Not started.
+**Goal**: Implement intelligent model routing based on task complexity
+
+All tasks implemented:
+- [x] Score incoming tasks 0-100 for complexity — `ComplexityScorer` in `forge-worker/src/complexity.rs`
+- [x] Route low-complexity tasks to Haiku/Sonnet, high-complexity to Opus — `Router` in `forge-worker/src/router.rs`
+- [x] Track routing decisions and cost savings — `RoutingData` in `forge-tui/src/routing_panel.rs`
+- [x] Display routing stats in new Routing view — Hotkey `[r]`
+
+**Implementation**:
+- `forge-worker/src/complexity.rs` — Task complexity scoring (0-100 scale)
+- `forge-worker/src/router.rs` — Multi-tier model routing (Budget/Standard/Premium)
+- `forge-tui/src/routing_panel.rs` — Routing analytics visualization
+- `forge-tui/src/data.rs` — `RoutingData` integrated into `DataManager`
+- `forge-tui/src/view.rs` — New `View::Routing` variant with hotkey 'r'
+
+**Commit**: `e2fbbbe`
 
 ### Phase H — Subscription Tracking
 
