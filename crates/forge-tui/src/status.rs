@@ -45,8 +45,20 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use notify::RecursiveMode;
 use notify_debouncer_full::{
-    DebounceEventResult, DebouncedEvent, Debouncer, RecommendedCache, new_debouncer,
+    DebounceEventResult, DebouncedEvent, NoCache, RecommendedCache, new_debouncer_opt,
 };
+
+// In tests, use PollWatcher to avoid inotify instance limits.
+// In production, use RecommendedWatcher (inotify on Linux) for efficiency.
+#[cfg(test)]
+use notify::PollWatcher;
+#[cfg(test)]
+type DebouncerType = notify_debouncer_full::Debouncer<PollWatcher, NoCache>;
+
+#[cfg(not(test))]
+use notify::RecommendedWatcher;
+#[cfg(not(test))]
+type DebouncerType = notify_debouncer_full::Debouncer<RecommendedWatcher, RecommendedCache>;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
@@ -270,7 +282,7 @@ pub struct StatusWatcher {
     config: StatusWatcherConfig,
 
     /// The debounced file watcher
-    _debouncer: Option<Debouncer<notify::RecommendedWatcher, RecommendedCache>>,
+    _debouncer: Option<DebouncerType>,
 
     /// Receiver for status events
     event_rx: Receiver<StatusEvent>,
@@ -314,16 +326,39 @@ impl StatusWatcher {
         let (event_tx, event_rx) = mpsc::channel();
 
         // Create debounced watcher
+        // In tests: use PollWatcher to avoid inotify instance limits
+        // In production: use RecommendedWatcher (inotify on Linux) for efficiency
         let status_dir = config.status_dir.clone();
         let tx_clone = event_tx.clone();
 
-        let debouncer = new_debouncer(
-            Duration::from_millis(config.debounce_ms),
-            None,
-            move |result: DebounceEventResult| {
-                Self::handle_debounced_events(result, &status_dir, &tx_clone);
-            },
-        )?;
+        #[cfg(test)]
+        let debouncer = {
+            // Use PollWatcher in tests to avoid exhausting inotify limits
+            let poll_config = notify::Config::default()
+                .with_poll_interval(Duration::from_millis(100));
+            new_debouncer_opt::<_, PollWatcher, _>(
+                Duration::from_millis(config.debounce_ms),
+                None,
+                move |result: DebounceEventResult| {
+                    Self::handle_debounced_events(result, &status_dir, &tx_clone);
+                },
+                NoCache,
+                poll_config,
+            )?
+        };
+
+        #[cfg(not(test))]
+        let debouncer = {
+            new_debouncer_opt::<_, RecommendedWatcher, _>(
+                Duration::from_millis(config.debounce_ms),
+                None,
+                move |result: DebounceEventResult| {
+                    Self::handle_debounced_events(result, &status_dir, &tx_clone);
+                },
+                RecommendedCache::new(),
+                notify::Config::default(),
+            )?
+        };
 
         let mut watcher = Self {
             config,
