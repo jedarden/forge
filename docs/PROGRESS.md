@@ -84,5 +84,23 @@
 - Unused imports removed
 - Code quality improved
 
+## Post-Phase K Bug Fix (2026-03-25)
+
+**Issue**: Hotkeys `u` (Subscriptions) and `r` (Routing) were defined in `view.rs` but not implemented in `InputHandler` in `event.rs`.
+
+**Root cause**: The `InputHandler::handle_normal_mode()` method was missing mappings for:
+- `'u'` → Subscriptions view
+- `'r'` → Routing view (when not in Workers view)
+
+Additionally, `'r'` was incorrectly mapped to `Refresh` instead of `Routing` when not in Workers view.
+
+**Fix**: Added proper mappings in `event.rs`:
+- `KeyCode::Char('u')` → `AppEvent::SwitchView(View::Subscriptions)`
+- `KeyCode::Char('r')` → `AppEvent::SwitchView(View::Routing)` (when not in Workers view)
+
+Also fixed a corrupted line ending (octal 012 character) on line 240.
+
+**Verification**: All 510 tests pass. TUI smoke test confirms all hotkeys work correctly.
+
 ## Current Version
 - **v0.2.0** — All planned features implemented and tested
