@@ -1029,7 +1029,6 @@ fn print_validation_results(results: &validator::ComprehensiveValidationResults,
     // Launchers
     if results.launcher_valid {
         let count = results.launcher_count;
-        let plural = if count == 1 { "" } else { "s" };
         println!("✅ Launchers: {} found, executable", count);
         if verbose {
             for launcher in &results.launcher_names {
