@@ -266,11 +266,11 @@ fn main() -> ExitCode {
     }
 
     // Validate config file if it exists
-    if !needs_onboarding() {
-        if let Err(e) = validate_config() {
-            eprintln!("\n{}", e);
-            return ExitCode::from(1);
-        }
+    if !needs_onboarding()
+        && let Err(e) = validate_config()
+    {
+        eprintln!("\n{}", e);
+        return ExitCode::from(1);
     }
 
     // Check for required dependencies
@@ -429,10 +429,10 @@ fn run_onboarding(
                         backend,
                         tool.status_message()
                     );
-                    if tool.status == detection::ToolStatus::MissingApiKey {
-                        if let Some(env_var) = &tool.api_key_env_var {
-                            eprintln!("Set the {} environment variable and try again", env_var);
-                        }
+                    if tool.status == detection::ToolStatus::MissingApiKey
+                        && let Some(env_var) = &tool.api_key_env_var
+                    {
+                        eprintln!("Set the {} environment variable and try again", env_var);
                     }
                     return Err(format!("Backend '{}' is not ready", backend).into());
                 }
@@ -684,23 +684,23 @@ fn backup_config(forge_dir: &std::path::Path, config_path: &std::path::Path) -> 
 
     // Check for launcher scripts that might have custom modifications
     let launchers_dir = forge_dir.join("launchers");
-    if launchers_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(&launchers_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file() {
-                    // Check if the file contains any comments that suggest custom modifications
-                    if let Ok(content) = std::fs::read_to_string(&path) {
-                        if content.contains("# CUSTOM:") || content.contains("# USER:") || content.contains("# Modified by") {
-                            eprintln!("⚠️  Warning: {} may contain custom modifications", path.display());
-                            // Backup the launcher script too
-                            let launcher_backup = forge_dir.join(format!(
-                                "launchers/{}.backup.{}",
-                                entry.file_name().to_string_lossy(),
-                                timestamp
-                            ));
-                            let _ = std::fs::copy(&path, &launcher_backup);
-                        }
+    if launchers_dir.exists()
+        && let Ok(entries) = std::fs::read_dir(&launchers_dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                // Check if the file contains any comments that suggest custom modifications
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    if content.contains("# CUSTOM:") || content.contains("# USER:") || content.contains("# Modified by") {
+                        eprintln!("⚠️  Warning: {} may contain custom modifications", path.display());
+                        // Backup the launcher script too
+                        let launcher_backup = forge_dir.join(format!(
+                            "launchers/{}.backup.{}",
+                            entry.file_name().to_string_lossy(),
+                            timestamp
+                        ));
+                        let _ = std::fs::copy(&path, &launcher_backup);
                     }
                 }
             }

@@ -140,9 +140,9 @@ impl ActivityEntry {
     pub fn format_display(&self) -> String {
         let time = self.timestamp.with_timezone(&Local).format("%H:%M:%S");
         if let Some(ref source) = self.source {
-            format!("[{}] {}", source, self.message)
+            format!("[{}] [{}] {}", time, source, self.message)
         } else {
-            self.message.clone()
+            format!("[{}] {}", time, self.message)
         }
     }
 }
