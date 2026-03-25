@@ -168,9 +168,9 @@ All tasks completed:
 
 **Goal**: Actually run the TUI binary and verify all functionality works at runtime
 
-**Test Date**: 2026-03-25 15:23 UTC (fresh verification)
+**Test Date**: 2026-03-25 16:10 UTC (fresh verification)
 **Binary**: `./target/release/forge` (v0.2.0)
-**Environment**: Hetzner server, tested in tmux sessions
+**Environment**: Hetzner server, tested in tmux sessions (140x40, 80x24)
 **Test Suite**: All 510 forge-tui tests passing
 
 #### Step 1 — Build Release Binary ✅ PASS
@@ -203,9 +203,9 @@ All views switch correctly without crashes:
 - Input field accepts text with visible cursor (`█`)
 - Messages send on Enter
 - Error displayed gracefully when `claude` CLI not available:
-  - `[11:27:12] You: help`
+  - `[12:05:38] You: hellohelp`
   - `❌ Error: API request failed: claude-cli exited with status: ExitStatus(unix_wait_status(256))`
-  - `📊 [160ms | claude-cli]`
+  - `📊 [168ms | claude-cli]`
 - Streaming indicator shows "⏳ Processing..." during request
 - **No crash** when chat backend fails — graceful degradation
 
@@ -215,14 +215,15 @@ All views switch correctly without crashes:
 - Text truncation visible:
   - "N workers foun ." (missing 'd')
   - "N recent act vity." (missing 'i')
+  - "Ready:l4 |aIn Progrtss:n4b|eBlocked:e1e" (garbled characters)
 - Layout still renders 3-column mode (may not detect narrow width)
 
 #### Step 6 — Worker Spawn Test ✅ PASS (with expected error)
-- Spawn dialog appears with `s` key in Workers view
-- Shows confirmation: "Are you sure you want to spawn a Sonnet 4.5 worker?"
+- Spawn dialog appears with `G` key in Workers view (GLM worker)
+- Shows confirmation: "Are you sure you want to spawn a GLM-4.7 worker?"
 - Options: `[y] Yes [n] No [Esc] Cancel`
 - Spawn attempt shows sensible error when launcher script missing:
-  - `Failed to spawn worker sonnet-20260325-113107-65166: Launcher not found: /home/coding/forge/scripts/launchers/bead-worker-launcher.sh`
+  - `Failed to spawn GLM-4.7 worker: Launcher not found: /home/coding/forge/scripts/launchers/bead-worker-launcher.sh`
 - **No crash** when spawn fails — graceful error handling
 
 #### Summary
