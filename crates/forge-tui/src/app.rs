@@ -1368,6 +1368,7 @@ impl App {
                 View::Logs => FocusPanel::ActivityLog,
                 View::Subscriptions => FocusPanel::Subscriptions,
                 View::Alerts => FocusPanel::None,
+                View::Routing => FocusPanel::None,
                 View::Chat => FocusPanel::ChatInput,
             };
 
@@ -4171,6 +4172,7 @@ impl App {
             View::Logs => self.draw_logs(frame, area),
             View::Subscriptions => self.draw_subscriptions(frame, area),
             View::Alerts => self.draw_alerts(frame, area),
+            View::Routing => self.draw_routing(frame, area),
             View::Chat => self.draw_chat(frame, area),
         }
     }
@@ -4198,6 +4200,8 @@ impl App {
             Span::raw("Subs "),
             Span::styled("[a]", hotkey_style),
             Span::raw("Alerts "),
+            Span::styled("[r]", hotkey_style),
+            Span::raw("Route "),
             Span::styled("[:]", hotkey_style),
             Span::raw("Chat "),
             Span::styled("[?]", hotkey_style),
@@ -4543,6 +4547,15 @@ impl App {
         let cost_panel = CostPanel::new(&self.data_manager.cost_data)
             .focused(self.focus_panel == FocusPanel::CostBreakdown);
         frame.render_widget(cost_panel, area);
+    }
+
+    /// Draw the Routing view (model routing analytics and complexity scoring).
+    fn draw_routing(&self, frame: &mut Frame, area: Rect) {
+        use crate::routing_panel::RoutingPanel;
+
+        // Use the RoutingPanel widget for routing analytics display
+        let routing_panel = RoutingPanel::new(&self.data_manager.routing_data);
+        frame.render_widget(routing_panel, area);
     }
 
     /// Draw the Perf view (FORGE internal performance metrics).

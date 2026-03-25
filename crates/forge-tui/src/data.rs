@@ -18,15 +18,19 @@ use crate::cost_panel::{BudgetConfig, CostPanelData};
 use crate::log_watcher::{LogWatcher, LogWatcherConfig, LogWatcherEvent, RealtimeMetrics};
 use crate::metrics_panel::MetricsPanelData;
 use crate::perf_metrics::{get_memory_rss, PerfMetrics};
+use crate::routing_panel::RoutingData;
 use crate::status::{StatusWatcher, StatusWatcherConfig, WorkerCounts, WorkerStatusFile};
 use crate::subscription_panel::SubscriptionData;
 use forge_core::activity_monitor::{ActivityMonitor, ActivityState, WorkerActivity};
 use forge_core::types::WorkerStatus;
 use forge_cost::{CostDatabase, CostQuery, SubscriptionTracker};
+use forge_worker::complexity::{ComplexityScorer, ComplexityTier, TaskContext};
 use forge_worker::discovery::DiscoveryResult;
 use forge_worker::health::{
     HealthCheckType, HealthLevel, HealthMonitor, HealthMonitorConfig, WorkerHealthStatus,
 };
+use forge_worker::router::{Router, TaskMetadata};
+use forge_core::types::Priority;
 
 /// Aggregated worker data for TUI display.
 #[derive(Debug, Default)]
@@ -591,6 +595,14 @@ pub struct DataManager {
     pub perf_metrics: PerfMetrics,
     /// Error message if watcher failed to initialize
     init_error: Option<String>,
+    /// Router for intelligent model assignment
+    router: Router,
+    /// Complexity scorer for task analysis
+    complexity_scorer: ComplexityScorer,
+    /// Routing analytics data for display
+    pub routing_data: RoutingData,
+    /// Last routing poll time
+    last_routing_poll: Option<std::time::Instant>,
     /// Last tmux discovery time
     last_tmux_poll: Option<std::time::Instant>,
     /// Last cost poll time
@@ -757,6 +769,9 @@ impl DataManager {
             activity_data,
             perf_metrics,
             init_error,
+            router: Router::new(),
+            complexity_scorer: ComplexityScorer::new(),
+            routing_data: RoutingData::new(),
             last_tmux_poll: None,
             last_cost_poll: None,
             last_metrics_poll: None,
@@ -764,6 +779,7 @@ impl DataManager {
             last_subscription_poll: None,
             last_health_poll: None,
             last_activity_poll: None,
+            last_routing_poll: None,
             runtime,
             dirty: false,
             cached_worker_count: 0,
@@ -877,6 +893,9 @@ impl DataManager {
             activity_data,
             perf_metrics,
             init_error,
+            router: Router::new(),
+            complexity_scorer: ComplexityScorer::new(),
+            routing_data: RoutingData::new(),
             last_tmux_poll: None,
             last_cost_poll: None,
             last_metrics_poll: None,
@@ -884,6 +903,7 @@ impl DataManager {
             last_subscription_poll: None,
             last_health_poll: None,
             last_activity_poll: None,
+            last_routing_poll: None,
             runtime,
             dirty: false,
             cached_worker_count: 0,
@@ -1144,6 +1164,16 @@ impl DataManager {
         if should_poll_activity {
             self.poll_activity_monitor();
             self.last_activity_poll = Some(std::time::Instant::now());
+        }
+
+        // Periodically poll routing data (every 5 seconds)
+        let should_poll_routing = self
+            .last_routing_poll
+            .map_or(true, |t| t.elapsed().as_secs() >= 5);
+
+        if should_poll_routing {
+            self.poll_routing_data();
+            self.last_routing_poll = Some(std::time::Instant::now());
         }
 
         // Update cached counts and mark dirty if changed
@@ -1970,6 +2000,142 @@ impl DataManager {
     /// Check if visual flash is currently active.
     pub fn is_flashing(&self) -> bool {
         self.alert_notifier.is_flashing()
+    }
+
+    // ========== Model Routing & Complexity Scoring ==========
+
+    /// Score a task's complexity (0-100).
+    ///
+    /// Uses the ComplexityScorer to analyze task title, description, labels,
+    /// and other factors to determine the appropriate model tier.
+    pub fn score_task_complexity(
+        &self,
+        title: &str,
+        description: Option<&str>,
+        labels: &[String],
+    ) -> u32 {
+        let mut context = TaskContext::new(title)
+            .with_labels(labels.to_vec());
+
+        if let Some(desc) = description {
+            context = context.with_description(desc);
+        }
+
+        self.complexity_scorer.score(&context).score
+    }
+
+    /// Route a task to the appropriate model tier.
+    ///
+    /// Uses the Router to make intelligent routing decisions based on
+    /// task priority, complexity, and subscription availability.
+    pub fn route_task(
+        &mut self,
+        bead_id: &str,
+        title: &str,
+        priority: Priority,
+        labels: Vec<String>,
+    ) -> Option<forge_worker::router::RoutingDecision> {
+        // Score complexity
+        let complexity_score = self.score_task_complexity(title, None, &labels);
+
+        // Create task metadata
+        let task = TaskMetadata::new(bead_id, priority)
+            .with_complexity(complexity_score)
+            .with_labels(labels);
+
+        // Make routing decision
+        match self.router.route(&task) {
+            Ok(decision) => {
+                // Update routing data for display
+                self.routing_data.total_decisions += 1;
+                *self.routing_data.by_tier.entry(decision.tier).or_insert(0) += 1;
+                *self.routing_data.by_model.entry(decision.model_id.clone()).or_insert(0) += 1;
+                *self.routing_data.by_reason.entry(decision.reason).or_insert(0) += 1;
+
+                // Track recent decisions (keep last 20)
+                self.routing_data.recent_decisions.push(decision.clone());
+                if self.routing_data.recent_decisions.len() > 20 {
+                    self.routing_data.recent_decisions.remove(0);
+                }
+
+                // Update complexity distribution
+                match decision.tier {
+                    forge_core::types::WorkerTier::Budget => {
+                        self.routing_data.complexity_distribution.0 += 1;
+                    }
+                    forge_core::types::WorkerTier::Standard => {
+                        self.routing_data.complexity_distribution.1 += 1;
+                    }
+                    forge_core::types::WorkerTier::Premium => {
+                        self.routing_data.complexity_distribution.2 += 1;
+                    }
+                }
+
+                // Calculate average complexity
+                let total = self.routing_data.total_decisions;
+                self.routing_data.avg_complexity =
+                    (self.routing_data.avg_complexity * (total - 1) as f64 + complexity_score as f64)
+                    / total as f64;
+
+                // Calculate savings
+                self.routing_data.calculate_savings();
+                self.routing_data.last_update = Some(std::time::Instant::now());
+                self.routing_data.is_loading = false;
+
+                Some(decision)
+            }
+            Err(e) => {
+                tracing::warn!("Routing decision failed for {}: {}", bead_id, e);
+                None
+            }
+        }
+    }
+
+    /// Get the current router statistics.
+    pub fn router_stats(&self) -> forge_worker::router::RouterStats {
+        self.router.stats()
+    }
+
+    /// Get the recommended model tier for a task.
+    pub fn get_recommended_tier(&self, title: &str, labels: &[String]) -> forge_core::types::WorkerTier {
+        let complexity = self.score_task_complexity(title, None, labels);
+        match complexity {
+            0..=30 => forge_core::types::WorkerTier::Budget,
+            31..=60 => forge_core::types::WorkerTier::Standard,
+            _ => forge_core::types::WorkerTier::Premium,
+        }
+    }
+
+    /// Poll routing data for display updates.
+    ///
+    /// This should be called periodically to update routing stats
+    /// from the router's internal state.
+    pub fn poll_routing_data(&mut self) {
+        let should_poll = self.last_routing_poll.map_or(true, |t| {
+            t.elapsed().as_secs() >= 5 // Poll every 5 seconds
+        });
+
+        if !should_poll {
+            return;
+        }
+
+        // Sync router stats with routing data
+        let stats = self.router.stats();
+        self.routing_data.total_decisions = stats.total_decisions;
+        self.routing_data.by_tier = stats.by_tier.clone();
+        self.routing_data.by_model = stats.by_model.clone();
+        self.routing_data.by_reason = stats.by_reason.clone();
+
+        // Keep recent decisions from router history
+        let history = self.router.history();
+        self.routing_data.recent_decisions = history.iter().rev().take(20).cloned().collect();
+
+        // Calculate savings
+        self.routing_data.calculate_savings();
+        self.routing_data.last_update = Some(std::time::Instant::now());
+        self.routing_data.is_loading = false;
+
+        self.last_routing_poll = Some(std::time::Instant::now());
     }
 }
 

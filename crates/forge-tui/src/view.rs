@@ -29,6 +29,8 @@ pub enum View {
     Subscriptions,
     /// Worker health alerts and notifications
     Alerts,
+    /// Model routing analytics and complexity scoring
+    Routing,
     /// Conversational chat interface (activated with `:`)
     Chat,
 }
@@ -46,6 +48,7 @@ impl View {
             View::Logs => 'l',
             View::Subscriptions => 'u',
             View::Alerts => 'a',
+            View::Routing => 'r',
             View::Chat => ':',
         }
     }
@@ -62,6 +65,7 @@ impl View {
             View::Logs => "Logs",
             View::Subscriptions => "Subscriptions",
             View::Alerts => "Alerts",
+            View::Routing => "Routing",
             View::Chat => "Chat",
         }
     }
@@ -72,7 +76,7 @@ impl View {
     }
 
     /// All views in display order (for Tab cycling).
-    pub const ALL: [View; 10] = [
+    pub const ALL: [View; 11] = [
         View::Overview,
         View::Workers,
         View::Tasks,
@@ -82,6 +86,7 @@ impl View {
         View::Logs,
         View::Subscriptions,
         View::Alerts,
+        View::Routing,
         View::Chat,
     ];
 
@@ -113,6 +118,7 @@ impl View {
             'l' => Some(View::Logs),
             'u' => Some(View::Subscriptions),
             'a' => Some(View::Alerts),
+            'r' => Some(View::Routing),
             ':' => Some(View::Chat),
             _ => None,
         }
@@ -221,6 +227,7 @@ mod tests {
         assert_eq!(View::Logs.hotkey(), 'l');
         assert_eq!(View::Subscriptions.hotkey(), 'u');
         assert_eq!(View::Alerts.hotkey(), 'a');
+        assert_eq!(View::Routing.hotkey(), 'r');
         assert_eq!(View::Chat.hotkey(), ':');
     }
 
@@ -230,6 +237,7 @@ mod tests {
         assert_eq!(View::from_hotkey('W'), Some(View::Workers)); // case insensitive
         assert_eq!(View::from_hotkey('u'), Some(View::Subscriptions));
         assert_eq!(View::from_hotkey('a'), Some(View::Alerts));
+        assert_eq!(View::from_hotkey('r'), Some(View::Routing));
         assert_eq!(View::from_hotkey(':'), Some(View::Chat));
         assert_eq!(View::from_hotkey('x'), None);
     }
@@ -247,6 +255,7 @@ mod tests {
         assert_eq!(View::Overview.title(), "Overview");
         assert_eq!(View::Workers.title(), "Workers");
         assert_eq!(View::Alerts.title(), "Alerts");
+        assert_eq!(View::Routing.title(), "Routing");
         assert_eq!(View::Chat.title(), "Chat");
     }
 
@@ -255,6 +264,7 @@ mod tests {
         assert_eq!(View::Overview.hotkey_hint(), "[o] Overview");
         assert_eq!(View::Chat.hotkey_hint(), "[:] Chat");
         assert_eq!(View::Alerts.hotkey_hint(), "[a] Alerts");
+        assert_eq!(View::Routing.hotkey_hint(), "[r] Routing");
     }
 
     #[test]
