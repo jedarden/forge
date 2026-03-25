@@ -100,14 +100,45 @@ All tasks implemented:
 
 **Commit**: `e2fbbbe`
 
-### Phase H — Subscription Tracking
+### Phase H — Subscription Tracking ✅ COMPLETE
 
-Not started.
+**Goal**: Track subscription quotas, usage, and billing cycles
 
-### Phase I — Advanced Health Monitoring
+All tasks already implemented:
+- [x] Backend quota DB — `SubscriptionTracker` in `forge-cost/src/subscription_tracker.rs`
+- [x] Usage counters — `poll_subscription_data()` at line 1542 in `data.rs`
+- [x] Billing cycle reset — `check_and_reset_billing()` handles automatic period resets
+- [x] UI for subscription view — `SubscriptionPanel` widget with hotkey `[u]`
 
-Not started.
+**Implementation verified**:
+- `forge-cost/src/subscription_tracker.rs` — Config loading, DB sync, alert levels
+- `forge-tui/src/subscription_panel.rs` — Rich visualization with usage bars, reset timers, actions
+- `forge-tui/src/data.rs` — Integration with CostDatabase for usage tracking
 
-### Phase J — CHANGELOG & Release
+### Phase I — Advanced Health Monitoring ✅ COMPLETE
 
-Not started.
+**Goal**: Enhanced health monitoring with alerts and auto-recovery
+
+All tasks already implemented:
+- [x] Alert thresholds — `HealthMonitorConfig` with configurable thresholds
+- [x] Auto-recovery strategies — `AutoRecoveryManager` with `RecoveryPolicy` (Disabled, NotifyOnly, AutoRecover)
+- [x] Anomaly detection — `StuckTaskDetector`, `MemoryMonitor`, `HealthMonitor`
+
+**Implementation verified**:
+- `forge-worker/src/health.rs` — Health checks (PID, activity, memory, task, response)
+- `forge-worker/src/auto_recovery.rs` — Recovery policies and coordinated actions
+- `forge-tui/src/alert.rs` — AlertManager, AlertNotifier, AlertBadge
+- `forge-tui/src/app.rs` — Alerts view with hotkey `[a]`
+
+### Phase J — CHANGELOG & Release ✅ COMPLETE
+
+**Goal**: Update CHANGELOG and prepare release
+
+All tasks completed:
+- [x] Update CHANGELOG.md with v0.2.0 features
+- [x] Bump version from 0.1.9 to 0.2.0
+- [x] Document intelligent model routing feature
+
+**Changes**:
+- Version bumped to 0.2.0 in workspace Cargo.toml
+- CHANGELOG.md updated with new features and release date

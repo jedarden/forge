@@ -131,8 +131,8 @@ mod tests {
 
         // Verify the header is rendered
         assert!(
-            buffer_contains(&buffer, "FORGE v0.1.9"),
-            "Application should render FORGE v0.1.9 header"
+            buffer_contains(&buffer, "FORGE v0.2.0"),
+            "Application should render FORGE v0.2.0 header"
         );
 
         // Verify the overview panels are rendered
@@ -721,7 +721,7 @@ mod tests {
         // 1. Verify initial state
         assert_eq!(app.current_view(), View::Overview);
         let buffer = render_app(&mut app, 120, 40);
-        assert!(buffer_contains(&buffer, "FORGE v0.1.9"));
+        assert!(buffer_contains(&buffer, "FORGE v0.2.0"));
 
         // 2. Navigate through views
         app.switch_view(View::Workers);
@@ -2238,18 +2238,18 @@ mod tests {
 
         // Narrow mode
         let narrow = render_app(&mut app, 80, 30);
-        assert!(buffer_contains(&narrow, "FORGE v0.1.9"));
+        assert!(buffer_contains(&narrow, "FORGE v0.2.0"));
         assert!(buffer_contains(&narrow, "Worker Pool"));
 
         // Wide mode
         let wide = render_app(&mut app, 150, 40);
-        assert!(buffer_contains(&wide, "FORGE v0.1.9"));
+        assert!(buffer_contains(&wide, "FORGE v0.2.0"));
         assert!(buffer_contains(&wide, "Worker Pool"));
         assert!(buffer_contains(&wide, "Subscriptions"));
 
         // Ultra-wide mode
         let ultrawide = render_app(&mut app, 220, 50);
-        assert!(buffer_contains(&ultrawide, "FORGE v0.1.9"));
+        assert!(buffer_contains(&ultrawide, "FORGE v0.2.0"));
         assert!(buffer_contains(&ultrawide, "Cost Breakdown"));
         assert!(buffer_contains(&ultrawide, "Quick Actions"));
     }
@@ -2630,7 +2630,7 @@ mod tests {
         // App should still be functional
         assert!(!app.should_quit());
         let buffer = render_app(&mut app, 120, 40);
-        assert!(buffer_contains(&buffer, "FORGE v0.1.9"));
+        assert!(buffer_contains(&buffer, "FORGE v0.2.0"));
     }
 
     #[test]
@@ -2644,7 +2644,7 @@ mod tests {
 
         // App should still render without panic
         let buffer = render_app(&mut app, 120, 40);
-        assert!(buffer_contains(&buffer, "FORGE v0.1.9"));
+        assert!(buffer_contains(&buffer, "FORGE v0.2.0"));
 
         // Go back to top
         app.handle_app_event(AppEvent::GoToTop);
@@ -3314,7 +3314,7 @@ mod tests {
         // Ultra-wide: 200x50
         let buffer = render_app(&mut app, 200, 50);
 
-        assert!(buffer_contains(&buffer, "FORGE v0.1.9"));
+        assert!(buffer_contains(&buffer, "FORGE v0.2.0"));
         assert!(buffer_contains(&buffer, "Worker Pool"));
     }
 
@@ -3325,7 +3325,7 @@ mod tests {
         // Wide: 150x35
         let buffer = render_app(&mut app, 150, 35);
 
-        assert!(buffer_contains(&buffer, "FORGE v0.1.9"));
+        assert!(buffer_contains(&buffer, "FORGE v0.2.0"));
         assert!(buffer_contains(&buffer, "Worker Pool"));
     }
 
@@ -3361,7 +3361,7 @@ mod tests {
 
         // Should handle gracefully
         assert_eq!(buffer.area.width, 400);
-        assert!(buffer_contains(&buffer, "FORGE v0.1.9"));
+        assert!(buffer_contains(&buffer, "FORGE v0.2.0"));
     }
 
     #[test]
