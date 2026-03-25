@@ -247,27 +247,26 @@ impl CrashRecoveryManager {
         );
 
         // Clear bead assignee if configured
-        if self.config.clear_assignees_enabled {
-            if let Some(ref bead) = record.bead_id {
-                if let Some(ref workspace_path) = workspace {
-                    match self.clear_bead_assignee(workspace_path, bead).await {
-                        Ok(true) => {
-                            record.assignee_cleared = true;
-                            info!("Cleared assignee for bead {}", bead);
-                        }
-                        Ok(false) => {
-                            debug!("No assignee to clear for bead {}", bead);
-                        }
-                        Err(e) => {
-                            warn!("Failed to clear assignee for bead {}: {}", bead, e);
-                        }
-                    }
+        if self.config.clear_assignees_enabled
+            && let Some(ref bead) = record.bead_id
+            && let Some(ref workspace_path) = workspace
+        {
+            match self.clear_bead_assignee(workspace_path, bead).await {
+                Ok(true) => {
+                    record.assignee_cleared = true;
+                    info!("Cleared assignee for bead {}", bead);
+                }
+                Ok(false) => {
+                    debug!("No assignee to clear for bead {}", bead);
+                }
+                Err(e) => {
+                    warn!("Failed to clear assignee for bead {}: {}", bead, e);
                 }
             }
         }
 
         // Record crash in history
-        let history = self.crash_history.entry(worker_id.to_string()).or_insert_with(Vec::new);
+        let history = self.crash_history.entry(worker_id.to_string()).or_default();
         history.push(record.clone());
 
         // Clean up old crashes outside the window
@@ -391,12 +390,11 @@ impl CrashRecoveryManager {
         let stdout = String::from_utf8_lossy(&output.stdout);
 
         // Parse JSON and check for assignee field
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
-            if let Some(assignee) = json.get("assignee") {
-                if let Some(assignee_str) = assignee.as_str() {
-                    return Ok(!assignee_str.is_empty());
-                }
-            }
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout)
+            && let Some(assignee) = json.get("assignee")
+            && let Some(assignee_str) = assignee.as_str()
+        {
+            return Ok(!assignee_str.is_empty());
         }
 
         Ok(false)

@@ -412,7 +412,7 @@ impl ComplexityScorer {
             + (blocks_score as f64 * self.config.blocks_weight)
             + (type_score as f64 * self.config.type_weight);
 
-        let score = total.round().min(100.0).max(0.0) as u32;
+        let score = total.round().clamp(0.0, 100.0) as u32;
 
         ComplexityScore {
             score,
@@ -471,7 +471,7 @@ impl ComplexityScorer {
             score += 5.0;
         }
 
-        score.round().min(100.0).max(0.0) as u32
+        score.round().clamp(0.0, 100.0) as u32
     }
 
     /// Analyze labels for complexity indicators.
@@ -500,17 +500,17 @@ impl ComplexityScorer {
             }
         }
 
-        score.round().min(100.0).max(0.0) as u32
+        score.round().clamp(0.0, 100.0) as u32
     }
 
     /// Analyze file count for complexity.
     fn analyze_file_count(&self, context: &TaskContext, indicators: &mut Vec<String>) -> u32 {
         match context.file_count {
-            Some(count) if count == 0 => 30,
-            Some(count) if count == 1 => 35,
-            Some(count) if count <= 3 => 45,
-            Some(count) if count <= 5 => 55,
-            Some(count) if count <= 10 => 65,
+            Some(0) => 30,
+            Some(1) => 35,
+            Some(2..=3) => 45,
+            Some(4..=5) => 55,
+            Some(6..=10) => 65,
             Some(count) => {
                 let capped = count.min(self.config.max_file_count);
                 // Scale from 65 to 100 based on files 10-20+

@@ -216,7 +216,7 @@ impl TaskScorer {
             + (labels_score as f64 * self.config.labels_weight);
 
         // Clamp to 0-100
-        weighted_score.round().min(100.0).max(0.0) as u32
+        weighted_score.round().clamp(0.0, 100.0) as u32
     }
 
     /// Calculate the priority component score.
@@ -310,6 +310,7 @@ impl TaskScorer {
     }
 
     /// Compare two tasks by score for sorting (highest first).
+    #[allow(clippy::too_many_arguments)]
     pub fn compare_by_score(
         &self,
         a_priority: u8,
@@ -372,7 +373,7 @@ impl TaskScorer {
             + (components.age as f64 * self.config.age_weight)
             + (components.labels as f64 * self.config.labels_weight);
 
-        let score = weighted_score.round().min(100.0).max(0.0) as u32;
+        let score = weighted_score.round().clamp(0.0, 100.0) as u32;
 
         ScoredBead { score, components }
     }

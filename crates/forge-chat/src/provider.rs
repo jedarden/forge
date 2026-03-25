@@ -863,7 +863,7 @@ impl OpencodeProvider {
         })
         .await
         .map_err(|_| {
-            let _ = child.kill();
+            drop(child.kill());
             ChatError::ApiError("opencode timeout".to_string())
         })?
         .map_err(ChatError::IoError)?;
@@ -931,13 +931,12 @@ impl OpencodeProvider {
             match event.event_type.as_str() {
                 "text" => {
                     // Extract text from the part.text field
-                    if let Some(part) = event.part {
-                        if let Some(text) = part.text {
-                            // Skip synthetic messages (like "Continue if you have next steps")
-                            if part.synthetic != Some(true) {
-                                text_parts.push(text);
-                            }
-                        }
+                    if let Some(part) = event.part
+                        && let Some(text) = part.text
+                        && part.synthetic != Some(true)
+                    {
+                        // Skip synthetic messages (like "Continue if you have next steps")
+                        text_parts.push(text);
                     }
                 }
                 "step_finish" => {

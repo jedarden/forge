@@ -38,7 +38,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Task priority levels for cost-aware routing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskPriority {
     /// Critical tasks requiring best models
@@ -46,17 +46,12 @@ pub enum TaskPriority {
     /// High priority but can use standard models
     High,
     /// Normal priority, flexible routing
+    #[default]
     Normal,
     /// Low priority, maximize cost savings
     Low,
     /// Background tasks, use cheapest available
     Background,
-}
-
-impl Default for TaskPriority {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 impl TaskPriority {
@@ -556,14 +551,14 @@ impl<'a> CostOptimizer<'a> {
     /// Check if a model has available subscription quota.
     pub fn has_subscription_quota(&self, model_id: &str) -> bool {
         for sub in &self.subscriptions {
-            if let Some(ref sub_model) = sub.model {
-                if sub_model.contains(model_id) || model_id.contains(sub_model) {
-                    if let Some(remaining) = sub.remaining_quota() {
-                        return remaining > 0;
-                    }
-                    // Unlimited subscription
-                    return true;
+            if let Some(ref sub_model) = sub.model
+                && (sub_model.contains(model_id) || model_id.contains(sub_model))
+            {
+                if let Some(remaining) = sub.remaining_quota() {
+                    return remaining > 0;
                 }
+                // Unlimited subscription
+                return true;
             }
         }
         false
@@ -572,10 +567,10 @@ impl<'a> CostOptimizer<'a> {
     /// Get subscription status for a model.
     pub fn get_subscription_status(&self, model_id: &str) -> Option<QuotaStatus> {
         for sub in &self.subscriptions {
-            if let Some(ref sub_model) = sub.model {
-                if sub_model.contains(model_id) || model_id.contains(sub_model) {
-                    return Some(sub.quota_status());
-                }
+            if let Some(ref sub_model) = sub.model
+                && (sub_model.contains(model_id) || model_id.contains(sub_model))
+            {
+                return Some(sub.quota_status());
             }
         }
         None
@@ -602,27 +597,24 @@ impl<'a> CostOptimizer<'a> {
 
         // First check for urgent subscriptions (use-or-lose)
         for sub in &self.subscriptions {
-            if sub.quota_status() == QuotaStatus::MaxOut || sub.quota_status() == QuotaStatus::Accelerate {
-                if let Some(ref model_id) = sub.model {
-                    if let Some(pricing) = self.get_model_pricing(model_id) {
-                        if let Some(remaining) = sub.remaining_quota() {
-                            if remaining > 0 {
-                                let cost = 0.0; // Free with subscription
-                                let quality = pricing.quality_score();
-                                let score = quality * quality_weight + (100.0 * cost_weight); // Max cost score
+            if (sub.quota_status() == QuotaStatus::MaxOut || sub.quota_status() == QuotaStatus::Accelerate)
+                && let Some(ref model_id) = sub.model
+                && let Some(pricing) = self.get_model_pricing(model_id)
+                && let Some(remaining) = sub.remaining_quota()
+                && remaining > 0
+            {
+                let cost = 0.0; // Free with subscription
+                let quality = pricing.quality_score();
+                let score = quality * quality_weight + (100.0 * cost_weight); // Max cost score
 
-                                let reason = if sub.quota_status() == QuotaStatus::MaxOut {
-                                    RecommendationReason::UrgentSubscription
-                                } else {
-                                    RecommendationReason::SubscriptionAvailable
-                                };
+                let reason = if sub.quota_status() == QuotaStatus::MaxOut {
+                    RecommendationReason::UrgentSubscription
+                } else {
+                    RecommendationReason::SubscriptionAvailable
+                };
 
-                                if best.as_ref().map_or(true, |(_, _, _, s, _, _)| score > *s) {
-                                    best = Some((model_id.clone(), cost, quality, score, true, reason));
-                                }
-                            }
-                        }
-                    }
+                if best.as_ref().is_none_or(|(_, _, _, s, _, _)| score > *s) {
+                    best = Some((model_id.clone(), cost, quality, score, true, reason));
                 }
             }
         }
@@ -657,7 +649,7 @@ impl<'a> CostOptimizer<'a> {
 
             let score = quality * quality_weight + cost_score * cost_weight;
 
-            if best.as_ref().map_or(true, |(_, _, _, s, _, _)| score > *s) {
+            if best.as_ref().is_none_or(|(_, _, _, s, _, _)| score > *s) {
                 let reason = if cost == 0.0 && pricing.has_subscription {
                     RecommendationReason::SubscriptionAvailable
                 } else if cost_score > 80.0 {

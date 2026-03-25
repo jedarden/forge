@@ -46,7 +46,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tracing::{debug, info};
 
@@ -580,24 +580,24 @@ impl HealthMonitor {
         // Check if response file exists and is recent
         let response_file = self.log_dir.join(format!("{}.response", worker.worker_id));
 
-        if let Ok(metadata) = std::fs::metadata(&response_file) {
-            if let Ok(modified) = metadata.modified() {
-                let elapsed = modified.elapsed().unwrap_or(std::time::Duration::MAX);
-                let timeout = std::time::Duration::from_millis(self.config.response_timeout_ms);
+        if let Ok(metadata) = std::fs::metadata(&response_file)
+            && let Ok(modified) = metadata.modified()
+        {
+            let elapsed = modified.elapsed().unwrap_or(std::time::Duration::MAX);
+            let timeout = std::time::Duration::from_millis(self.config.response_timeout_ms);
 
-                if elapsed < timeout {
-                    return HealthCheckResult::passed(HealthCheckType::ResponseHealth);
-                } else {
-                    return HealthCheckResult::failed(
-                        HealthCheckType::ResponseHealth,
-                        HealthErrorType::Unresponsive,
-                        format!(
-                            "Worker response file is {}ms old (timeout: {}ms)",
-                            elapsed.as_millis(),
-                            self.config.response_timeout_ms
-                        ),
-                    );
-                }
+            if elapsed < timeout {
+                return HealthCheckResult::passed(HealthCheckType::ResponseHealth);
+            } else {
+                return HealthCheckResult::failed(
+                    HealthCheckType::ResponseHealth,
+                    HealthErrorType::Unresponsive,
+                    format!(
+                        "Worker response file is {}ms old (timeout: {}ms)",
+                        elapsed.as_millis(),
+                        self.config.response_timeout_ms
+                    ),
+                );
             }
         }
 
@@ -700,21 +700,21 @@ impl HealthMonitor {
                 if line.starts_with("VmRSS:") {
                     // Parse "VmRSS: 12345 kB"
                     let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.len() >= 2 {
-                        if let Ok(rss_kb) = parts[1].parse::<u64>() {
-                            let rss_mb = rss_kb / 1024;
-                            if rss_mb > self.config.memory_limit_mb {
-                                return HealthCheckResult::failed(
-                                    HealthCheckType::MemoryUsage,
-                                    HealthErrorType::HighMemory,
-                                    format!(
-                                        "Memory usage {}MB exceeds limit {}MB",
-                                        rss_mb, self.config.memory_limit_mb
-                                    ),
-                                );
-                            }
-                            return HealthCheckResult::passed(HealthCheckType::MemoryUsage);
+                    if parts.len() >= 2
+                        && let Ok(rss_kb) = parts[1].parse::<u64>()
+                    {
+                        let rss_mb = rss_kb / 1024;
+                        if rss_mb > self.config.memory_limit_mb {
+                            return HealthCheckResult::failed(
+                                HealthCheckType::MemoryUsage,
+                                HealthErrorType::HighMemory,
+                                format!(
+                                    "Memory usage {}MB exceeds limit {}MB",
+                                    rss_mb, self.config.memory_limit_mb
+                                ),
+                            );
                         }
+                        return HealthCheckResult::passed(HealthCheckType::MemoryUsage);
                     }
                 }
             }
@@ -812,11 +812,11 @@ impl HealthMonitor {
 /// Convenience function to check health of a single worker.
 pub fn check_worker_health(
     worker_id: &str,
-    status_dir: &PathBuf,
-    log_dir: &PathBuf,
+    status_dir: &Path,
+    log_dir: &Path,
 ) -> forge_core::Result<WorkerHealthStatus> {
     let config = HealthMonitorConfig::default();
-    let mut monitor = HealthMonitor::with_dirs(config, status_dir.clone(), log_dir.clone())?;
+    let mut monitor = HealthMonitor::with_dirs(config, status_dir.to_path_buf(), log_dir.to_path_buf())?;
 
     let worker = monitor
         .status_reader

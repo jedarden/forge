@@ -142,6 +142,7 @@ where
 {
     let start = std::time::Instant::now();
     let mut attempts = 0;
+    #[allow(unused_assignments)]
     let mut last_error: Option<E> = None;
 
     loop {
@@ -207,6 +208,7 @@ where
 {
     let start = std::time::Instant::now();
     let mut attempts = 0;
+    #[allow(unused_assignments)]
     let mut last_error: Option<E> = None;
 
     loop {
