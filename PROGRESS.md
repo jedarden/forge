@@ -148,7 +148,13 @@ All tasks completed:
 
 ### Post-Phase Cleanup
 
-- [x] **Code quality**: Applied clippy lint fixes across all crates
+- [x] **Code quality round 1**: Applied clippy lint fixes across all crates
   - Commit: `c341e18`
   - Used idiomatic Rust patterns (let chains, ok_or, method references)
   - Added #[allow] attributes for stub fields pending future work
+- [x] **Code quality round 2**: Fixed remaining clippy warnings
+  - Commit: `1cb1ff7`
+  - Used unused variables in format strings (time, ack_status)
+  - Converted match statements to if-let
+  - Collapsed nested if statements using let-chains
+  - Reduced warnings from 27 to 24

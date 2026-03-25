@@ -75,7 +75,7 @@ use crate::perf_panel::PerfPanel;
 use crate::theme::ThemeManager;
 use crate::view::{FocusPanel, LayoutMode, View};
 use crate::widget::QuickActionsPanel;
-use crate::error_recovery::{ErrorCategory, ErrorRecoveryManager, ErrorSeverity, SharedErrorRecoveryManager};
+use crate::error_recovery::{ErrorCategory, ErrorSeverity, SharedErrorRecoveryManager};
 use tracing::{error, info, warn};
 
 /// Result type for app operations.
@@ -1057,14 +1057,12 @@ impl App {
 
                 // Load last 10 entries
                 let mut entries: Vec<forge_chat::HistoryEntry> = Vec::new();
-                for line in reader.lines() {
-                    if let Ok(line) = line {
-                        if line.trim().is_empty() {
-                            continue;
-                        }
-                        if let Ok(entry) = serde_json::from_str::<forge_chat::HistoryEntry>(&line) {
-                            entries.push(entry);
-                        }
+                for line in reader.lines().flatten() {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    if let Ok(entry) = serde_json::from_str::<forge_chat::HistoryEntry>(&line) {
+                        entries.push(entry);
                     }
                 }
 
@@ -3360,7 +3358,6 @@ impl App {
     /// Handle config menu overlay key navigation.
     fn handle_config_menu_key(&mut self, key: KeyEvent) {
         use crossterm::event::KeyCode;
-        use crate::config_menu::ConfigInputType;
 
         // Get current menu items for bounds checking and validation
         let menu_type = match self.config_menu_type {
