@@ -126,8 +126,8 @@ mod tests {
         assert!(!app.should_quit());
         assert!(!app.show_help());
 
-        // Render the application
-        let buffer = render_app(&mut app, 120, 40);
+        // Render the application (use 140 cols to ensure footer fits)
+        let buffer = render_app(&mut app, 140, 40);
 
         // Verify the header is rendered
         assert!(
@@ -356,6 +356,7 @@ mod tests {
             View::Logs,
             View::Subscriptions,
             View::Alerts,
+            View::Routing,
             View::Chat,
             View::Overview, // Wraps around
         ];
@@ -3418,13 +3419,15 @@ mod tests {
         assert_eq!(View::Perf.next(), View::Logs);
         assert_eq!(View::Logs.next(), View::Subscriptions);
         assert_eq!(View::Subscriptions.next(), View::Alerts);
-        assert_eq!(View::Alerts.next(), View::Chat);
+        assert_eq!(View::Alerts.next(), View::Routing);
+        assert_eq!(View::Routing.next(), View::Chat);
         assert_eq!(View::Chat.next(), View::Overview); // Wrap around
 
         // Backward cycling
         assert_eq!(View::Overview.prev(), View::Chat);
         assert_eq!(View::Workers.prev(), View::Overview);
-        assert_eq!(View::Chat.prev(), View::Alerts);
+        assert_eq!(View::Chat.prev(), View::Routing);
+        assert_eq!(View::Routing.prev(), View::Alerts);
         assert_eq!(View::Alerts.prev(), View::Subscriptions);
         assert_eq!(View::Perf.prev(), View::Metrics);
     }

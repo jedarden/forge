@@ -46,6 +46,7 @@ pub mod cost_panel;
 pub mod data;
 pub mod error_recovery;
 pub mod event;
+pub mod routing_panel;
 #[cfg(test)]
 mod integration_tests;
 pub mod log;
@@ -98,6 +99,7 @@ pub use subscription_panel::{
 pub use theme::{Theme, ThemeColors, ThemeManager, ThemeName};
 pub use view::{FocusPanel, LayoutMode, View};
 pub use worker_panel::{WorkerPanel, format_health_summary_narrow};
+pub use routing_panel::{RoutingData, RoutingPanel};
 pub use error_recovery::{
     ErrorCategory, ErrorRecoveryManager, ErrorSeverity, RecordedError, SharedErrorRecoveryManager,
     db_locked_guidance, invalid_config_guidance, network_timeout_guidance, worker_crash_guidance,

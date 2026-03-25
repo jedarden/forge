@@ -136,6 +136,7 @@
 
 pub mod auto_recovery;
 pub mod bead_queue;
+pub mod complexity;
 pub mod crash_recovery;
 pub mod discovery;
 pub mod health;
@@ -179,6 +180,9 @@ pub use response_time::{
 pub use router::{
     FallbackOption, ModelAvailability, ModelConfig, ModelHealth, Router, RouterConfig,
     RouterError, RouterStats, RoutingDecision, RoutingReason, SubscriptionQuota, TaskMetadata,
+};
+pub use complexity::{
+    ComplexityConfig, ComplexityScore, ComplexityScorer, ComplexityTier, TaskContext,
 };
 pub use scorer::{ScoredBead, ScoreComponents, ScoringConfig, TaskScorer};
 pub use types::{LaunchConfig, LauncherOutput, SpawnRequest, WorkerHandle};
