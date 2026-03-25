@@ -67,7 +67,7 @@ crossterm = "0.28"
 
 # File watching
 notify = "8.0"
-notify-debouncer-full = "0.5"
+notify-debouncer-full = "0.7"
 
 # Database
 rusqlite = { version = "0.33", features = ["bundled"] }

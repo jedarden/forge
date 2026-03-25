@@ -333,17 +333,18 @@ impl StatusWatcher {
 
         #[cfg(test)]
         let debouncer = {
-            // Use PollWatcher in tests to avoid exhausting inotify limits
-            let poll_config = notify::Config::default()
-                .with_poll_interval(Duration::from_millis(100));
+            // Use PollWatcher in tests to avoid inotify instance limits
+            // Configure short poll interval and content comparison for reliable test behavior
             new_debouncer_opt::<_, PollWatcher, _>(
                 Duration::from_millis(config.debounce_ms),
                 None,
                 move |result: DebounceEventResult| {
                     Self::handle_debounced_events(result, &status_dir, &tx_clone);
                 },
-                NoCache,
-                poll_config,
+                NoCache::new(),
+                notify::Config::default()
+                    .with_poll_interval(Duration::from_millis(config.debounce_ms))
+                    .with_compare_contents(true),
             )?
         };
 

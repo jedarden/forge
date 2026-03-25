@@ -37,14 +37,14 @@ use forge_cost::{ApiCall, LogParser};
 use forge_core::worker_perf::{TaskEvent, TaskPerfMetrics, WorkerPerfTracker};
 use serde_json::Value;
 use notify::{Event as NotifyEvent, EventKind, RecursiveMode};
-use notify_debouncer_full::{DebounceEventResult, RecommendedCache, new_debouncer_opt};
+use notify_debouncer_full::{DebounceEventResult, NoCache, RecommendedCache, new_debouncer_opt};
 
 // In tests, use PollWatcher to avoid inotify instance limits.
 // In production, use RecommendedWatcher (inotify on Linux) for efficiency.
 #[cfg(test)]
 use notify::PollWatcher;
 #[cfg(test)]
-type DebouncerType = notify_debouncer_full::Debouncer<PollWatcher, RecommendedCache>;
+type DebouncerType = notify_debouncer_full::Debouncer<PollWatcher, NoCache>;
 
 #[cfg(not(test))]
 use notify::RecommendedWatcher;
@@ -306,6 +306,9 @@ pub struct LogWatcher {
 
     /// File tailer for reading new content
     tailer: FileTailer,
+
+    /// The debounced file watcher (stored for proper cleanup)
+    _debouncer: Option<DebouncerType>,
 }
 
 impl LogWatcher {
@@ -323,13 +326,6 @@ impl LogWatcher {
 
         let (event_tx, event_rx) = mpsc::channel();
 
-        let watcher = Self {
-            log_dir: config.log_dir.clone(),
-            parser: LogParser::new(),
-            tracked_files: HashMap::new(),
-            tailer: FileTailer::new(event_tx.clone()),
-        };
-
         // Start file system watcher
         // In tests: use PollWatcher to avoid inotify instance limits
         // In production: use RecommendedWatcher (inotify on Linux) for efficiency
@@ -338,10 +334,10 @@ impl LogWatcher {
 
         #[cfg(test)]
         let mut debouncer = {
-            // Use PollWatcher in tests to avoid exhausting inotify limits
-            let poll_config = notify::Config::default()
-                .with_poll_interval(Duration::from_millis(100));
-            new_debouncer_opt(
+            // Use PollWatcher in tests to avoid inotify instance limits
+            // Configure short poll interval and content comparison for reliable test behavior
+            let poll_interval = config.poll_interval;
+            new_debouncer_opt::<_, PollWatcher, _>(
                 config.debounce_duration,
                 None,
                 move |result: DebounceEventResult| {
@@ -362,14 +358,17 @@ impl LogWatcher {
                         }
                     }
                 },
-                poll_config,
+                NoCache::new(),
+                notify::Config::default()
+                    .with_poll_interval(poll_interval)
+                    .with_compare_contents(true),
             )
             .map_err(|e| LogWatcherError::InitError(format!("Failed to create debouncer: {}", e)))?
         };
 
         #[cfg(not(test))]
         let mut debouncer = {
-            new_debouncer_opt(
+            new_debouncer_opt::<_, RecommendedWatcher, _>(
                 config.debounce_duration,
                 None,
                 move |result: DebounceEventResult| {
@@ -390,6 +389,7 @@ impl LogWatcher {
                         }
                     }
                 },
+                RecommendedCache::new(),
                 notify::Config::default(),
             )
             .map_err(|e| LogWatcherError::InitError(format!("Failed to create debouncer: {}", e)))?
@@ -401,9 +401,13 @@ impl LogWatcher {
                 LogWatcherError::InitError(format!("Failed to watch directory {:?}: {}", config.log_dir, e))
             })?;
 
-        // Keep debouncer alive by leaking it (simplified for sync context)
-        // In production, this would be properly managed
-        std::mem::forget(debouncer);
+        let watcher = Self {
+            log_dir: config.log_dir.clone(),
+            parser: LogParser::new(),
+            tracked_files: HashMap::new(),
+            tailer: FileTailer::new(event_tx),
+            _debouncer: Some(debouncer),
+        };
 
         Ok((watcher, event_rx))
     }
