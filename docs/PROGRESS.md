@@ -52,10 +52,37 @@
 - CHANGELOG.md updated
 - Ready for GitHub release
 
+### Phase K — End-to-End TUI Testing ✅ (2026-03-25)
+
+**Test Environment**: tmux sessions at multiple dimensions (80x24, 140x40, 200x50)
+
+#### Test Results
+
+| Step | Test | Result | Notes |
+|------|------|--------|-------|
+| 1 | Build release binary | ✅ PASS | `cargo build --release` completes |
+| 2 | Smoke test (launch) | ✅ PASS | First-run setup dialog appears |
+| 3 | View navigation | ✅ PASS | All hotkeys work: w/t/c/m/l/u/r/a |
+| 4 | Chat interface | ✅ PASS | Input accepts text, handles errors gracefully |
+| 5 | Narrow terminal (80x24) | ✅ PASS | Single-column layout, no overflow |
+| 6 | Worker spawn | ✅ PASS | Confirmation dialog, error handling works |
+
+#### Verified Behaviors
+- **First-run setup**: Shows claude-code detection, backend selection
+- **Overview panel**: 3-column layout at 140+ cols, 1-column at 80 cols
+- **Chat view**: `:` key activates, shows input field, displays errors
+- **Workers view**: `w` key switches view, spawn dialogs work
+- **Error handling**: Missing launcher script shows error without crash
+- **Terminal sizes**: All modes (Narrow <120, Wide 120-198, UltraWide 199+) render correctly
+
+#### Known Limitations
+- Chat requires `claude` CLI on PATH (falls back to error message if unavailable)
+- Worker spawn requires launcher scripts in `scripts/launchers/`
+
 ## Post-Phase Cleanup ✅
 - Clippy lint fixes applied
 - Unused imports removed
 - Code quality improved
 
 ## Current Version
-- **v0.2.0** — All planned features implemented
+- **v0.2.0** — All planned features implemented and tested
