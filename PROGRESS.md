@@ -158,3 +158,8 @@ All tasks completed:
   - Converted match statements to if-let
   - Collapsed nested if statements using let-chains
   - Reduced warnings from 27 to 24
+- [x] **Code quality round 3**: Removed unused imports
+  - Commit: `a7b3b27`
+  - Removed 10 unused import items across forge-tui
+  - Simplified line iteration using flatten()
+  - Final warning count: 17 (mostly expected/false positives)
