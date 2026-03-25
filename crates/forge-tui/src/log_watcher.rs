@@ -8,19 +8,18 @@
 //! - Uses `notify` crate for file system watching with debouncing
 //! - Incremental parsing with file position tracking for efficiency
 //! - Handles log rotation via inode tracking
-//! - Emits parsed API calls via async channel for TUI integration
+//! - Emits parsed API calls via channel for TUI integration
 //!
 //! ## Example
 //!
 //! ```no_run
 //! use forge_tui::log_watcher::{LogWatcher, LogWatcherConfig};
 //!
-//! #[tokio::main]
-//! async fn main() {
+//! fn main() {
 //!     let config = LogWatcherConfig::default();
-//!     let (watcher, mut rx) = LogWatcher::new(config).unwrap();
+//!     let (watcher, rx) = LogWatcher::new(config).unwrap();
 //!
-//!     while let Some(event) = rx.recv().await {
+//!     while let Ok(event) = rx.recv() {
 //!         match event {
 //!             forge_tui::log_watcher::LogWatcherEvent::ApiCallParsed { call } => {
 //!                 println!("API call: {} tokens, cost ${:.4}",
@@ -38,7 +37,19 @@ use forge_cost::{ApiCall, LogParser};
 use forge_core::worker_perf::{TaskEvent, TaskPerfMetrics, WorkerPerfTracker};
 use serde_json::Value;
 use notify::{Event as NotifyEvent, EventKind, RecursiveMode};
-use notify_debouncer_full::{DebounceEventResult, new_debouncer};
+use notify_debouncer_full::{DebounceEventResult, RecommendedCache, new_debouncer_opt};
+
+// In tests, use PollWatcher to avoid inotify instance limits.
+// In production, use RecommendedWatcher (inotify on Linux) for efficiency.
+#[cfg(test)]
+use notify::PollWatcher;
+#[cfg(test)]
+type DebouncerType = notify_debouncer_full::Debouncer<PollWatcher, RecommendedCache>;
+
+#[cfg(not(test))]
+use notify::RecommendedWatcher;
+#[cfg(not(test))]
+type DebouncerType = notify_debouncer_full::Debouncer<RecommendedWatcher, RecommendedCache>;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
@@ -320,32 +331,69 @@ impl LogWatcher {
         };
 
         // Start file system watcher
+        // In tests: use PollWatcher to avoid inotify instance limits
+        // In production: use RecommendedWatcher (inotify on Linux) for efficiency
         let log_dir_clone = config.log_dir.clone();
         let event_tx_clone = event_tx.clone();
 
-        let mut debouncer = new_debouncer(
-            config.debounce_duration,
-            None,
-            move |result: DebounceEventResult| {
-                match result {
-                    Ok(events) => {
-                        for event in events {
-                            if let Err(e) = process_file_event(&event.event, &log_dir_clone, &event_tx_clone) {
-                                let _ = event_tx_clone.send(LogWatcherEvent::Error {
-                                    message: e.to_string(),
-                                });
+        #[cfg(test)]
+        let mut debouncer = {
+            // Use PollWatcher in tests to avoid exhausting inotify limits
+            let poll_config = notify::Config::default()
+                .with_poll_interval(Duration::from_millis(100));
+            new_debouncer_opt(
+                config.debounce_duration,
+                None,
+                move |result: DebounceEventResult| {
+                    match result {
+                        Ok(events) => {
+                            for event in events {
+                                if let Err(e) = process_file_event(&event.event, &log_dir_clone, &event_tx_clone) {
+                                    let _ = event_tx_clone.send(LogWatcherEvent::Error {
+                                        message: e.to_string(),
+                                    });
+                                }
+                            }
+                        }
+                        Err(errors) => {
+                            for error in errors {
+                                warn!("File watcher error: {:?}", error);
                             }
                         }
                     }
-                    Err(errors) => {
-                        for error in errors {
-                            warn!("File watcher error: {:?}", error);
+                },
+                poll_config,
+            )
+            .map_err(|e| LogWatcherError::InitError(format!("Failed to create debouncer: {}", e)))?
+        };
+
+        #[cfg(not(test))]
+        let mut debouncer = {
+            new_debouncer_opt(
+                config.debounce_duration,
+                None,
+                move |result: DebounceEventResult| {
+                    match result {
+                        Ok(events) => {
+                            for event in events {
+                                if let Err(e) = process_file_event(&event.event, &log_dir_clone, &event_tx_clone) {
+                                    let _ = event_tx_clone.send(LogWatcherEvent::Error {
+                                        message: e.to_string(),
+                                    });
+                                }
+                            }
+                        }
+                        Err(errors) => {
+                            for error in errors {
+                                warn!("File watcher error: {:?}", error);
+                            }
                         }
                     }
-                }
-            },
-        )
-        .map_err(|e| LogWatcherError::InitError(format!("Failed to create debouncer: {}", e)))?;
+                },
+                notify::Config::default(),
+            )
+            .map_err(|e| LogWatcherError::InitError(format!("Failed to create debouncer: {}", e)))?
+        };
 
         debouncer
             .watch(&config.log_dir, RecursiveMode::NonRecursive)
@@ -685,6 +733,7 @@ impl RealtimeMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::fs;
     use std::io::Write;
     use tempfile::TempDir;
@@ -755,6 +804,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_log_watcher_creates_directory() {
         let tmp_dir = TempDir::new().unwrap();
         let log_dir = tmp_dir.path().join("logs");
@@ -770,6 +820,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_log_watcher_detects_new_files() {
         let tmp_dir = TempDir::new().unwrap();
         let log_dir = tmp_dir.path().to_path_buf();
@@ -795,6 +846,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_log_watcher_parses_api_calls() {
         let tmp_dir = TempDir::new().unwrap();
         let log_dir = tmp_dir.path().to_path_buf();
@@ -823,6 +875,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_log_watcher_handles_malformed_entries() {
         let tmp_dir = TempDir::new().unwrap();
         let log_dir = tmp_dir.path().to_path_buf();
@@ -853,6 +906,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_log_watcher_incremental_parsing() {
         let tmp_dir = TempDir::new().unwrap();
         let log_dir = tmp_dir.path().to_path_buf();

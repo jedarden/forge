@@ -512,18 +512,23 @@ impl App {
             .build()
             .expect("Failed to create worker runtime");
 
-        // Initialize config watcher for hot-reload
+        // Initialize config watcher for hot-reload (skip in test mode to save inotify instances)
         let config_start = Instant::now();
         info!("⏱️ Initializing config watcher...");
-        let (config_watcher, config_rx, forge_config) = match ConfigWatcher::new() {
-            Some((watcher, rx)) => {
-                let config = watcher.current_config().clone();
-                info!("⏱️ Config watcher initialized in {:?}", config_start.elapsed());
-                (Some(watcher), Some(rx), config)
-            }
-            None => {
-                info!("⏱️ Config watcher not initialized (config file not found)");
-                (None, None, ForgeConfig::default())
+        let (config_watcher, config_rx, forge_config) = if cfg!(test) {
+            info!("⏱️ Skipping config watcher in test mode");
+            (None, None, ForgeConfig::default())
+        } else {
+            match ConfigWatcher::new() {
+                Some((watcher, rx)) => {
+                    let config = watcher.current_config().clone();
+                    info!("⏱️ Config watcher initialized in {:?}", config_start.elapsed());
+                    (Some(watcher), Some(rx), config)
+                }
+                None => {
+                    info!("⏱️ Config watcher not initialized (config file not found)");
+                    (None, None, ForgeConfig::default())
+                }
             }
         };
 

@@ -650,12 +650,18 @@ impl DataManager {
         let start = Instant::now();
         info!("⏱️ DataManager::new() started");
 
-        let (watcher, init_error) = match StatusWatcher::new(StatusWatcherConfig::default()) {
-            Ok(w) => (Some(w), None),
-            Err(e) => (
-                None,
-                Some(format!("Failed to initialize status watcher: {}", e)),
-            ),
+        // In test mode, skip creating the StatusWatcher to avoid exhausting inotify limits
+        // Tests that need file watching should create their own watchers with isolated directories
+        let (watcher, init_error) = if cfg!(test) {
+            (None, None)
+        } else {
+            match StatusWatcher::new(StatusWatcherConfig::default()) {
+                Ok(w) => (Some(w), None),
+                Err(e) => (
+                    None,
+                    Some(format!("Failed to initialize status watcher: {}", e)),
+                ),
+            }
         };
         info!("⏱️ StatusWatcher initialized in {:?}", start.elapsed());
 
