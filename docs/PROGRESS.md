@@ -54,30 +54,36 @@
 
 ### Phase K — End-to-End TUI Testing ✅ (2026-03-25)
 
-**Test Environment**: tmux sessions at multiple dimensions (80x24, 140x40, 200x50)
+**Test Environment**: tmux sessions at multiple dimensions (80x24, 140x40, 160x50)
 
 #### Test Results
 
 | Step | Test | Result | Notes |
 |------|------|--------|-------|
-| 1 | Build release binary | ✅ PASS | `cargo build --release` completes |
-| 2 | Smoke test (launch) | ✅ PASS | First-run setup dialog appears |
+| 1 | Build release binary | ✅ PASS | `cargo build --release` completes (510 tests pass) |
+| 2 | Smoke test (launch) | ✅ PASS | Overview panel renders, no panic |
 | 3 | View navigation | ✅ PASS | All hotkeys work: w/t/c/m/l/u/r/a |
-| 4 | Chat interface | ✅ PASS | Input accepts text, handles errors gracefully |
-| 5 | Narrow terminal (80x24) | ✅ PASS | Single-column layout, no overflow |
-| 6 | Worker spawn | ✅ PASS | Confirmation dialog, error handling works |
+| 4 | Chat interface | ✅ PASS | Input accepts text, Enter submits, errors display |
+| 5 | Narrow terminal (80x24) | ⚠️ PARTIAL | Layout works, but text artifacts in Overview |
+| 6 | Worker spawn | ✅ PASS | Confirmation dialog appears, cancel works |
 
 #### Verified Behaviors
-- **First-run setup**: Shows claude-code detection, backend selection
-- **Overview panel**: 3-column layout at 140+ cols, 1-column at 80 cols
-- **Chat view**: `:` key activates, shows input field, displays errors
-- **Workers view**: `w` key switches view, spawn dialogs work
-- **Error handling**: Missing launcher script shows error without crash
-- **Terminal sizes**: All modes (Narrow <120, Wide 120-198, UltraWide 199+) render correctly
+- **Overview panel**: 3-column layout at 140+ cols, renders correctly at wide sizes
+- **Chat view**: `:` key activates, shows input field (`> █`), Enter submits, errors displayed with timing
+- **Workers view**: `w` key switches view, `s` shows spawn confirmation dialog
+- **All views**: w=Workers, t=Tasks, c=Costs, m=Metrics, l=Logs, u=Subscriptions, r=Routing, a=Alerts
+- **Error handling**: Chat backend errors (claude CLI unavailable) display gracefully
+
+#### Visual Artifacts Found (80x24 narrow mode)
+- Overview panel shows text truncation: "N  workers foun ." (missing letters)
+- Status line shows incorrect dimensions: "219x2" instead of 80x24
+- Task queue status garbled: "Ready:l4 |aIn Progrtss:n4b|eBlocked:e1e"
+- Individual focused views (Workers, Tasks, Costs) render correctly
 
 #### Known Limitations
 - Chat requires `claude` CLI on PATH (falls back to error message if unavailable)
 - Worker spawn requires launcher scripts in `scripts/launchers/`
+- Narrow terminal (<100 cols) has text rendering issues in Overview panel
 
 ## Post-Phase Cleanup ✅
 - Clippy lint fixes applied
