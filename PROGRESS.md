@@ -142,3 +142,6 @@ All tasks completed:
 **Changes**:
 - Version bumped to 0.2.0 in workspace Cargo.toml
 - CHANGELOG.md updated with new features and release date
+- Updated test assertions to use v0.2.0
+
+**Commit**: `50240ef`
