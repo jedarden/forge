@@ -24,7 +24,7 @@ use crate::subscription_panel::SubscriptionData;
 use forge_core::activity_monitor::{ActivityMonitor, ActivityState, WorkerActivity};
 use forge_core::types::WorkerStatus;
 use forge_cost::{CostDatabase, CostQuery, SubscriptionTracker};
-use forge_worker::complexity::{ComplexityScorer, ComplexityTier, TaskContext};
+use forge_worker::complexity::{ComplexityScorer, TaskContext};
 use forge_worker::discovery::DiscoveryResult;
 use forge_worker::health::{
     HealthCheckType, HealthLevel, HealthMonitor, HealthMonitorConfig, WorkerHealthStatus,

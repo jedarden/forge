@@ -34,7 +34,7 @@
 
 use chrono::{DateTime, Utc};
 use forge_cost::{ApiCall, LogParser};
-use forge_core::worker_perf::{TaskEvent, TaskPerfMetrics, WorkerPerfTracker};
+use forge_core::worker_perf::TaskEvent;
 use serde_json::Value;
 use notify::{Event as NotifyEvent, EventKind, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, NoCache, RecommendedCache, new_debouncer_opt};

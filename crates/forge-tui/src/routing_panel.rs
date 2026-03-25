@@ -16,7 +16,6 @@ use ratatui::{
 
 use forge_core::types::WorkerTier;
 use forge_worker::router::{RoutingDecision, RoutingReason, RouterStats};
-use forge_worker::complexity::{ComplexityScore, ComplexityTier};
 
 /// Routing data for display in the TUI.
 #[derive(Debug, Clone, Default)]

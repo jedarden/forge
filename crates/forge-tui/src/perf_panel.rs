@@ -2,13 +2,13 @@
 
 use ratatui::{
     buffer::Buffer,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph, Widget},
 };
 
-use crate::perf_metrics::{HealthStatus, PerfAlertType, PerfMetrics};
+use crate::perf_metrics::{HealthStatus, PerfMetrics};
 
 pub struct PerfPanel<'a> {
     metrics: &'a PerfMetrics,
