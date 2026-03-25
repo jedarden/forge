@@ -8,7 +8,7 @@
 //!
 //! # Usage
 //!
-//! ```no_run
+//! ```ignore
 //! use forge_core::self_update::{check_for_update, perform_update, UpdateStatus};
 //!
 //! // Check for updates

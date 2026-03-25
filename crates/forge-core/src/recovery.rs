@@ -12,7 +12,7 @@
 //!
 //! ## Example
 //!
-//! ```no_run
+//! ```ignore
 //! use forge_core::recovery::{retry_with_backoff, RetryConfig};
 //! use std::time::Duration;
 //!

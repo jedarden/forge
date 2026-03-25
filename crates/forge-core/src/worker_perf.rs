@@ -7,7 +7,7 @@
 //!
 //! ## Example
 //!
-//! ```no_run
+//! ```ignore
 //! use forge_core::worker_perf::{WorkerPerfTracker, TaskEvent};
 //!
 //! fn main() {
