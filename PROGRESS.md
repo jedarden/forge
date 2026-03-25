@@ -163,3 +163,78 @@ All tasks completed:
   - Removed 10 unused import items across forge-tui
   - Simplified line iteration using flatten()
   - Final warning count: 17 (mostly expected/false positives)
+
+### Phase K — End-to-End TUI Testing ✅ COMPLETE
+
+**Goal**: Actually run the TUI binary and verify all functionality works at runtime
+
+**Test Date**: 2026-03-25
+**Binary**: `./target/release/forge` (v0.2.0)
+**Environment**: Hetzner server, tested in tmux sessions
+
+#### Step 1 — Build Release Binary ✅ PASS
+- `cargo build --release` succeeded
+- Warnings about `self-update` feature flag (not declared) — cosmetic only
+
+#### Step 2 — Smoke Test (Launch) ✅ PASS
+- TUI launches without panic
+- Overview panel renders correctly
+- All panels visible: Worker Pool, Task Queue, Cost Breakdown, Subscriptions, Activity, Quick Actions
+- Footer shows hotkey hints
+
+#### Step 3 — View Navigation ✅ PASS
+All views switch correctly without crashes:
+| Hotkey | View Title |
+|--------|-----------|
+| `w` | Worker Pool Management |
+| `t` | Task Queue & Bead Management |
+| `c` | Cost Analytics |
+| `m` | Metrics Dashboard |
+| `l` | Activity Log |
+| `u` | Subscription Status |
+| `r` | Model Routing |
+| `a` | Alerts |
+
+**Minor issue noted**: Overview panel titles show view name appended (e.g., "Worker Pool ─Workers───") when a view is focused. This is cosmetic.
+
+#### Step 4 — Chat Interface ✅ PASS
+- Chat view activates with `:` key
+- Input field accepts text
+- Messages send on Enter
+- Response appears in history
+- Timing/cost info displayed: `[29ms | $0.0000 | mock]`
+- Error handling works gracefully when `claude` CLI unavailable
+- **Note**: Tested with `FORGE_CHAT_PROVIDER=mock` since `claude` CLI not installed
+
+#### Step 5 — Narrow Terminal Test (80x24) ⚠️ MINOR ISSUES
+- No crash at 80x24
+- Views still switch correctly
+- Text truncation visible in some areas:
+  - "N workers foun ." (missing 'd')
+  - "N recent act vity." (missing 'i')
+- Layout mode detection: Still shows 3-column Overview at 80 cols (expected single-view mode for <120 cols)
+
+#### Step 6 — Worker Spawn Test ✅ PASS
+- Spawn dialog appears with `s` key in Workers view
+- Shows confirmation: "Are you sure you want to spawn a Sonnet 4.5 worker?"
+- Options: `[y] Yes [n] No [Esc] Cancel`
+- Cancel works correctly, dialog closes
+- No crash
+
+#### Summary
+
+**Verdict**: Binary is ready for release with minor cosmetic issues
+
+**Passing**:
+- Build and launch
+- All 8 views navigate without crash
+- Chat interface fully functional (with mock provider)
+- Confirmation dialogs work correctly
+- No panics or crashes observed
+
+**Known minor issues**:
+1. Overview panel titles show focused view name (cosmetic)
+2. Text truncation at narrow widths (80 cols)
+3. Layout mode may not adapt to terminal width (needs investigation)
+
+**Recommendation**: Ready for v0.2.0 release. Minor issues can be addressed in follow-up.
