@@ -17,15 +17,16 @@ conversational chat interface.
 
 `/home/coding/FORGE`
 
-## Current State (as of 2026-03-24)
+## Current State (as of 2026-03-25)
 
-- **Builds**: Yes — `cargo build` completes with only warnings
-- **Tests**: 457 passing, **49 failing** — all failures in `forge-tui` crate:
-  - `status::tests` — worker status file watching tests
-  - `log_watcher::tests` — log parsing tests
-  - `integration_tests::tests` — e2e worker lifecycle tests
-- **Compilation blockers**: None (View::Perf was already fixed)
-- **Key gaps**: Cost tracking not wired to UI, log metrics not extracted, task filtering absent, streaming chat tokens not displayed
+- **Builds**: Yes — release binary at `./target/release/forge`
+- **Tests**: 510+ unit/integration tests passing, clippy clean
+- **Version**: v0.2.0
+- **Phases A–J**: All complete (see PROGRESS.md)
+- **NOT tested**: No TUI has been manually run. No chat interface has been exercised at runtime.
+  The release notes claim TUI testing happened — this is FALSE. Everything was code-verified only.
+
+**The current priority is Phase K: End-to-End TUI Testing.** Do this before any other work.
 
 ## Iteration Protocol
 
@@ -43,7 +44,163 @@ Each iteration:
 
 ## Priority Order
 
-### Phase A — Fix Failing Tests (do this first)
+### Phase K — End-to-End TUI Testing (CURRENT PRIORITY)
+
+**Context**: All prior work was code-only. The TUI has never been run. The chat interface
+had known breakage in v0.1.x. Do not skip this phase or mark it complete without actually
+running the binary and observing behavior.
+
+#### Step 1 — Build release binary
+
+```bash
+cargo build --release 2>&1 | tail -5
+# Must finish with: Finished `release` profile
+```
+
+#### Step 2 — Smoke test: does it launch?
+
+```bash
+tmux new-session -d -s forge-smoke -x 140 -y 40
+tmux send-keys -t forge-smoke "cd /home/coding/FORGE && ./target/release/forge" Enter
+sleep 3
+tmux capture-pane -t forge-smoke -p
+tmux kill-session -t forge-smoke
+```
+
+**Pass criterion**: capture output shows the Overview panel rendered (worker pool header,
+hotkey hints in footer). No panic, no blank screen, no "thread panicked" output.
+
+**If it panics or shows nothing**: read the error, fix it, rebuild, repeat.
+
+#### Step 3 — View navigation
+
+```bash
+tmux new-session -d -s forge-nav -x 140 -y 40
+tmux send-keys -t forge-nav "cd /home/coding/FORGE && ./target/release/forge" Enter
+sleep 2
+```
+
+For each hotkey, send it and capture the pane. Verify the correct view title appears:
+
+```bash
+for key in w t c m l u r a; do
+  tmux send-keys -t forge-nav "$key" ""
+  sleep 0.5
+  tmux capture-pane -t forge-nav -p | head -5
+  echo "--- hotkey: $key ---"
+done
+tmux kill-session -t forge-nav
+```
+
+**Pass criterion**: each hotkey switches to the correct view without crash. Check titles:
+- `w` → "Worker Pool Management"
+- `t` → "Task Queue"
+- `c` → "Cost"
+- `m` → "Metrics"
+- `l` → "Activity"
+- `u` → "Subscriptions"
+- `r` → "Routing"
+- `a` → "Alerts"
+
+**If a view crashes or shows wrong content**: diagnose `draw_<view>()` in app.rs, fix, rebuild.
+
+#### Step 4 — Chat interface (previously broken)
+
+This is the highest-risk area. The chat backend uses `ClaudeCliProvider` which requires the
+`claude` CLI to be available, OR falls back to `MockProvider` for testing.
+
+```bash
+tmux new-session -d -s forge-chat -x 160 -y 50
+tmux send-keys -t forge-chat "cd /home/coding/FORGE && ./target/release/forge" Enter
+sleep 2
+
+# Navigate to Chat view
+tmux send-keys -t forge-chat ":" ""   # or whatever activates chat input
+sleep 0.5
+tmux capture-pane -t forge-chat -p
+```
+
+Determine what key activates the chat input. Check `app.rs` for the Chat view keybinding
+(`handle_key` function near the Chat view section). Then:
+
+```bash
+# Send a test message (adapt key to whatever opens chat input)
+tmux send-keys -t forge-chat "h" ""  # navigate to chat view
+sleep 0.5
+tmux send-keys -t forge-chat "i" ""  # enter insert/input mode if needed
+sleep 0.5
+tmux send-keys -t forge-chat "hello" ""
+tmux send-keys -t forge-chat "" ""  # send Enter
+sleep 5   # wait for response
+tmux capture-pane -t forge-chat -p
+tmux kill-session -t forge-chat
+```
+
+**Pass criteria**:
+- Chat input field is visible and accepts keystrokes
+- Sending a message does not crash the app
+- A response appears (mock or real — either counts)
+- Streaming indicator (`▌`) is visible while waiting
+- Response text renders without visual artifacts
+
+**If chat crashes or hangs**:
+1. Check which backend is configured (`forge/config.toml` or default in `forge-chat/src/config.rs`)
+2. If `ClaudeCliProvider`: check whether `claude` binary is on PATH — `which claude`
+3. If missing, configure MockProvider as default for testing, or add a `--mock-chat` flag
+4. Fix the crash, rebuild, retest
+
+#### Step 5 — Narrow terminal test (visual artifact check)
+
+```bash
+tmux new-session -d -s forge-narrow -x 80 -y 24
+tmux send-keys -t forge-narrow "cd /home/coding/FORGE && ./target/release/forge" Enter
+sleep 2
+tmux capture-pane -t forge-narrow -p
+# Switch through a few views
+for key in w t c h; do
+  tmux send-keys -t forge-narrow "$key" ""
+  sleep 0.5
+  tmux capture-pane -t forge-narrow -p | head -8
+done
+tmux kill-session -t forge-narrow
+```
+
+**Pass criterion**: no text overflow, no truncated borders, no garbled output at 80x24.
+
+#### Step 6 — Worker spawn test
+
+```bash
+tmux new-session -d -s forge-workers -x 140 -y 40
+tmux send-keys -t forge-workers "cd /home/coding/FORGE && ./target/release/forge" Enter
+sleep 2
+# Navigate to Workers view and attempt spawn
+tmux send-keys -t forge-workers "w" ""
+sleep 0.5
+tmux send-keys -t forge-workers "s" ""  # spawn (check actual key in HOTKEYS.md)
+sleep 1
+tmux capture-pane -t forge-workers -p
+tmux kill-session -t forge-workers
+```
+
+**Pass criterion**: spawn attempt either succeeds or shows a sensible error (e.g.,
+"no worker configured" or confirmation dialog). Does NOT crash.
+
+#### Step 7 — Record findings
+
+After all steps, update PROGRESS.md with:
+- Which steps passed
+- Which failed and what the error was
+- What was fixed
+- A final "binary is ready" or "binary has known issues" verdict
+
+If any step reveals a bug, fix it before marking Phase K complete. Do not mark complete
+with known crashes or broken chat.
+
+**Exit criterion**: Steps 1–6 all pass. PROGRESS.md has a written test report.
+
+---
+
+### Phase A — Fix Failing Tests (COMPLETE)
 
 All 49 failing tests are in `forge-tui`. Diagnose root causes before fixing:
 
