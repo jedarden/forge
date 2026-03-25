@@ -5,7 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-03-25
+
+### Added
+- **Intelligent Model Routing**: Automatic model selection based on task complexity
+  - Complexity scoring system (0-100 scale) for incoming tasks
+  - Three-tier routing: Budget (Haiku), Standard (Sonnet), Premium (Opus)
+  - Cost savings estimation from intelligent routing decisions
+  - New Routing view accessible via `[r]` hotkey
+- **Routing Analytics Panel**: Visual dashboard for routing statistics
+  - Tier distribution with percentage bars
+  - Recent routing decisions table
+  - Average complexity and routing efficiency metrics
+
+### Fixed
+- Panel focus visual indicators standardized across all views
+- Chat rendering visual artifacts in narrow terminals
+
+## [0.1.9] - 2026-02-12
 
 ### Added
 - **TUI Onboarding Wizard**: Interactive TUI wizard integrated into onboarding flow
@@ -28,8 +45,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Database Retry Logic**: Exponential backoff for database operations
 - **Panel Focus Indicators**: Enhanced visual indicators for focused panels
 - **Task Filtering and Search**: Filter and search tasks in the dashboard
-
-## [0.1.9] - 2026-02-12
 
 ### Changed
 - Version bump for release
@@ -148,7 +163,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rate limiting enforcement across all providers
 - Concurrent provider usage support
 
-[Unreleased]: https://github.com/jedarden/forge/compare/v0.1.9...HEAD
+[Unreleased]: https://github.com/jedarden/forge/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/jedarden/forge/compare/v0.1.9...v0.2.0
 [0.1.9]: https://github.com/jedarden/forge/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/jedarden/forge/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/jedarden/forge/compare/v0.1.6...v0.1.7
