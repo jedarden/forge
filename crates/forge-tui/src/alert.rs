@@ -229,9 +229,10 @@ impl HealthAlert {
         };
 
         format!(
-            "[{}] {} {} - {}{}\n  {}",
+            "[{}] {} [{}] {} - {}{}\n  {}",
             time,
             self.severity.icon(),
+            ack_status,
             self.worker_id,
             self.title,
             count_info,

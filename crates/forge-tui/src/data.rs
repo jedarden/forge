@@ -957,7 +957,7 @@ impl DataManager {
             }
 
             // Set billing period
-            let days_remaining = tracker.days_until_renewal(&summary.name).unwrap_or(30) as i64;
+            let days_remaining = tracker.days_until_renewal(&summary.name).unwrap_or(30);
             let reset_period = if days_remaining <= 1 {
                 ResetPeriod::Daily
             } else if days_remaining <= 7 {
@@ -971,7 +971,7 @@ impl DataManager {
             status = status.with_active(true);
 
             // Map quota status to action
-            let action = match summary.status {
+            let _action = match summary.status {
                 forge_cost::QuotaStatus::OnPace => SubscriptionAction::OnPace,
                 forge_cost::QuotaStatus::Accelerate => SubscriptionAction::Accelerate,
                 forge_cost::QuotaStatus::MaxOut => SubscriptionAction::MaxOut,
@@ -1811,43 +1811,28 @@ impl DataManager {
         }
 
         // Get 7-day cost trend
-        match db.get_7day_cost_trend() {
-            Ok(trend) => {
-                self.metrics_data.set_cost_trend_7day(trend);
-            }
-            Err(_) => {}
+        if let Ok(trend) = db.get_7day_cost_trend() {
+            self.metrics_data.set_cost_trend_7day(trend);
         }
 
         // Get tasks per hour for histogram
-        match db.get_tasks_per_hour() {
-            Ok(data) => {
-                self.metrics_data.set_tasks_per_hour(data);
-            }
-            Err(_) => {}
+        if let Ok(data) = db.get_tasks_per_hour() {
+            self.metrics_data.set_tasks_per_hour(data);
         }
 
         // Get 7-day model performance aggregation
-        match db.get_model_performance_7day() {
-            Ok(models) => {
-                self.metrics_data.set_model_performance_7day(models);
-            }
-            Err(_) => {}
+        if let Ok(models) = db.get_model_performance_7day() {
+            self.metrics_data.set_model_performance_7day(models);
         }
 
         // Get 7-day worker efficiency aggregation
-        match db.get_worker_efficiency_7day() {
-            Ok(workers) => {
-                self.metrics_data.set_worker_efficiency_7day(workers);
-            }
-            Err(_) => {}
+        if let Ok(workers) = db.get_worker_efficiency_7day() {
+            self.metrics_data.set_worker_efficiency_7day(workers);
         }
 
         // Get average cost by model
-        match db.get_avg_cost_per_task_by_model() {
-            Ok(data) => {
-                self.metrics_data.set_avg_cost_by_model(data);
-            }
-            Err(_) => {}
+        if let Ok(data) = db.get_avg_cost_per_task_by_model() {
+            self.metrics_data.set_avg_cost_by_model(data);
         }
     }
 

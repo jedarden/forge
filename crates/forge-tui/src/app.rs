@@ -907,7 +907,7 @@ impl App {
                 true
             }
             "export" => {
-                let path = args.map(|s| std::path::PathBuf::from(s));
+                let path = args.map(std::path::PathBuf::from);
                 self.export_chat_history(path);
                 true
             }
@@ -1141,7 +1141,7 @@ impl App {
                         let reader = BufReader::new(file);
                         reader
                             .lines()
-                            .filter_map(|line| line.ok())
+                            .filter_map(std::result::Result::ok)
                             .filter(|line| !line.trim().is_empty())
                             .filter_map(|line| serde_json::from_str(&line).ok())
                             .collect()
@@ -1208,7 +1208,7 @@ impl App {
                 let reader = BufReader::new(file);
                 let entries: Vec<forge_chat::HistoryEntry> = reader
                     .lines()
-                    .filter_map(|line| line.ok())
+                    .filter_map(std::result::Result::ok)
                     .filter(|line| !line.trim().is_empty())
                     .filter_map(|line| serde_json::from_str(&line).ok())
                     .collect();
@@ -5515,7 +5515,7 @@ Press any key to close this help.";
         let theme = self.theme_manager.current();
 
         // Get dialog content based on pending action
-        let (title, message, action_text) = match &self.pending_action {
+        let (title, message, _action_text) = match &self.pending_action {
             Some(PendingAction::SpawnWorker(executor)) => (
                 " Spawn Worker ",
                 format!("Are you sure you want to spawn a {} worker?", executor.name()),

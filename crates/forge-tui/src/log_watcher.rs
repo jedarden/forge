@@ -618,7 +618,7 @@ impl FileTailer {
 /// Process a file system event.
 fn process_file_event(
     event: &NotifyEvent,
-    log_dir: &Path,
+    _log_dir: &Path,
     tx: &Sender<LogWatcherEvent>,
 ) -> Result<(), LogWatcherError> {
     for path in &event.paths {
