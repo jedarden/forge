@@ -4944,8 +4944,9 @@ impl App {
 
         // Build styled chat history
         let history_text = if self.chat_history.is_empty() {
+            // Adaptive empty state - no hard-coded indentation
             Text::from(
-                "Type commands or ask questions. Examples:\n\n                 > show workers\n                 > spawn 2 glm workers\n                 > show P0 tasks\n                 > costs today\n                 > help\n\n                 Press Esc to exit chat mode.",
+                "Type commands or ask questions. Examples:\n\n  > show workers\n  > spawn 2 glm workers\n  > show P0 tasks\n  > costs today\n  > help\n\n  Press Esc to exit chat mode.",
             )
         } else {
             let mut lines: Vec<Line> = Vec::new();
@@ -4966,23 +4967,19 @@ impl App {
                         ));
                     }
 
-                    // Show error guidance if available
+                    // Show error guidance if available (adaptive, no fixed-width borders)
                     if let Some(ref guidance) = exchange.error_guidance {
                         lines.push(Line::raw("")); // Blank line
                         lines.push(Line::styled(
-                            "  ┌─ 💡 Suggested Action ─┐",
-                            Style::default().fg(Color::Yellow),
+                            "  💡 Suggested Action:",
+                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
                         ));
                         for guidance_line in guidance.lines() {
                             lines.push(Line::styled(
-                                format!("  │ {}", guidance_line),
+                                format!("  ─ {}", guidance_line),
                                 Style::default().fg(Color::Yellow),
                             ));
                         }
-                        lines.push(Line::styled(
-                            "  └────────────────────────┘",
-                            Style::default().fg(Color::Yellow),
-                        ));
                     }
                 } else {
                     // Normal response
@@ -5042,34 +5039,35 @@ impl App {
                         ConfirmationLevel::Danger => Color::Red,
                     };
 
+                    // Simple adaptive confirmation box - no fixed width borders
                     lines.push(Line::styled(
-                        "  ┌─ ⚠️  CONFIRMATION REQUIRED ─┐",
+                        "  ⚠️  CONFIRMATION REQUIRED",
+                        Style::default().fg(level_color).add_modifier(Modifier::BOLD),
+                    ));
+                    lines.push(Line::styled(
+                        format!("  ─ {}", confirmation.title),
                         Style::default().fg(level_color),
                     ));
                     lines.push(Line::styled(
-                        format!("  │ {}", confirmation.title),
-                        Style::default().fg(level_color),
-                    ));
-                    lines.push(Line::styled(
-                        format!("  │ {}", confirmation.description),
+                        format!("  ─ {}", confirmation.description),
                         Style::default().fg(level_color),
                     ));
 
                     // Warning level indicator
                     let level_text = match confirmation.level {
-                        ConfirmationLevel::Info => "ℹ️ INFO",
-                        ConfirmationLevel::Warning => "⚠️ WARNING",
-                        ConfirmationLevel::Danger => "🚨 DANGER",
+                        ConfirmationLevel::Info => "INFO",
+                        ConfirmationLevel::Warning => "WARNING",
+                        ConfirmationLevel::Danger => "DANGER",
                     };
                     lines.push(Line::styled(
-                        format!("  │ Level: {}", level_text),
+                        format!("  ─ Level: {}", level_text),
                         Style::default().fg(level_color),
                     ));
 
                     // Cost impact
                     if let Some(cost) = confirmation.cost_impact {
                         lines.push(Line::styled(
-                            format!("  │ Cost Impact: ${:.4}", cost),
+                            format!("  ─ Cost: ${:.4}", cost),
                             Style::default().fg(level_color),
                         ));
                     }
@@ -5077,12 +5075,12 @@ impl App {
                     // Affected items
                     if !confirmation.affected_items.is_empty() {
                         lines.push(Line::styled(
-                            "  │ Affected:",
+                            "  ─ Affected:",
                             Style::default().fg(level_color),
                         ));
                         for item in &confirmation.affected_items {
                             lines.push(Line::styled(
-                                format!("  │   • {}", item),
+                                format!("    • {}", item),
                                 Style::default().fg(level_color),
                             ));
                         }
@@ -5090,22 +5088,18 @@ impl App {
 
                     // Reversibility
                     let reversible_text = if confirmation.reversible {
-                        "Yes (can be undone)"
+                        "Yes"
                     } else {
-                        "No (permanent)"
+                        "No (permanent!)"
                     };
                     lines.push(Line::styled(
-                        format!("  │ Reversible: {}", reversible_text),
+                        format!("  ─ Reversible: {}", reversible_text),
                         Style::default().fg(level_color),
                     ));
 
                     lines.push(Line::styled(
-                        "  │ Type 'yes' to confirm or 'no' to cancel",
-                        Style::default().fg(level_color),
-                    ));
-                    lines.push(Line::styled(
-                        "  └────────────────────────────┘",
-                        Style::default().fg(level_color),
+                        "  → Type 'yes' to confirm or 'no' to cancel",
+                        Style::default().fg(level_color).add_modifier(Modifier::BOLD),
                     ));
                 }
 
