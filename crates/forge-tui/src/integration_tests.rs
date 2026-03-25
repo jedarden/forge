@@ -20,6 +20,7 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
+    use serial_test::serial;
     use tempfile::TempDir;
 
     use crate::app::App;
@@ -181,6 +182,7 @@ mod tests {
     // ============================================================
 
     #[test]
+    #[serial(file_watcher)]
     fn test_e2e_worker_status_monitoring() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -213,6 +215,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_e2e_worker_status_updates() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -349,6 +352,7 @@ mod tests {
             View::Tasks,
             View::Costs,
             View::Metrics,
+            View::Perf,
             View::Logs,
             View::Subscriptions,
             View::Alerts,
@@ -540,6 +544,7 @@ mod tests {
     // ============================================================
 
     #[test]
+    #[serial(file_watcher)]
     fn test_e2e_concurrent_worker_creation() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -767,6 +772,7 @@ mod tests {
     // ============================================================
 
     #[test]
+    #[serial(file_watcher)]
     fn test_e2e_worker_log_correlation() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -870,6 +876,7 @@ mod tests {
     // ============================================================
 
     #[test]
+    #[serial(file_watcher)]
     fn test_e2e_status_event_lifecycle() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -921,6 +928,7 @@ mod tests {
     // ============================================================
 
     #[test]
+    #[serial(file_watcher)]
     fn test_e2e_invalid_status_file_handling() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -945,6 +953,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_e2e_non_json_files_ignored() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1010,6 +1019,7 @@ mod tests {
     // Status file created → StatusWatcher detects → App updates → UI displays
 
     #[test]
+    #[serial(file_watcher)]
     fn test_data_flow_worker_starts() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1114,6 +1124,7 @@ mod tests {
     // Worker active with task → Task completed → Status updated → UI reflects completion
 
     #[test]
+    #[serial(file_watcher)]
     fn test_data_flow_worker_completes_task() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1192,6 +1203,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_data_flow_multiple_task_completions() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1262,6 +1274,7 @@ mod tests {
     // Active → Idle transition, UI reflects the change
 
     #[test]
+    #[serial(file_watcher)]
     fn test_data_flow_worker_goes_idle() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1317,6 +1330,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_data_flow_idle_to_active_transition() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1374,6 +1388,7 @@ mod tests {
     // Active/Starting → Failed/Error, UI shows unhealthy worker
 
     #[test]
+    #[serial(file_watcher)]
     fn test_data_flow_worker_crashes_from_active() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1433,6 +1448,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_data_flow_worker_crashes_from_starting() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1481,6 +1497,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_data_flow_worker_recovery_after_crash() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1529,6 +1546,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_data_flow_worker_file_deletion_as_crash() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1574,6 +1592,7 @@ mod tests {
     // Tests the full lifecycle: start → active → complete tasks → idle → shutdown
 
     #[test]
+    #[serial(file_watcher)]
     fn test_data_flow_complete_worker_lifecycle() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1721,6 +1740,7 @@ mod tests {
     // ============================================================
 
     #[test]
+    #[serial(file_watcher)]
     fn test_data_flow_mixed_worker_states() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1820,6 +1840,7 @@ mod tests {
     // ============================================================
 
     #[test]
+    #[serial(file_watcher)]
     fn test_data_flow_corrupted_status_file_recovery() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1869,6 +1890,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_data_flow_rapid_status_changes() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -3392,7 +3414,8 @@ mod tests {
         assert_eq!(View::Workers.next(), View::Tasks);
         assert_eq!(View::Tasks.next(), View::Costs);
         assert_eq!(View::Costs.next(), View::Metrics);
-        assert_eq!(View::Metrics.next(), View::Logs);
+        assert_eq!(View::Metrics.next(), View::Perf);
+        assert_eq!(View::Perf.next(), View::Logs);
         assert_eq!(View::Logs.next(), View::Subscriptions);
         assert_eq!(View::Subscriptions.next(), View::Alerts);
         assert_eq!(View::Alerts.next(), View::Chat);
@@ -3403,6 +3426,7 @@ mod tests {
         assert_eq!(View::Workers.prev(), View::Overview);
         assert_eq!(View::Chat.prev(), View::Alerts);
         assert_eq!(View::Alerts.prev(), View::Subscriptions);
+        assert_eq!(View::Perf.prev(), View::Metrics);
     }
 
     #[test]
@@ -4342,6 +4366,7 @@ mod tests {
     ///
     /// Success Criteria: Status updates within 1-2 seconds
     #[test]
+    #[serial(file_watcher)]
     fn test_realtime_status_update_latency() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -4393,6 +4418,7 @@ mod tests {
     ///
     /// Success Criteria: 'starting' status visible within 500ms
     #[test]
+    #[serial(file_watcher)]
     fn test_realtime_starting_status_immediate() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -4458,6 +4484,7 @@ mod tests {
     ///
     /// Success Criteria: All transitions visible, no stale data
     #[test]
+    #[serial(file_watcher)]
     fn test_realtime_all_status_transitions_visible() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -4544,6 +4571,7 @@ mod tests {
     ///
     /// Success Criteria: current_task field updates within 1 second
     #[test]
+    #[serial(file_watcher)]
     fn test_realtime_current_task_updates() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -4631,6 +4659,7 @@ mod tests {
     ///
     /// Success Criteria: tasks_completed field updates within 1 second
     #[test]
+    #[serial(file_watcher)]
     fn test_realtime_tasks_completed_increments() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -4709,6 +4738,7 @@ mod tests {
     ///
     /// Success Criteria: Status shows 'stopped' or worker is removed within 2 seconds
     #[test]
+    #[serial(file_watcher)]
     fn test_realtime_external_worker_kill_file_deletion() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -4776,6 +4806,7 @@ mod tests {
     /// Alternative scenario: Worker has time to update its status to 'stopped'
     /// before terminating (graceful shutdown).
     #[test]
+    #[serial(file_watcher)]
     fn test_realtime_external_worker_kill_graceful_shutdown() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -4844,6 +4875,7 @@ mod tests {
     ///
     /// Success Criteria: Final state is correctly reflected, no intermediate stale data
     #[test]
+    #[serial(file_watcher)]
     fn test_realtime_no_stale_data_after_rapid_changes() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -4895,6 +4927,7 @@ mod tests {
     ///
     /// Success Criteria: All workers tracked correctly, no missing or duplicate events
     #[test]
+    #[serial(file_watcher)]
     fn test_realtime_concurrent_worker_spawns() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -4960,6 +4993,7 @@ mod tests {
     /// Test that the watcher correctly handles worker status transitions
     /// with current_task as both string and object formats.
     #[test]
+    #[serial(file_watcher)]
     fn test_realtime_current_task_format_variations() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");

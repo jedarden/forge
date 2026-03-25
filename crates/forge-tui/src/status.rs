@@ -29,6 +29,14 @@
 //! }
 //! ```
 
+#[cfg(test)]
+use std::sync::Mutex;
+
+/// Global mutex to serialize StatusWatcher creation in tests.
+/// This prevents exhausting inotify limits when many tests run in parallel.
+#[cfg(test)]
+static TEST_WATCHER_MUTEX: Mutex<()> = Mutex::new(());
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -262,7 +270,7 @@ pub struct StatusWatcher {
     config: StatusWatcherConfig,
 
     /// The debounced file watcher
-    _debouncer: Debouncer<notify::RecommendedWatcher, RecommendedCache>,
+    _debouncer: Option<Debouncer<notify::RecommendedWatcher, RecommendedCache>>,
 
     /// Receiver for status events
     event_rx: Receiver<StatusEvent>,
@@ -271,9 +279,20 @@ pub struct StatusWatcher {
     workers: HashMap<String, WorkerStatusFile>,
 }
 
+impl Drop for StatusWatcher {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 impl StatusWatcher {
     /// Create a new status watcher with the given configuration.
     pub fn new(config: StatusWatcherConfig) -> StatusWatcherResult<Self> {
+        // In test mode, acquire a global mutex to serialize StatusWatcher creation.
+        // This prevents exhausting inotify limits when many tests run in parallel.
+        #[cfg(test)]
+        let _guard = TEST_WATCHER_MUTEX.lock().unwrap();
+
         // Ensure status directory exists
         if !config.status_dir.exists() {
             if config.create_dir_if_missing {
@@ -308,7 +327,7 @@ impl StatusWatcher {
 
         let mut watcher = Self {
             config,
-            _debouncer: debouncer,
+            _debouncer: Some(debouncer),
             event_rx,
             workers: HashMap::new(),
         };
@@ -327,11 +346,24 @@ impl StatusWatcher {
         Self::new(StatusWatcherConfig::default())
     }
 
+    /// Stop watching and release resources.
+    ///
+    /// This method should be called when the watcher is no longer needed
+    /// to ensure the inotify instance is released immediately.
+    pub fn stop(&mut self) {
+        // The debouncer's stop method takes ownership, so we need to take it
+        if let Some(debouncer) = self._debouncer.take() {
+            debouncer.stop();
+            debug!("Status watcher stopped");
+        }
+    }
+
     /// Start watching the status directory.
     fn start_watching(&mut self) -> StatusWatcherResult<()> {
-        self._debouncer
-            .watch(&self.config.status_dir, RecursiveMode::NonRecursive)?;
-        info!(path = ?self.config.status_dir, "Started watching status directory");
+        if let Some(ref mut debouncer) = self._debouncer {
+            debouncer.watch(&self.config.status_dir, RecursiveMode::NonRecursive)?;
+            info!(path = ?self.config.status_dir, "Started watching status directory");
+        }
         Ok(())
     }
 
@@ -573,6 +605,7 @@ mod dirs {
 mod tests {
     use super::*;
     use serde_json::json;
+    use serial_test::serial;
     use std::fs;
     use tempfile::TempDir;
 
@@ -595,6 +628,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_worker_status_file_parsing() {
         let json = r#"{
             "worker_id": "test-worker",
@@ -622,6 +656,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_worker_status_file_minimal() {
         let json = r#"{"worker_id": "minimal-worker"}"#;
 
@@ -635,6 +670,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_worker_status_file_unhealthy() {
         let json = r#"{"worker_id": "failed-worker", "status": "failed"}"#;
 
@@ -646,6 +682,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_worker_counts() {
         let mut counts = WorkerCounts::default();
         counts.active = 5;
@@ -661,6 +698,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_status_watcher_config_default() {
         let config = StatusWatcherConfig::default();
 
@@ -670,6 +708,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_status_watcher_config_builder() {
         let config = StatusWatcherConfig::default()
             .with_status_dir("/custom/path")
@@ -680,6 +719,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_status_watcher_initial_scan() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -710,6 +750,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_status_watcher_creates_directory() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("forge").join("status");
@@ -723,6 +764,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_status_watcher_healthy_unhealthy_lists() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -750,6 +792,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_worker_status_file_from_file() {
         let temp_dir = TempDir::new().unwrap();
         let path = create_test_status_file(temp_dir.path(), "file-worker", "active");
@@ -760,6 +803,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_worker_status_file_from_file_not_found() {
         let result = WorkerStatusFile::from_file(Path::new("/nonexistent/file.json"));
         assert!(result.is_err());
@@ -770,6 +814,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_worker_status_file_invalid_json() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("invalid.json");
@@ -784,6 +829,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(file_watcher)]
     fn test_status_event_apply() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -836,6 +882,7 @@ mod tests {
 
     /// Test that creating a new status file triggers a WorkerUpdated event.
     #[test]
+    #[serial(file_watcher)]
     fn test_file_creation_triggers_update_event() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -884,6 +931,7 @@ mod tests {
 
     /// Test that modifying an existing status file triggers a WorkerUpdated event.
     #[test]
+    #[serial(file_watcher)]
     fn test_file_modification_triggers_update_event() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -949,6 +997,7 @@ mod tests {
 
     /// Test that deleting a status file triggers a WorkerRemoved event.
     #[test]
+    #[serial(file_watcher)]
     fn test_file_deletion_triggers_remove_event() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -996,6 +1045,7 @@ mod tests {
 
     /// Test monitoring multiple file changes in sequence.
     #[test]
+    #[serial(file_watcher)]
     fn test_multiple_file_changes_sequence() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1048,6 +1098,7 @@ mod tests {
 
     /// Test that non-JSON files are ignored.
     #[test]
+    #[serial(file_watcher)]
     fn test_non_json_files_ignored() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1076,6 +1127,7 @@ mod tests {
 
     /// Test that invalid JSON files generate error events.
     #[test]
+    #[serial(file_watcher)]
     fn test_invalid_json_generates_error_event() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1116,6 +1168,7 @@ mod tests {
 
     /// Test worker status transitions (active -> idle -> failed).
     #[test]
+    #[serial(file_watcher)]
     fn test_worker_status_transitions() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1180,6 +1233,7 @@ mod tests {
 
     /// Test concurrent file operations (simulates multiple workers updating simultaneously).
     #[test]
+    #[serial(file_watcher)]
     fn test_concurrent_file_operations() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1230,6 +1284,7 @@ mod tests {
 
     /// Test current_task as a simple string format.
     #[test]
+    #[serial(file_watcher)]
     fn test_current_task_string_format() {
         let json = r#"{
             "worker_id": "string-task-worker",
@@ -1248,6 +1303,7 @@ mod tests {
 
     /// Test current_task as an object format with bead_id.
     #[test]
+    #[serial(file_watcher)]
     fn test_current_task_object_format() {
         let json = r#"{
             "worker_id": "object-task-worker",
@@ -1270,6 +1326,7 @@ mod tests {
 
     /// Test current_task as null (no task).
     #[test]
+    #[serial(file_watcher)]
     fn test_current_task_null() {
         let json = r#"{
             "worker_id": "no-task-worker",
@@ -1288,6 +1345,7 @@ mod tests {
 
     /// Test current_task missing from JSON (uses default None).
     #[test]
+    #[serial(file_watcher)]
     fn test_current_task_missing() {
         let json = r#"{
             "worker_id": "missing-task-worker",
@@ -1305,6 +1363,7 @@ mod tests {
 
     /// Test current_task object format with minimal fields.
     #[test]
+    #[serial(file_watcher)]
     fn test_current_task_object_minimal() {
         let json = r#"{
             "worker_id": "minimal-object-worker",
@@ -1320,6 +1379,7 @@ mod tests {
 
     /// Test current_task object format without bead_id fails.
     #[test]
+    #[serial(file_watcher)]
     fn test_current_task_object_missing_bead_id() {
         let json = r#"{
             "worker_id": "bad-object-worker",
@@ -1337,6 +1397,7 @@ mod tests {
 
     /// Test current_task with various bead ID prefixes.
     #[test]
+    #[serial(file_watcher)]
     fn test_current_task_various_prefixes() {
         let test_cases = [
             ("bd-abc", "bd-abc"),                 // beads format
@@ -1363,6 +1424,7 @@ mod tests {
 
     /// Test file parsing with both current_task formats.
     #[test]
+    #[serial(file_watcher)]
     fn test_file_parsing_current_task_formats() {
         let temp_dir = TempDir::new().unwrap();
 
@@ -1392,6 +1454,7 @@ mod tests {
 
     /// Test StatusWatcher handles mixed current_task formats.
     #[test]
+    #[serial(file_watcher)]
     fn test_watcher_mixed_current_task_formats() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1461,6 +1524,7 @@ mod tests {
     /// - Initial 'starting' status is detected
     /// - Transition to 'active' or 'idle' is detected within expected latency
     #[test]
+    #[serial(file_watcher)]
     fn test_worker_spawn_status_transition_starting_to_active() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1542,6 +1606,7 @@ mod tests {
     /// Verifies that workers that complete startup without picking up a task
     /// correctly transition to 'idle' status.
     #[test]
+    #[serial(file_watcher)]
     fn test_worker_spawn_status_transition_starting_to_idle() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1602,6 +1667,7 @@ mod tests {
     /// - When worker picks up a task, status becomes 'active'
     /// - current_task field is updated with bead ID
     #[test]
+    #[serial(file_watcher)]
     fn test_task_pickup_status_updates() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1669,6 +1735,7 @@ mod tests {
     ///
     /// Verifies that current_task field works with both string and object formats.
     #[test]
+    #[serial(file_watcher)]
     fn test_task_pickup_with_object_format_current_task() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1718,6 +1785,7 @@ mod tests {
     /// - status returns to 'idle'
     /// - current_task becomes None
     #[test]
+    #[serial(file_watcher)]
     fn test_task_completion_status_updates() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1785,6 +1853,7 @@ mod tests {
 
     /// Test multiple task completions incrementing tasks_completed.
     #[test]
+    #[serial(file_watcher)]
     fn test_multiple_task_completions_increment_counter() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1850,6 +1919,7 @@ mod tests {
     /// Verifies that when a worker is killed externally (tmux kill-session),
     /// the status is detected and shows 'stopped' or 'failed'.
     #[test]
+    #[serial(file_watcher)]
     fn test_external_worker_termination_stopped() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1904,6 +1974,7 @@ mod tests {
     /// Verifies that when a worker process dies unexpectedly,
     /// the status is detected and shows 'failed'.
     #[test]
+    #[serial(file_watcher)]
     fn test_external_worker_termination_failed() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -1964,6 +2035,7 @@ mod tests {
     /// Verifies that when a status file is deleted, the worker is removed
     /// from tracking.
     #[test]
+    #[serial(file_watcher)]
     fn test_worker_status_file_deletion() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -2011,6 +2083,7 @@ mod tests {
     /// Verifies that status updates are detected within 1-2 seconds.
     /// Uses a measured approach to verify latency.
     #[test]
+    #[serial(file_watcher)]
     fn test_real_time_update_latency() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -2101,6 +2174,7 @@ mod tests {
     /// Verifies that the watcher correctly tracks the latest state
     /// even when updates happen rapidly.
     #[test]
+    #[serial(file_watcher)]
     fn test_no_stale_data_after_rapid_updates() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -2150,6 +2224,7 @@ mod tests {
 
     /// Test graceful handling of external changes (file becomes corrupted).
     #[test]
+    #[serial(file_watcher)]
     fn test_handles_corrupted_status_file_gracefully() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -2225,6 +2300,7 @@ mod tests {
 
     /// Test full worker lifecycle: starting -> active -> idle -> stopped.
     #[test]
+    #[serial(file_watcher)]
     fn test_full_worker_lifecycle() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
@@ -2323,6 +2399,7 @@ mod tests {
 
     /// Test WorkerCounts tracking through status transitions.
     #[test]
+    #[serial(file_watcher)]
     fn test_worker_counts_through_transitions() {
         let temp_dir = TempDir::new().unwrap();
         let status_dir = temp_dir.path().join("status");
