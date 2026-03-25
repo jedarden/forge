@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget},
+    widgets::{Block, BorderType, Borders, Paragraph, Widget},
 };
 
 use crate::perf_metrics::{HealthStatus, PerfAlertType, PerfMetrics};
@@ -27,12 +27,37 @@ impl<'a> PerfPanel<'a> {
 
 impl Widget for PerfPanel<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let focus_icon = if self.focused { "◆" } else { "◇" };
-        let border_style = if self.focused { Style::default().fg(Color::LightCyan) } else { Style::default().fg(Color::DarkGray) };
-        let title_style = if self.focused { Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::DarkGray) };
+        // Enhanced focus indicator: "▶" arrow for focused (clearer than diamond), "▪" for unfocused
+        let focus_icon = if self.focused { "▶" } else { "▪" };
+
+        // Border type: Double border for focused (highly visible), Normal for unfocused
+        let border_type = if self.focused {
+            BorderType::Double
+        } else {
+            BorderType::Plain
+        };
+
+        // Border style: bright cyan with bold for focused, dim for unfocused
+        let border_style = if self.focused {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        // Title style: bold + underlined for focused, dim for unfocused
+        let title_style = if self.focused {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+        } else {
+            Style::default().fg(Color::Rgb(80, 80, 80))
+        };
 
         let block = Block::default()
             .borders(Borders::ALL)
+            .border_type(border_type)
             .border_style(border_style)
             .title(Span::styled(format!(" {} FORGE Performance ", focus_icon), title_style));
 

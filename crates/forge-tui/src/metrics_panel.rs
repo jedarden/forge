@@ -15,7 +15,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Row, Table, Widget},
+    widgets::{Block, BorderType, Borders, Paragraph, Row, Table, Widget},
 };
 
 use crate::log_watcher::RealtimeMetrics;
@@ -753,27 +753,37 @@ impl<'a> MetricsPanel<'a> {
 
 impl Widget for MetricsPanel<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // Focus indicator icon: "◆" for focused, "◇" for unfocused
-        let focus_icon = if self.focused { "◆" } else { "◇" };
+        // Enhanced focus indicator: "▶" arrow for focused (clearer than diamond), "▪" for unfocused
+        let focus_icon = if self.focused { "▶" } else { "▪" };
 
-        // Border style: bright cyan for focused, dim for unfocused
-        let border_style = if self.focused {
-            Style::default().fg(Color::LightCyan)
+        // Border type: Double border for focused (highly visible), Normal for unfocused
+        let border_type = if self.focused {
+            BorderType::Double
         } else {
-            Style::default().fg(Color::DarkGray)
+            BorderType::Plain
         };
 
-        // Title style: bold + bright for focused, dim for unfocused
-        let title_style = if self.focused {
+        // Border style: bright cyan with bold for focused, dim for unfocused
+        let border_style = if self.focused {
             Style::default()
-                .fg(Color::LightCyan)
+                .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::DarkGray)
         };
 
+        // Title style: bold + underlined for focused, dim for unfocused
+        let title_style = if self.focused {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+        } else {
+            Style::default().fg(Color::Rgb(80, 80, 80))
+        };
+
         let block = Block::default()
             .borders(Borders::ALL)
+            .border_type(border_type)
             .border_style(border_style)
             .title(Span::styled(
                 format!(" {} Performance Analytics ", focus_icon),

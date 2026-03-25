@@ -1,0 +1,23 @@
+# Cargo configuration for FORGE project
+#
+# Test thread limit: File watcher tests create inotify instances which can
+# exhaust system limits when run in parallel. We limit to 2 threads to allow
+# some parallelism while avoiding resource exhaustion.
+
+[term]
+verbose = false
+
+[build]
+# Use all available CPU cores for compilation
+jobs = -1
+
+[test]
+# Limit parallel test threads to avoid inotify exhaustion.
+# File watcher tests (status, log_watcher, integration_tests) each create
+# debounced file watchers that consume inotify watches. Running too many
+# in parallel causes "Too many open files" errors.
+#
+# With serial_test::serial attributes on file watcher tests, this could be
+# higher, but 2 threads provides a safe margin while still being faster
+# than single-threaded.
+threads = 1
