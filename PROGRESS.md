@@ -62,12 +62,24 @@ All tasks implemented:
 - Simulated streaming fallback: `update_streaming()` at line 1814
 - Streaming cancellation: Press Escape during streaming to cancel
 
-### Phase F — P1 Bug Fixes 🔄 IN PROGRESS
+### Phase F — P1 Bug Fixes ✅ COMPLETE
 
-**Bugs to fix**:
-- [ ] **fg-1gjn**: Panel focus visual indicator broken — which panel is active is not obvious
-- [ ] **fg-jqw3**: Chat rendering visual artifacts / text overflow in narrow terminals
-- [ ] **fg-16bd**: No confirmation dialog before destructive actions (kill worker, etc.)
+**Bugs fixed**:
+- [x] **fg-1gjn**: Panel focus visual indicator — standardized across all panels with:
+  - Double border type for focused panels vs Plain for unfocused
+  - Cyan bold border style for focused vs DarkGray for unfocused
+  - Cyan bold + underlined title for focused vs dim gray for unfocused
+  - "▶" arrow icon for focused vs "▪" square for unfocused
+  - Commit: `90d0fde`
+- [x] **fg-jqw3**: Chat rendering visual artifacts — fixed by:
+  - Removing hard-coded indentation from empty state help text
+  - Changing confirmation box from fixed-width borders to adaptive format
+  - Simplifying error guidance box to avoid fixed-width overflow
+  - Commit: `cd9d916`
+- [x] **fg-16bd**: Confirmation dialog for destructive actions — already implemented:
+  - `PendingAction` enum tracks pending destructive operations
+  - `show_confirmation` flag triggers confirmation overlay
+  - Kill/Pause/Resume actions all show y/n confirmation before executing
 
 ### Phase G — Phase 2 Intelligence (Model Routing)
 
