@@ -233,8 +233,11 @@ impl InputHandler {
             KeyCode::Char('r') if self.current_view == View::Workers => AppEvent::ResumeWorker,
             KeyCode::Char('R') if self.current_view == View::Workers => AppEvent::ResumeAllWorkers,
 
-            // Quick Actions - Refresh (only when not in Workers view, where 'r' is resume)
-            KeyCode::Char('r') if self.current_view != View::Workers => AppEvent::Refresh,
+            // Routing view (lowercase 'r' when not in Workers view)
+            KeyCode::Char('r') => AppEvent::SwitchView(View::Routing),
+
+            // Subscriptions view (lowercase 'u')
+            KeyCode::Char('u') => AppEvent::SwitchView(View::Subscriptions),
 
             // View navigation hotkeys (also quick actions - view shortcuts)
             KeyCode::Char('w') | KeyCode::Char('W') => AppEvent::SwitchView(View::Workers),
@@ -556,10 +559,10 @@ mod tests {
             AppEvent::SwitchView(View::Perf)
         );
 
-        // 'r' in non-Workers view should refresh
+        // 'r' in non-Workers view should switch to Routing view
         assert_eq!(
             handler.handle_key(key_event(KeyCode::Char('r'))),
-            AppEvent::Refresh
+            AppEvent::SwitchView(View::Routing)
         );
 
         // 'P' and 'R' should do nothing in non-Workers view
