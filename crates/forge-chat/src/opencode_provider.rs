@@ -49,8 +49,14 @@ impl OpencodeProvider {
         let mut cmd = Command::new(&self.config.binary_path);
 
         // opencode run --format json --model <provider/model> "<prompt>"
-        cmd.args(["run", "--format", "json", "--model", &self.config.model])
-            .arg(prompt);
+        cmd.args([
+            "run",
+            "--format",
+            "json",
+            "--model",
+            self.config.resolve_model(),
+        ])
+        .arg(prompt);
 
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -253,7 +259,7 @@ impl ChatProvider for OpencodeProvider {
     }
 
     fn model(&self) -> &str {
-        &self.config.model
+        self.config.resolve_model()
     }
 }
 

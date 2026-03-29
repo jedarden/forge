@@ -1563,6 +1563,7 @@ mod tests {
             binary_path: "/usr/local/bin/opencode".to_string(),
             model: "github-copilot/claude-sonnet-4.5".to_string(),
             timeout_secs: 120,
+            ..Default::default()
         };
 
         let provider = OpencodeProvider::new(config.clone());
