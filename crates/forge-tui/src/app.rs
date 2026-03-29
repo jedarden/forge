@@ -721,10 +721,8 @@ impl App {
     /// Returns None if config is missing or initialization fails.
     /// Errors are logged but don't prevent app startup.
     fn init_chat_backend() -> Option<ChatBackend> {
-        use forge_chat::config::{
-            AuditConfig, ClaudeCliConfig, ConfirmationConfig, OpencodeConfig, ProviderConfig,
-            RateLimitConfig,
-        };
+        use forge_chat::config::{AuditConfig, ConfirmationConfig, RateLimitConfig};
+        use forge_chat::ChatProviderFactory;
         use tracing::{error, info, warn};
 
         let start = std::time::Instant::now();
@@ -820,62 +818,48 @@ impl App {
 
         info!("⏱️ Using provider: {}", provider_name);
 
-        // Build the ProviderConfig based on the resolved provider name
-        let provider_config = match provider_name {
-            "opencode" => {
-                // Warn if command doesn't match provider
-                if command != "opencode" {
-                    warn!(
-                        "Provider is 'opencode' but command is '{}' — using command as binary path",
-                        command
-                    );
-                }
-
-                // Read model_aliases (optional HashMap)
-                let model_aliases = chat_backend
-                    .get("model_aliases")
-                    .and_then(|v| v.as_mapping())
-                    .map(|m| {
-                        m.iter()
-                            .filter_map(|(k, v)| {
-                                let key = k.as_str()?.to_string();
-                                let val = v.as_str()?.to_string();
-                                Some((key, val))
-                            })
-                            .collect::<std::collections::HashMap<String, String>>()
-                    });
-
-                let mut opencode_config = OpencodeConfig {
-                    binary_path: command.to_string(),
-                    model,
-                    ..Default::default()
-                };
-                if let Some(aliases) = model_aliases {
-                    opencode_config.model_aliases = aliases;
-                }
-                ProviderConfig::Opencode(opencode_config)
-            }
-            "claude-cli" => {
-                // Warn if command looks like it should be opencode
-                if command == "opencode" {
-                    warn!(
-                        "Provider is 'claude-cli' but command is 'opencode' — this may not work as expected. \
-                         Set provider: opencode to use the OpenCode provider."
-                    );
-                }
-                let cli_config = ClaudeCliConfig {
-                    binary_path: command.to_string(),
-                    model,
-                    extra_args: args,
-                    ..Default::default()
-                };
-                ProviderConfig::ClaudeCli(cli_config)
-            }
-            unknown => {
-                error!(
-                    "Unknown provider '{}' in chat_backend config. Valid values: claude-cli, opencode",
-                    unknown
+        // Warn about command/provider field mismatches before delegating to factory.
+        match provider_name {
+            "opencode" if command != "opencode" => {
+                warn!(
+                    "Provider is 'opencode' but command is '{}' — using command as binary path",
+                    command
                 );
+            }
+            "claude-cli" if command == "opencode" => {
+                warn!(
+                    "Provider is 'claude-cli' but command is 'opencode' — this may not work as \
+                     expected. Set provider: opencode to use the OpenCode provider."
+                );
+            }
+            _ => {}
+        }
+
+        // Read model_aliases (only consumed by the opencode provider).
+        let model_aliases = chat_backend
+            .get("model_aliases")
+            .and_then(|v| v.as_mapping())
+            .map(|m| {
+                m.iter()
+                    .filter_map(|(k, v)| {
+                        let key = k.as_str()?.to_string();
+                        let val = v.as_str()?.to_string();
+                        Some((key, val))
+                    })
+                    .collect::<std::collections::HashMap<String, String>>()
+            });
+
+        // Use the factory to build the ProviderConfig from the provider name string.
+        let provider_config = match ChatProviderFactory::create_config(
+            provider_name,
+            command,
+            &model,
+            args,
+            model_aliases,
+        ) {
+            Ok(config) => config,
+            Err(e) => {
+                error!("Failed to create provider config: {}", e);
                 return None;
             }
         };

@@ -37,7 +37,7 @@ use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time::{Duration, timeout};
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 use crate::config::{ChatConfig, ClaudeApiConfig, ClaudeCliConfig, MockConfig, OpencodeConfig, ProviderConfig};
 use crate::context::DashboardContext;
@@ -1118,6 +1118,80 @@ fn create_provider_by_type(
             Ok(Box::new(ClaudeApiProvider::from_config(
                 ClaudeApiConfig::default(),
             )?))
+        }
+    }
+}
+
+/// Factory for creating chat providers based on a provider name string.
+///
+/// Reads the `provider` field from configuration and instantiates the appropriate
+/// [`ProviderConfig`]. Defaults to `"claude-cli"` for backwards compatibility.
+///
+/// # Example
+///
+/// ```no_run
+/// use forge_chat::provider::ChatProviderFactory;
+///
+/// # fn main() -> forge_chat::error::Result<()> {
+/// let config = ChatProviderFactory::create_config("opencode", "opencode", "sonnet", vec![], None)?;
+/// # Ok(())
+/// # }
+/// ```
+pub struct ChatProviderFactory;
+
+impl ChatProviderFactory {
+    /// Create a [`ProviderConfig`] from a provider name string.
+    ///
+    /// # Arguments
+    ///
+    /// - `provider_name` — `"opencode"` or `"claude-cli"`. An empty string falls
+    ///   back to `"claude-cli"` for backwards compatibility.
+    /// - `binary_path` — Path/name of the provider binary.
+    /// - `model` — Model identifier to use.
+    /// - `extra_args` — Additional CLI arguments (used by `claude-cli`).
+    /// - `model_aliases` — Model alias map (used by `opencode`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ChatError::ConfigError`] if `provider_name` is not recognised.
+    pub fn create_config(
+        provider_name: &str,
+        binary_path: &str,
+        model: &str,
+        extra_args: Vec<String>,
+        model_aliases: Option<std::collections::HashMap<String, String>>,
+    ) -> Result<ProviderConfig> {
+        match provider_name {
+            "opencode" => {
+                let mut config = OpencodeConfig {
+                    binary_path: binary_path.to_string(),
+                    model: model.to_string(),
+                    ..Default::default()
+                };
+                if let Some(aliases) = model_aliases {
+                    config.model_aliases = aliases;
+                }
+                info!("ChatProviderFactory: selected opencode provider");
+                Ok(ProviderConfig::Opencode(config))
+            }
+            "claude-cli" | "" => {
+                let config = ClaudeCliConfig {
+                    binary_path: binary_path.to_string(),
+                    model: model.to_string(),
+                    extra_args,
+                    ..Default::default()
+                };
+                info!("ChatProviderFactory: selected claude-cli provider");
+                Ok(ProviderConfig::ClaudeCli(config))
+            }
+            unknown => {
+                let msg = format!(
+                    "Unknown provider '{}'. Valid values: claude-cli, opencode.",
+                    unknown
+                );
+                error!("{}", msg);
+                Err(ChatError::ConfigError(msg))
+            }
         }
     }
 }

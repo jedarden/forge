@@ -68,8 +68,8 @@ pub use context::{ContextProvider, DashboardContext, MockContextSource, RealCont
 pub use error::{ChatError, Result};
 pub use history::{HistoryEntry, HistoryManager, HistoryMetadata, HistoryStats, HistoryToolCall};
 pub use provider::{
-    ChatProvider, ClaudeCliProvider, FinishReason, MockProvider, ProviderResponse, ProviderTool,
-    TokenUsage,
+    ChatProvider, ChatProviderFactory, ClaudeCliProvider, FinishReason, MockProvider,
+    ProviderResponse, ProviderTool, TokenUsage,
 };
 pub use rate_limit::RateLimiter;
 pub use tools::{ActionConfirmation, ChatTool, ToolCall, ToolRegistry, ToolResult};
