@@ -66,6 +66,7 @@ fn generate_claude_config(tool: &CliToolDetection) -> String {
 # Generated: {timestamp}
 
 chat_backend:
+  provider: claude-cli
   command: claude
   args:
     - --dangerously-skip-permissions
@@ -144,12 +145,12 @@ fn generate_opencode_config(tool: &CliToolDetection) -> String {
 # Generated: {timestamp}
 
 chat_backend:
+  provider: opencode
   command: opencode
-  args:
-    - --output-format
-    - stream-json
-    - --verbose
   model: sonnet
+  model_aliases:
+    sonnet: opencode/glm-5-free
+    opus: github-copilot/claude-opus-4.6
   timeout: 30
   max_retries: 3
 
@@ -470,8 +471,8 @@ mod tests {
         let config = generate_opencode_config(&tool);
 
         assert!(config.contains("OpenCode"));
+        assert!(config.contains("provider: opencode"));
         assert!(config.contains("command: opencode"));
-        assert!(config.contains("--output-format"));
     }
 
     #[test]

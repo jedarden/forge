@@ -722,7 +722,8 @@ impl App {
     /// Errors are logged but don't prevent app startup.
     fn init_chat_backend() -> Option<ChatBackend> {
         use forge_chat::config::{
-            AuditConfig, ClaudeCliConfig, ConfirmationConfig, ProviderConfig, RateLimitConfig,
+            AuditConfig, ClaudeCliConfig, ConfirmationConfig, OpencodeConfig, ProviderConfig,
+            RateLimitConfig,
         };
         use tracing::{error, info, warn};
 
@@ -784,29 +785,103 @@ impl App {
         // Extract chat_backend section
         let chat_backend = yaml.get("chat_backend")?;
         let command = chat_backend.get("command")?.as_str()?;
-        let args = chat_backend
-            .get("args")?
-            .as_sequence()?
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect::<Vec<_>>();
 
-        // Build ChatConfig
+        // Read optional args (not required — providers may handle args internally)
+        let args: Vec<String> = chat_backend
+            .get("args")
+            .and_then(|v| v.as_sequence())
+            .map(|seq| {
+                seq.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Read model (optional, defaults to "sonnet")
         let model = chat_backend
             .get("model")
             .and_then(|v| v.as_str())
             .unwrap_or("sonnet")
             .to_string();
 
-        let cli_config = ClaudeCliConfig {
-            binary_path: command.to_string(),
-            model,
-            extra_args: args,
-            ..Default::default()
+        // Determine provider: explicit `provider` field takes precedence; fall back to
+        // inferring from `command` for backwards compatibility (opencode → opencode,
+        // anything else → claude-cli).
+        let provider_name = chat_backend
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .unwrap_or_else(|| {
+                if command == "opencode" {
+                    "opencode"
+                } else {
+                    "claude-cli"
+                }
+            });
+
+        info!("⏱️ Using provider: {}", provider_name);
+
+        // Build the ProviderConfig based on the resolved provider name
+        let provider_config = match provider_name {
+            "opencode" => {
+                // Warn if command doesn't match provider
+                if command != "opencode" {
+                    warn!(
+                        "Provider is 'opencode' but command is '{}' — using command as binary path",
+                        command
+                    );
+                }
+
+                // Read model_aliases (optional HashMap)
+                let model_aliases = chat_backend
+                    .get("model_aliases")
+                    .and_then(|v| v.as_mapping())
+                    .map(|m| {
+                        m.iter()
+                            .filter_map(|(k, v)| {
+                                let key = k.as_str()?.to_string();
+                                let val = v.as_str()?.to_string();
+                                Some((key, val))
+                            })
+                            .collect::<std::collections::HashMap<String, String>>()
+                    });
+
+                let mut opencode_config = OpencodeConfig {
+                    binary_path: command.to_string(),
+                    model,
+                    ..Default::default()
+                };
+                if let Some(aliases) = model_aliases {
+                    opencode_config.model_aliases = aliases;
+                }
+                ProviderConfig::Opencode(opencode_config)
+            }
+            "claude-cli" => {
+                // Warn if command looks like it should be opencode
+                if command == "opencode" {
+                    warn!(
+                        "Provider is 'claude-cli' but command is 'opencode' — this may not work as expected. \
+                         Set provider: opencode to use the OpenCode provider."
+                    );
+                }
+                let cli_config = ClaudeCliConfig {
+                    binary_path: command.to_string(),
+                    model,
+                    extra_args: args,
+                    ..Default::default()
+                };
+                ProviderConfig::ClaudeCli(cli_config)
+            }
+            unknown => {
+                error!(
+                    "Unknown provider '{}' in chat_backend config. Valid values: claude-cli, opencode",
+                    unknown
+                );
+                return None;
+            }
         };
 
         let chat_config = ChatConfig {
-            provider: ProviderConfig::ClaudeCli(cli_config),
+            provider: provider_config,
             rate_limit: RateLimitConfig::default(),
             audit: AuditConfig::default(),
             confirmations: ConfirmationConfig::default(),
