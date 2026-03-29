@@ -1,6 +1,7 @@
 //! Configuration for the chat backend.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Chat backend configuration.
@@ -279,7 +280,8 @@ pub struct OpencodeConfig {
     #[serde(default = "default_opencode_binary_path")]
     pub binary_path: String,
 
-    /// Model to use in provider/model format (e.g., "github-copilot/gpt-4o", "opencode/minimax-m2.5-free").
+    /// Model to use. Can be a short alias (e.g., "sonnet") or a full
+    /// provider/model string (e.g., "github-copilot/gpt-4o").
     /// Default: github-copilot/gpt-4o
     #[serde(default = "default_opencode_model")]
     pub model: String,
@@ -288,6 +290,18 @@ pub struct OpencodeConfig {
     /// Default: 60
     #[serde(default = "default_opencode_timeout_secs")]
     pub timeout_secs: u64,
+
+    /// Model alias mappings from short names to full provider/model strings.
+    /// Unknown models pass through unchanged.
+    ///
+    /// Example:
+    /// ```yaml
+    /// model_aliases:
+    ///   sonnet: opencode/glm-5-free
+    ///   opus: github-copilot/claude-opus-4.6
+    /// ```
+    #[serde(default = "default_model_aliases")]
+    pub model_aliases: HashMap<String, String>,
 }
 
 fn default_opencode_binary_path() -> String {
@@ -302,12 +316,39 @@ fn default_opencode_timeout_secs() -> u64 {
     60
 }
 
+fn default_model_aliases() -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    m.insert("sonnet".to_string(), "opencode/glm-5-free".to_string());
+    m.insert(
+        "opus".to_string(),
+        "github-copilot/claude-opus-4.6".to_string(),
+    );
+    m.insert("glm".to_string(), "opencode/glm-5-free".to_string());
+    m.insert("gpt".to_string(), "opencode/gpt-5-nano".to_string());
+    m
+}
+
+impl OpencodeConfig {
+    /// Resolve `self.model` through the alias map.
+    ///
+    /// If `model` is a known alias, returns the mapped provider/model string.
+    /// Otherwise returns `model` unchanged (pass-through for already-qualified
+    /// strings like "github-copilot/gpt-4o").
+    pub fn resolve_model(&self) -> &str {
+        self.model_aliases
+            .get(&self.model)
+            .map(String::as_str)
+            .unwrap_or(&self.model)
+    }
+}
+
 impl Default for OpencodeConfig {
     fn default() -> Self {
         Self {
             binary_path: default_opencode_binary_path(),
             model: default_opencode_model(),
             timeout_secs: default_opencode_timeout_secs(),
+            model_aliases: default_model_aliases(),
         }
     }
 }
@@ -757,6 +798,77 @@ mod tests {
         );
         assert_eq!(ProviderType::from_str("mock").unwrap(), ProviderType::Mock);
         assert!(ProviderType::from_str("invalid").is_err());
+    }
+
+    #[test]
+    fn test_opencode_config_default_aliases() {
+        let config = OpencodeConfig::default();
+        assert_eq!(config.model_aliases.get("sonnet").unwrap(), "opencode/glm-5-free");
+        assert_eq!(config.model_aliases.get("opus").unwrap(), "github-copilot/claude-opus-4.6");
+        assert_eq!(config.model_aliases.get("glm").unwrap(), "opencode/glm-5-free");
+        assert_eq!(config.model_aliases.get("gpt").unwrap(), "opencode/gpt-5-nano");
+    }
+
+    #[test]
+    fn test_opencode_config_resolve_model_alias() {
+        let config = OpencodeConfig {
+            model: "sonnet".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(config.resolve_model(), "opencode/glm-5-free");
+    }
+
+    #[test]
+    fn test_opencode_config_resolve_model_passthrough() {
+        let config = OpencodeConfig {
+            model: "github-copilot/gpt-4o".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(config.resolve_model(), "github-copilot/gpt-4o");
+    }
+
+    #[test]
+    fn test_opencode_config_resolve_model_unknown() {
+        let config = OpencodeConfig {
+            model: "some-unknown-model".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(config.resolve_model(), "some-unknown-model");
+    }
+
+    #[test]
+    fn test_opencode_config_custom_alias() {
+        let mut aliases = HashMap::new();
+        aliases.insert("fast".to_string(), "opencode/minimax-m2.5-free".to_string());
+        let config = OpencodeConfig {
+            model: "fast".to_string(),
+            model_aliases: aliases,
+            ..Default::default()
+        };
+        assert_eq!(config.resolve_model(), "opencode/minimax-m2.5-free");
+    }
+
+    #[test]
+    fn test_opencode_config_serialization_with_aliases() {
+        let config = OpencodeConfig {
+            model: "sonnet".to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("model_aliases"));
+        assert!(json.contains("sonnet"));
+
+        let deserialized: OpencodeConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.model, "sonnet");
+        assert_eq!(deserialized.resolve_model(), "opencode/glm-5-free");
+    }
+
+    #[test]
+    fn test_opencode_config_deserialization_no_aliases() {
+        // When model_aliases is absent from YAML/JSON, default aliases kick in.
+        let json = r#"{"binary_path":"opencode","model":"opus","timeout_secs":60}"#;
+        let config: OpencodeConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.resolve_model(), "github-copilot/claude-opus-4.6");
     }
 
     #[test]
