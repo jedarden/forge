@@ -4943,6 +4943,9 @@ impl App {
 
     /// Draw the Chat view.
     fn draw_chat(&self, frame: &mut Frame, area: Rect) {
+        // Clear any previous content to prevent visual artifacts when switching views
+        frame.render_widget(Clear, area);
+
         let theme = self.theme_manager.current();
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -5193,6 +5196,13 @@ impl App {
             Style::default().fg(Color::Rgb(80, 80, 80))
         };
 
+        // Auto-scroll to bottom: compute scroll offset so newest messages are visible.
+        // chat_scroll_offset=0 means at the bottom; higher values scroll upward.
+        let total_content_lines = history_text.lines.len() as u16;
+        let visible_rows = chunks[0].height.saturating_sub(2); // subtract top/bottom borders
+        let auto_scroll = total_content_lines.saturating_sub(visible_rows);
+        let scroll_y = auto_scroll.saturating_sub(self.chat_scroll_offset);
+
         let history_panel = Paragraph::new(history_text)
             .block(
                 Block::default()
@@ -5204,7 +5214,8 @@ impl App {
                         history_title_style,
                     )),
             )
-            .wrap(Wrap { trim: false });
+            .wrap(Wrap { trim: false })
+            .scroll((scroll_y, 0));
 
         frame.render_widget(history_panel, chunks[0]);
 
