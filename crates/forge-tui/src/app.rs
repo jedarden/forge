@@ -5146,17 +5146,24 @@ impl App {
 
             // Show streaming response or processing indicator
             if self.streaming_active && !self.streaming_response.is_empty() {
-                // Show streaming response with a typing indicator
+                // Show streaming response with a typing indicator (cursor only on last line)
                 let cursor = "▌"; // Block cursor for streaming effect
-                for line in self.streaming_response.lines() {
+                let response_lines: Vec<&str> = self.streaming_response.lines().collect();
+                let last_idx = response_lines.len().saturating_sub(1);
+                for (i, line) in response_lines.iter().enumerate() {
+                    let text = if i == last_idx && !self.streaming_response.ends_with('\n') {
+                        format!("  Assistant: {}{}", line, cursor)
+                    } else {
+                        format!("  Assistant: {}", line)
+                    };
+                    lines.push(Line::styled(text, Style::default().fg(theme.colors.text)));
+                }
+                // If response ends with newline, show cursor on the next blank line
+                if self.streaming_response.ends_with('\n') {
                     lines.push(Line::styled(
-                        format!("  Assistant: {}{}", line, cursor),
+                        format!("  {}", cursor),
                         Style::default().fg(theme.colors.text),
                     ));
-                }
-                // If response ends mid-line, show cursor at end
-                if !self.streaming_response.ends_with('\n') && !self.streaming_response.is_empty() {
-                    // Cursor already shown above
                 }
             } else if self.chat_pending {
                 let spinner = SPINNER_FRAMES[self.chat_spinner_frame % SPINNER_FRAMES.len()];
@@ -5198,9 +5205,18 @@ impl App {
 
         // Auto-scroll to bottom: compute scroll offset so newest messages are visible.
         // chat_scroll_offset=0 means at the bottom; higher values scroll upward.
-        let total_content_lines = history_text.lines.len() as u16;
+        // Account for text wrapping: each logical Line may occupy multiple visual rows.
+        let inner_width = chunks[0].width.saturating_sub(2); // subtract left/right borders
+        let total_visual_lines: u16 = if inner_width > 0 {
+            history_text.lines.iter().map(|line| {
+                let w = line.width() as u16;
+                if w == 0 { 1u16 } else { w.div_ceil(inner_width) }
+            }).sum()
+        } else {
+            history_text.lines.len() as u16
+        };
         let visible_rows = chunks[0].height.saturating_sub(2); // subtract top/bottom borders
-        let auto_scroll = total_content_lines.saturating_sub(visible_rows);
+        let auto_scroll = total_visual_lines.saturating_sub(visible_rows);
         let scroll_y = auto_scroll.saturating_sub(self.chat_scroll_offset);
 
         let history_panel = Paragraph::new(history_text)
