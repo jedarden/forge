@@ -161,8 +161,8 @@ pub fn generate_guidance(diagnostics: Option<&PathDiagnostics>) -> String {
 
     // Claude Code section
     writeln!(output, "📦 Claude Code (Recommended)").unwrap();
-    writeln!(output, "   Install: npm install -g @anthropic-ai/claude-code").unwrap();
-    writeln!(output, "   Docs: https://docs.anthropic.com/en/docs/claude-code").unwrap();
+    writeln!(output, "   Install: npm install -g @anthropic/claude-code").unwrap();
+    writeln!(output, "   Docs: https://docs.anthropic.com/claude-code").unwrap();
     writeln!(
         output,
         "   Features: Full headless support, subscription API, multi-model"
@@ -172,8 +172,8 @@ pub fn generate_guidance(diagnostics: Option<&PathDiagnostics>) -> String {
 
     // OpenCode section
     writeln!(output, "📦 OpenCode").unwrap();
-    writeln!(output, "   Install: pip install opencode-ai").unwrap();
-    writeln!(output, "   Docs: https://github.com/opencode-ai/opencode").unwrap();
+    writeln!(output, "   Install: pip install opencode").unwrap();
+    writeln!(output, "   Docs: https://github.com/opencode-dev/opencode").unwrap();
     writeln!(output, "   Features: Multi-provider support, open source").unwrap();
     writeln!(output).unwrap();
 
@@ -273,8 +273,8 @@ pub fn generate_compact_guidance() -> String {
     writeln!(output, "\n❌ No compatible CLI tools found!").unwrap();
     writeln!(output).unwrap();
     writeln!(output, "Quick install options:").unwrap();
-    writeln!(output, "  Claude Code: npm install -g @anthropic-ai/claude-code").unwrap();
-    writeln!(output, "  OpenCode:    pip install opencode-ai").unwrap();
+    writeln!(output, "  Claude Code: npm install -g @anthropic/claude-code").unwrap();
+    writeln!(output, "  OpenCode:    pip install opencode").unwrap();
     writeln!(output).unwrap();
     writeln!(
         output,
@@ -383,7 +383,7 @@ fn get_upgrade_fix(tool_name: &str) -> String {
             "Upgrade to latest:\n           npm update -g @anthropic-ai/claude-code".to_string()
         }
         "opencode" => {
-            "Upgrade to latest:\n           pip install --upgrade opencode-ai".to_string()
+            "Upgrade to latest:\n           pip install --upgrade opencode".to_string()
         }
         "aider" => {
             "Upgrade to latest:\n           pip install --upgrade aider-chat".to_string()
@@ -440,9 +440,9 @@ mod tests {
         // Check for required sections
         assert!(guidance.contains("No compatible CLI tools found"));
         assert!(guidance.contains("Claude Code (Recommended)"));
-        assert!(guidance.contains("npm install -g @anthropic-ai/claude-code"));
+        assert!(guidance.contains("npm install -g @anthropic/claude-code"));
         assert!(guidance.contains("OpenCode"));
-        assert!(guidance.contains("pip install opencode-ai"));
+        assert!(guidance.contains("pip install opencode"));
         assert!(guidance.contains("Platform Hints"));
         assert!(guidance.contains("After installation, run: forge init"));
     }
@@ -471,8 +471,8 @@ mod tests {
         let compact = generate_compact_guidance();
 
         assert!(compact.contains("No compatible CLI tools found"));
-        assert!(compact.contains("npm install -g @anthropic-ai/claude-code"));
-        assert!(compact.contains("pip install opencode-ai"));
+        assert!(compact.contains("npm install -g @anthropic/claude-code"));
+        assert!(compact.contains("pip install opencode"));
         assert!(compact.contains("forge init --help"));
     }
 
