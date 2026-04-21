@@ -274,16 +274,20 @@ pub fn restart_with_new_binary() -> crate::Result<()> {
         install_path
     );
 
-    // Prepare arguments for exec
-    // Pass special environment variable to signal the new process to rename itself
-    let mut cmd = std::process::Command::new(&staging_file);
-    cmd.env("FORGE_INSTALL_PATH", &install_path);
-    cmd.env("FORGE_STAGING_PATH", &staging_file);
-    cmd.env("FORGE_AUTO_RESTART", "1");
+    // Set env vars directly in the process before execv() — exec inherits
+    // the current environment. We must set these here (not on a Command
+    // object) because exec_binary() uses raw execv(), not std::process::Command.
+    // SAFETY: This is safe here because we are about to exec() — no other
+    // threads can observe the inconsistent env state. The exec syscall
+    // replaces the entire process image.
+    unsafe {
+        env::set_var("FORGE_INSTALL_PATH", &install_path);
+        env::set_var("FORGE_STAGING_PATH", &staging_file);
+        env::set_var("FORGE_AUTO_RESTART", "1");
+    }
 
     // Preserve current args
     let args: Vec<String> = env::args().skip(1).collect();
-    cmd.args(&args);
 
     info!(
         "Execing new binary: {:?} with args: {:?}",
@@ -298,12 +302,19 @@ pub fn restart_with_new_binary() -> crate::Result<()> {
     unreachable!("exec() returned, which should never happen");
 }
 
-/// Check if this is a freshly exec'd process that needs to install itself.
+/// Check if a staged update needs to be installed.
 ///
-/// Returns the install path if this process should rename itself, None otherwise.
+/// This handles two scenarios:
+/// 1. Auto-restart: env vars FORGE_AUTO_RESTART, FORGE_INSTALL_PATH, FORGE_STAGING_PATH
+///    are set by the old process before execv()
+/// 2. Manual restart: a stale staging file exists from a previous update that was
+///    downloaded but the user quit instead of auto-restarting
+///
+/// Returns the install path if an update was installed, None otherwise.
 pub fn check_and_perform_self_install() -> crate::Result<Option<PathBuf>> {
-    // Check if we were exec'd with install instructions
-    if env::var("FORGE_AUTO_RESTART").is_ok() {
+    // Determine staging and install paths
+    let (staging_path, install_path) = if env::var("FORGE_AUTO_RESTART").is_ok() {
+        // Auto-restart path: env vars from old process
         info!("Detected auto-restart environment - performing self-install");
 
         let install_path_str = env::var("FORGE_INSTALL_PATH").map_err(|_| {
@@ -311,82 +322,131 @@ pub fn check_and_perform_self_install() -> crate::Result<Option<PathBuf>> {
                 message: "FORGE_INSTALL_PATH not set".to_string(),
             }
         })?;
-        let install_path = PathBuf::from(install_path_str);
-
         let staging_path_str = env::var("FORGE_STAGING_PATH").map_err(|_| {
             ForgeError::UpdateInstall {
                 message: "FORGE_STAGING_PATH not set".to_string(),
             }
         })?;
-        let staging_path = PathBuf::from(staging_path_str);
+        (PathBuf::from(staging_path_str), PathBuf::from(install_path_str))
+    } else if let Some(staged) = has_staged_update() {
+        // Manual restart path: stale staging file detected
+        info!("Detected staged update from previous session - installing");
 
-        info!(
-            "Installing from {:?} to {:?}",
-            staging_path, install_path
-        );
+        let current_exe = env::current_exe().map_err(|e| ForgeError::UpdateInstall {
+            message: format!("Failed to get current executable path: {}", e),
+        })?;
+        let install = get_install_path(&current_exe)?;
+        (staged, install)
+    } else {
+        return Ok(None);
+    };
 
-        // Create backup of old binary
-        let backup_path = install_path.with_extension("old");
-        if install_path.exists() {
-            info!("Backing up old binary to {:?}", backup_path);
-            if backup_path.exists() {
-                fs::remove_file(&backup_path).map_err(|e| ForgeError::UpdateInstall {
-                    message: format!("Failed to remove old backup: {}", e),
-                })?;
-            }
-            fs::rename(&install_path, &backup_path).map_err(|e| ForgeError::UpdateInstall {
-                message: format!("Failed to backup old binary: {}", e),
+    // Verify staging file still exists and is valid
+    if !staging_path.exists() {
+        warn!("Staging file disappeared: {:?}", staging_path);
+        return Ok(None);
+    }
+
+    if let Err(e) = verify_binary(&staging_path) {
+        warn!("Staged binary failed verification, removing: {}", e);
+        let _ = fs::remove_file(&staging_path);
+        return Ok(None);
+    }
+
+    info!(
+        "Installing from {:?} to {:?}",
+        staging_path, install_path
+    );
+
+    // Create backup of old binary
+    let backup_path = install_path.with_extension("old");
+    if install_path.exists() {
+        info!("Backing up old binary to {:?}", backup_path);
+        if backup_path.exists() {
+            fs::remove_file(&backup_path).map_err(|e| ForgeError::UpdateInstall {
+                message: format!("Failed to remove old backup: {}", e),
             })?;
         }
+        fs::rename(&install_path, &backup_path).map_err(|e| ForgeError::UpdateInstall {
+            message: format!("Failed to backup old binary: {}", e),
+        })?;
+    }
 
-        // Move staging binary to install location
-        fs::rename(&staging_path, &install_path).map_err(|e| {
+    // Move staging binary to install location.
+    // rename() works on Linux even for running binaries (atomic directory op).
+    // If cross-filesystem, fall back to copy+delete.
+    let move_result = fs::rename(&staging_path, &install_path);
+    if let Err(e) = move_result {
+        // Cross-filesystem fallback: copy then delete
+        info!("rename() failed ({}), falling back to copy", e);
+        fs::copy(&staging_path, &install_path).map_err(|e2| {
             // Try to restore backup on failure
             if backup_path.exists() {
                 let _ = fs::rename(&backup_path, &install_path);
             }
             ForgeError::UpdateInstall {
-                message: format!("Failed to install new binary: {}", e),
+                message: format!("Failed to install new binary: {}", e2),
             }
         })?;
-
-        // Set executable permissions
-        fs::set_permissions(&install_path, fs::Permissions::from_mode(0o755)).map_err(|e| {
-            ForgeError::UpdateInstall {
-                message: format!("Failed to set executable permissions: {}", e),
-            }
-        })?;
-
-        // Clean up environment variables
-        // SAFETY: These environment variables are only used during the update process
-        // and are safe to remove as we're done with them. No other threads should be
-        // accessing them during this cleanup phase.
-        unsafe {
-            env::remove_var("FORGE_AUTO_RESTART");
-            env::remove_var("FORGE_INSTALL_PATH");
-            env::remove_var("FORGE_STAGING_PATH");
-        }
-
-        // Save the new version to ~/.forge/version
-        let current_version = env!("CARGO_PKG_VERSION");
-        if let Err(e) = save_current_version(current_version) {
-            warn!("Failed to save version file: {}", e);
-            // Don't fail the update just because version tracking failed
-        }
-
-        info!("Self-install complete! Running from {:?}", install_path);
-
-        Ok(Some(install_path))
-    } else {
-        Ok(None)
+        let _ = fs::remove_file(&staging_path);
     }
+
+    // Set executable permissions
+    fs::set_permissions(&install_path, fs::Permissions::from_mode(0o755)).map_err(|e| {
+        ForgeError::UpdateInstall {
+            message: format!("Failed to set executable permissions: {}", e),
+        }
+    })?;
+
+    // Clean up environment variables (no-op if not set)
+    // SAFETY: These environment variables are only used during the update process
+    // and are safe to remove as we're done with them.
+    unsafe {
+        env::remove_var("FORGE_AUTO_RESTART");
+        env::remove_var("FORGE_INSTALL_PATH");
+        env::remove_var("FORGE_STAGING_PATH");
+    }
+
+    // Save the new version to ~/.forge/version
+    let current_version = env!("CARGO_PKG_VERSION");
+    if let Err(e) = save_current_version(current_version) {
+        warn!("Failed to save version file: {}", e);
+    }
+
+    info!("Self-install complete! Running from {:?}", install_path);
+
+    Ok(Some(install_path))
 }
 
 /// Get the staging path for the downloaded binary.
+///
+/// Uses a stable path (not PID-dependent) so the staged update survives
+/// manual restarts. The staging file is placed in a forge-specific temp dir.
 fn get_staging_path(_current_exe: &Path) -> crate::Result<PathBuf> {
-    let temp_dir = std::env::temp_dir();
-    let staging_file = temp_dir.join(format!("forge-update-{}", std::process::id()));
-    Ok(staging_file)
+    let temp_dir = std::env::temp_dir().join("forge-update");
+    if !temp_dir.exists() {
+        fs::create_dir_all(&temp_dir).map_err(|e| ForgeError::UpdateInstall {
+            message: format!("Failed to create staging directory: {}", e),
+        })?;
+    }
+    Ok(temp_dir.join("forge-staged"))
+}
+
+/// Check if a staged update exists (for manual restart detection).
+///
+/// This is called at startup to detect updates that were downloaded but
+/// never installed (e.g., user quit instead of auto-restarting).
+pub fn has_staged_update() -> Option<PathBuf> {
+    let temp_dir = std::env::temp_dir().join("forge-update");
+    let staging = temp_dir.join("forge-staged");
+    if staging.exists() {
+        if let Ok(meta) = fs::metadata(&staging) {
+            if meta.len() > 0 {
+                return Some(staging);
+            }
+        }
+    }
+    None
 }
 
 /// Get the final install path for the binary.
