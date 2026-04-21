@@ -171,6 +171,10 @@ pub struct ForgeConfig {
     #[serde(default)]
     pub auto_recovery: AutoRecoveryConfig,
 
+    /// Worker defaults configuration
+    #[serde(default)]
+    pub workers: WorkerConfig,
+
     /// Notification configuration
     #[serde(default)]
     pub notifications: NotificationsConfig,
@@ -331,6 +335,11 @@ impl ForgeConfig {
             .and_then(|v| serde_yaml::from_value(v.clone()).ok())
             .unwrap_or_default();
 
+        let workers = yaml
+            .get("workers")
+            .and_then(|v| serde_yaml::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
         let notifications = yaml
             .get("notifications")
             .and_then(|v| serde_yaml::from_value(v.clone()).ok())
@@ -343,6 +352,7 @@ impl ForgeConfig {
             theme,
             cost_tracking,
             auto_recovery,
+            workers,
             notifications,
         })
     }
@@ -394,6 +404,28 @@ impl ForgeConfig {
                     theme_name, valid_themes
                 ));
             }
+        }
+
+        // Validate max workers
+        if self.workers.max_workers == 0 {
+            warnings.push("max_workers must be at least 1".to_string());
+        }
+
+        // Validate default model
+        let valid_models = ["sonnet", "opus", "haiku", "glm"];
+        if !valid_models.contains(&self.workers.default_model.to_lowercase().as_str()) {
+            warnings.push(format!(
+                "Invalid default_model '{}', valid models: {:?}",
+                self.workers.default_model, valid_models
+            ));
+        }
+
+        // Validate sonnet costs (must be non-negative)
+        if self.cost_tracking.sonnet_cost_per_1k_input < 0.0 {
+            warnings.push("sonnet_cost_per_1k_input must be non-negative".to_string());
+        }
+        if self.cost_tracking.sonnet_cost_per_1k_output < 0.0 {
+            warnings.push("sonnet_cost_per_1k_output must be non-negative".to_string());
         }
 
         if warnings.is_empty() {
@@ -457,6 +489,33 @@ impl ForgeConfig {
             }
         }
 
+        // Sanitize max workers
+        if config.workers.max_workers == 0 {
+            warn!(
+                original = config.workers.max_workers,
+                "Sanitizing max_workers to minimum 1"
+            );
+            config.workers.max_workers = 1;
+        }
+
+        // Sanitize default model
+        let valid_models = ["sonnet", "opus", "haiku", "glm"];
+        if !valid_models.contains(&config.workers.default_model.to_lowercase().as_str()) {
+            warn!(
+                original = config.workers.default_model,
+                "Sanitizing invalid default_model to sonnet"
+            );
+            config.workers.default_model = "sonnet".to_string();
+        }
+
+        // Sanitize sonnet costs
+        if config.cost_tracking.sonnet_cost_per_1k_input < 0.0 {
+            config.cost_tracking.sonnet_cost_per_1k_input = 0.003;
+        }
+        if config.cost_tracking.sonnet_cost_per_1k_output < 0.0 {
+            config.cost_tracking.sonnet_cost_per_1k_output = 0.015;
+        }
+
         config
     }
 
@@ -511,6 +570,10 @@ pub struct DashboardConfig {
     /// Default layout mode.
     #[serde(default = "default_layout")]
     pub default_layout: String,
+
+    /// Log retention period in days (0 = forever).
+    #[serde(default = "default_log_retention_days")]
+    pub log_retention_days: u64,
 }
 
 impl Default for DashboardConfig {
@@ -519,6 +582,7 @@ impl Default for DashboardConfig {
             refresh_interval_ms: default_refresh_interval(),
             max_fps: default_max_fps(),
             default_layout: default_layout(),
+            log_retention_days: default_log_retention_days(),
         }
     }
 }
@@ -535,6 +599,10 @@ fn default_layout() -> String {
     "overview".to_string()
 }
 
+fn default_log_retention_days() -> u64 {
+    7
+}
+
 /// Theme configuration.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ThemeConfig {
@@ -547,6 +615,35 @@ impl Default for ThemeConfig {
     fn default() -> Self {
         Self { name: None }
     }
+}
+
+/// Worker configuration.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct WorkerConfig {
+    /// Maximum concurrent workers.
+    #[serde(default = "default_max_workers")]
+    pub max_workers: u64,
+
+    /// Default model for new workers.
+    #[serde(default = "default_model")]
+    pub default_model: String,
+}
+
+impl Default for WorkerConfig {
+    fn default() -> Self {
+        Self {
+            max_workers: default_max_workers(),
+            default_model: default_model(),
+        }
+    }
+}
+
+fn default_max_workers() -> u64 {
+    10
+}
+
+fn default_model() -> String {
+    "sonnet".to_string()
 }
 
 /// Cost tracking configuration.
@@ -567,6 +664,14 @@ pub struct CostTrackingConfig {
     /// Monthly budget in USD.
     #[serde(default)]
     pub monthly_budget_usd: Option<f64>,
+
+    /// Cost per 1K input tokens for Sonnet (USD).
+    #[serde(default = "default_sonnet_input_cost")]
+    pub sonnet_cost_per_1k_input: f64,
+
+    /// Cost per 1K output tokens for Sonnet (USD).
+    #[serde(default = "default_sonnet_output_cost")]
+    pub sonnet_cost_per_1k_output: f64,
 }
 
 impl Default for CostTrackingConfig {
@@ -576,6 +681,8 @@ impl Default for CostTrackingConfig {
             budget_warning_threshold: default_warning_threshold(),
             budget_critical_threshold: default_critical_threshold(),
             monthly_budget_usd: None,
+            sonnet_cost_per_1k_input: default_sonnet_input_cost(),
+            sonnet_cost_per_1k_output: default_sonnet_output_cost(),
         }
     }
 }
@@ -722,6 +829,14 @@ fn default_warning_threshold() -> u8 {
 
 fn default_critical_threshold() -> u8 {
     90
+}
+
+fn default_sonnet_input_cost() -> f64 {
+    0.003
+}
+
+fn default_sonnet_output_cost() -> f64 {
+    0.015
 }
 
 /// Configuration watcher that monitors config.yaml for changes.

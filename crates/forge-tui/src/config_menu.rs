@@ -142,7 +142,11 @@ pub fn build_settings_items(config: &ForgeConfig) -> Vec<ConfigMenuItem> {
         },
         ConfigMenuItem {
             label: "Log Retention",
-            value: "7 days".to_string(), // TODO: Add to config
+            value: if config.dashboard.log_retention_days == 0 {
+                "forever".to_string()
+            } else {
+                format!("{} days", config.dashboard.log_retention_days)
+            },
             description: "How long to keep log files",
             editable: true,
             input_type: ConfigInputType::Select {
@@ -189,14 +193,14 @@ pub fn build_budget_items(config: &ForgeConfig) -> Vec<ConfigMenuItem> {
         },
         ConfigMenuItem {
             label: "Sonnet Cost/Input",
-            value: "$0.003/1K".to_string(), // TODO: Make configurable
+            value: format!("${}/1K", config.cost_tracking.sonnet_cost_per_1k_input),
             description: "Cost per 1K input tokens (Sonnet)",
             editable: true,
             input_type: ConfigInputType::Float,
         },
         ConfigMenuItem {
             label: "Sonnet Cost/Output",
-            value: "$0.015/1K".to_string(), // TODO: Make configurable
+            value: format!("${}/1K", config.cost_tracking.sonnet_cost_per_1k_output),
             description: "Cost per 1K output tokens (Sonnet)",
             editable: true,
             input_type: ConfigInputType::Float,
@@ -209,14 +213,14 @@ pub fn build_worker_items(config: &ForgeConfig) -> Vec<ConfigMenuItem> {
     vec![
         ConfigMenuItem {
             label: "Max Workers",
-            value: "10".to_string(), // TODO: Add to config
+            value: config.workers.max_workers.to_string(),
             description: "Maximum concurrent workers",
             editable: true,
             input_type: ConfigInputType::Integer,
         },
         ConfigMenuItem {
             label: "Default Model",
-            value: "sonnet".to_string(), // TODO: Add to config
+            value: config.workers.default_model.clone(),
             description: "Default model for new workers",
             editable: true,
             input_type: ConfigInputType::Select {

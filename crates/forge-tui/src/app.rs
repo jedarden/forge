@@ -3589,8 +3589,11 @@ impl App {
                         return true;
                     }
                     "Log Retention" => {
-                        // TODO: Add log_retention field to ForgeConfig
-                        // For now, just acknowledge the setting
+                        let days = match value {
+                            "forever" => 0,
+                            _ => value.trim_end_matches(" days").parse::<u64>().unwrap_or(7),
+                        };
+                        self.forge_config.dashboard.log_retention_days = days;
                         return true;
                     }
                     _ => {}
@@ -3623,10 +3626,19 @@ impl App {
                             return true;
                         }
                     }
-                    "Sonnet Cost/Input" | "Sonnet Cost/Output" => {
-                        // TODO: Add per-model cost configuration to ForgeConfig
-                        // For now, just acknowledge the setting
-                        return true;
+                    "Sonnet Cost/Input" => {
+                        let clean = value.trim_start_matches('$').trim_end_matches("/1K");
+                        if let Ok(v) = clean.parse::<f64>() {
+                            self.forge_config.cost_tracking.sonnet_cost_per_1k_input = v;
+                            return true;
+                        }
+                    }
+                    "Sonnet Cost/Output" => {
+                        let clean = value.trim_start_matches('$').trim_end_matches("/1K");
+                        if let Ok(v) = clean.parse::<f64>() {
+                            self.forge_config.cost_tracking.sonnet_cost_per_1k_output = v;
+                            return true;
+                        }
                     }
                     _ => {}
                 }
@@ -3634,12 +3646,13 @@ impl App {
             ConfigMenuType::Worker => {
                 match label {
                     "Max Workers" => {
-                        // TODO: Add max_workers field to ForgeConfig
-                        // For now, just acknowledge the setting
-                        return true;
+                        if let Ok(v) = value.parse::<u64>() {
+                            self.forge_config.workers.max_workers = v.max(1);
+                            return true;
+                        }
                     }
                     "Default Model" => {
-                        // TODO: Add default_model field to ForgeConfig
+                        self.forge_config.workers.default_model = value.to_lowercase();
                         return true;
                     }
                     "Worker Timeout" => {
