@@ -3839,6 +3839,7 @@ impl App {
                         self.update_available = false;
                         self.update_progress.percent = 100;
                         self.update_ready_for_restart = true;
+                        self.should_quit = true;
                     }
                     UpdateResult::AlreadyUpToDate => {
                         self.status_message =
