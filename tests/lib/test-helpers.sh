@@ -26,6 +26,11 @@ TERM_HEIGHT="${TERM_HEIGHT:-55}"
 TMP_DIR="${TMP_DIR:-/tmp}"
 LOG_BASE="$HOME/.forge/logs/forge.log"
 
+# Add target/release to PATH for forge binary
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FORGE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+export PATH="$FORGE_ROOT/target/release:$PATH"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'

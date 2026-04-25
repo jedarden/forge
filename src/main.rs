@@ -401,14 +401,8 @@ fn run_onboarding(
     let ready_tools: Vec<_> = tools.iter().filter(|t| t.is_ready()).collect();
 
     if ready_tools.is_empty() {
-        if non_interactive {
-            // In non-interactive mode, output to stderr and exit
-            eprintln!("error: No compatible CLI tools available");
-            eprintln!("Install one of: claude (Claude Code), opencode, aider");
-        } else {
-            // Use the guidance module to show detailed instructions
-            eprint!("{}", guidance::generate_guidance(Some(&diagnostics)));
-        }
+        // Use the guidance module to show detailed instructions (both interactive and non-interactive)
+        eprint!("{}", guidance::generate_guidance(Some(&diagnostics)));
         return Err("No compatible CLI tools available".into());
     }
 
