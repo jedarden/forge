@@ -23,6 +23,10 @@ chrono.workspace = true
 serde_json.workspace = true
 dirs = "5.0"
 
+[features]
+default = ["self-update"]
+self-update = ["forge-core/self-update", "forge-tui/self-update"]
+
 [workspace]
 resolver = "2"
 members = [
