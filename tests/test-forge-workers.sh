@@ -40,16 +40,18 @@ cleanup_on_exit() {
 
     log_info "Final cleanup: checking for orphaned worker sessions..."
 
-    # Clean up all forge-forge-* sessions that were created after script started
+    # Clean up all forge worker sessions that were created after script started
+    # Matches: forge-glm-*, forge-sonnet-*, forge-opus-*, forge-haiku-*
+    # And: forge-forge-glm-*, forge-forge-sonnet-*, etc.
     if [ -n "${SCRIPT_BEFORE_SESSIONS:-}" ]; then
         cleanup_spawned_workers "$SCRIPT_BEFORE_SESSIONS" 2>/dev/null || true
     else
-        # If we don't have a before snapshot, clean up ALL forge-forge-* sessions
+        # If we don't have a before snapshot, clean up ALL forge worker sessions
         # This is a fallback safety measure
         local sessions
-        sessions=$(tmux list-sessions 2>/dev/null | grep -E '^forge-forge-' | cut -d: -f1 || true)
+        sessions=$(tmux list-sessions 2>/dev/null | grep -E '^forge-?(forge-)?(glm-|sonnet-|opus-|haiku-)' | cut -d: -f1 || true)
         if [ -n "$sessions" ]; then
-            log_warn "No before snapshot - cleaning all forge-forge-* sessions"
+            log_warn "No before snapshot - cleaning all forge worker sessions"
             while IFS= read -r session; do
                 if [ -n "$session" ]; then
                     log_info "  Killing orphaned worker: $session"
@@ -63,7 +65,9 @@ cleanup_on_exit() {
 }
 
 # Capture sessions before any tests run (for final cleanup)
-SCRIPT_BEFORE_SESSIONS=$(tmux list-sessions 2>/dev/null | grep -E '^forge-forge-' | cut -d: -f1 || true)
+# Matches: forge-glm-*, forge-sonnet-*, forge-opus-*, forge-haiku-*
+# And: forge-forge-glm-*, forge-forge-sonnet-*, etc.
+SCRIPT_BEFORE_SESSIONS=$(tmux list-sessions 2>/dev/null | grep -E '^forge-?(forge-)?(glm-|sonnet-|opus-|haiku-)' | cut -d: -f1 || true)
 
 # Set up trap for cleanup on script exit
 trap cleanup_on_exit EXIT
