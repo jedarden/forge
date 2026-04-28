@@ -476,10 +476,13 @@ ci_adjust() {
 # Capture current forge worker sessions
 # Usage: capture_before_sessions [OUTPUT_VAR_NAME]
 # Outputs: List of session names (one per line)
+# Matches: forge-glm-*, forge-sonnet-*, forge-opus-*, forge-haiku-*
+# Matches: forge-forge-glm-*, forge-forge-sonnet-*, forge-forge-opus-*, forge-forge-haiku-*
+# Excludes: forge-test-* (test sessions)
 capture_before_sessions() {
     local output_var="${1:-BEFORE_SESSIONS}"
     local sessions
-    sessions=$(tmux list-sessions 2>/dev/null | grep -E '^forge-forge-' | cut -d: -f1 || true)
+    sessions=$(tmux list-sessions 2>/dev/null | grep -E '^forge-?(forge-)?(glm-|sonnet-|opus-|haiku-)' | cut -d: -f1 || true)
     eval "$output_var=\"\$sessions\""
     echo "$sessions"
 }
@@ -491,9 +494,10 @@ cleanup_spawned_workers() {
 
     log_info "Cleaning up spawned worker sessions..."
 
-    # Get current forge-forge-* sessions
+    # Get current forge worker sessions (matches: forge-glm-*, forge-sonnet-*, forge-opus-*, forge-haiku-*
+    # and forge-forge-glm-*, forge-forge-sonnet-*, etc.)
     local after
-    after=$(tmux list-sessions 2>/dev/null | grep -E '^forge-forge-' | cut -d: -f1 || true)
+    after=$(tmux list-sessions 2>/dev/null | grep -E '^forge-?(forge-)?(glm-|sonnet-|opus-|haiku-)' | cut -d: -f1 || true)
 
     # Find and kill new sessions
     local cleaned=0
