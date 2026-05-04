@@ -2,18 +2,20 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
 use crate::error::Result;
+use crate::spawner::WorkerSpawner;
 
 /// Dashboard context for tool execution.
 ///
 /// This structure provides the current state of the dashboard to tools,
 /// including worker status, task queue, costs, and subscriptions.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct DashboardContext {
     /// Current workers in the pool.
     pub workers: Vec<WorkerInfo>,
@@ -35,6 +37,29 @@ pub struct DashboardContext {
 
     /// Context timestamp.
     pub timestamp: DateTime<Utc>,
+
+    /// Optional worker spawner for action tools.
+    ///
+    /// This is excluded from serialization (serde skip) because it's a runtime
+    /// reference that cannot be serialized. When the context is serialized
+    /// (e.g., for audit logging), this field is skipped.
+    #[serde(skip)]
+    pub worker_spawner: Option<Arc<dyn WorkerSpawner>>,
+}
+
+impl fmt::Debug for DashboardContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DashboardContext")
+            .field("workers", &self.workers)
+            .field("tasks", &self.tasks)
+            .field("costs_today", &self.costs_today)
+            .field("costs_projected", &self.costs_projected)
+            .field("subscriptions", &self.subscriptions)
+            .field("recent_events", &self.recent_events)
+            .field("timestamp", &self.timestamp)
+            .field("worker_spawner", &self.worker_spawner.as_ref().map(|_| "<WorkerSpawner>"))
+            .finish()
+    }
 }
 
 impl DashboardContext {
@@ -42,8 +67,15 @@ impl DashboardContext {
     pub fn new() -> Self {
         Self {
             timestamp: Utc::now(),
+            worker_spawner: None,
             ..Default::default()
         }
+    }
+
+    /// Set the worker spawner.
+    pub fn with_worker_spawner(mut self, spawner: Arc<dyn WorkerSpawner>) -> Self {
+        self.worker_spawner = Some(spawner);
+        self
     }
 
     /// Format context as a summary for the AI prompt.
@@ -405,6 +437,7 @@ impl MockContextSource {
                 bead_id: Some("bd-123".to_string()),
             }],
             timestamp: Utc::now(),
+            worker_spawner: None,
         };
 
         Self { context }
@@ -808,6 +841,7 @@ impl ContextSource for RealContextSource {
             subscriptions,
             recent_events,
             timestamp: Utc::now(),
+            worker_spawner: None,
         })
     }
 }

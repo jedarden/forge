@@ -52,6 +52,7 @@ pub mod history;
 pub mod opencode_provider;
 pub mod provider;
 pub mod rate_limit;
+pub mod spawner;
 pub mod tools;
 
 // Re-export main types
@@ -72,4 +73,5 @@ pub use provider::{
     ProviderResponse, ProviderTool, TokenUsage,
 };
 pub use rate_limit::RateLimiter;
+pub use spawner::{NoOpWorkerSpawner, RealWorkerSpawner, SpawnResult, WorkerSpawner};
 pub use tools::{ActionConfirmation, ChatTool, ToolCall, ToolRegistry, ToolResult};

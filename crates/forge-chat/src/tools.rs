@@ -612,41 +612,52 @@ impl ChatTool for SpawnWorkerTool {
     async fn execute(
         &self,
         params: serde_json::Value,
-        _context: &DashboardContext,
+        context: &DashboardContext,
     ) -> Result<ToolResult> {
         let worker_type = params
             .get("worker_type")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ChatError::ToolExecutionFailed("worker_type is required".to_string()))?;
 
-        let count = params.get("count").and_then(|v| v.as_u64()).unwrap_or(1);
+        let count = params.get("count").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
         let workspace = params.get("workspace").and_then(|v| v.as_str());
 
-        // In a real implementation, this would call the worker launcher
-        // For now, we return a placeholder result
-        let spawned_workers: Vec<String> = (0..count)
-            .map(|i| format!("{}-worker-{}", worker_type, i + 1))
-            .collect();
+        // Check if worker spawner is available
+        let spawner = context.worker_spawner.as_ref()
+            .ok_or_else(|| ChatError::ToolExecutionFailed(
+                "Worker spawning not available. Please use the FORGE TUI to spawn workers.".to_string()
+            ))?;
 
-        let mut result = ToolResult::success(
-            serde_json::json!({
-                "spawned": spawned_workers,
-                "count": count,
-                "worker_type": worker_type,
-                "workspace": workspace
-            }),
-            format!("Spawned {} {} worker(s)", count, worker_type),
-        );
+        // Spawn workers using the real spawner
+        let workspace_path = workspace.map(std::path::PathBuf::from);
+        match spawner.spawn_workers(worker_type, count, workspace_path.as_ref()).await {
+            Ok(spawned) => {
+                let mut result = ToolResult::success(
+                    serde_json::json!({
+                        "spawned": spawned,
+                        "count": spawned.len(),
+                        "worker_type": worker_type,
+                        "workspace": workspace
+                    }),
+                    format!("Spawned {} {} worker(s)", spawned.len(), worker_type),
+                );
 
-        for worker in &spawned_workers {
-            result = result.with_side_effect(SideEffect {
-                effect_type: "spawn".to_string(),
-                description: format!("Spawned worker {}", worker),
-                data: Some(serde_json::json!({"session": worker})),
-            });
+                for s in &spawned {
+                    result = result.with_side_effect(SideEffect {
+                        effect_type: "spawn".to_string(),
+                        description: format!("Spawned worker {} (PID: {})", s.session_name, s.pid),
+                        data: Some(serde_json::json!({
+                            "session": s.session_name,
+                            "worker_id": s.worker_id,
+                            "pid": s.pid
+                        })),
+                    });
+                }
+
+                Ok(result)
+            }
+            Err(e) => Ok(ToolResult::error(format!("Failed to spawn workers: {}", e)))
         }
-
-        Ok(result)
     }
 }
 

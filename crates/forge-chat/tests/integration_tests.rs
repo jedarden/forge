@@ -23,6 +23,8 @@ use forge_chat::tools::{
 use forge_chat::{
     AuditEntry, AuditLogger, ChatResponse, ContextProvider, DashboardContext, RateLimiter,
 };
+use forge_chat::spawner::{NoOpWorkerSpawner, SpawnResult, WorkerSpawner};
+use std::path::PathBuf;
 
 // ============================================================
 // Chat Tool Integration Tests
@@ -992,6 +994,7 @@ fn create_rich_context() -> DashboardContext {
             },
         ],
         timestamp: Utc::now(),
+        worker_spawner: None,
     }
 }
 
@@ -1007,4 +1010,41 @@ impl ContextSource for CountingContextSource {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         Ok(self.context.clone())
     }
+}
+
+/// Mock worker spawner for testing.
+///
+/// Returns fake spawn results without actually spawning workers.
+struct MockWorkerSpawner;
+
+#[async_trait::async_trait]
+impl WorkerSpawner for MockWorkerSpawner {
+    async fn spawn_workers(
+        &self,
+        worker_type: &str,
+        count: usize,
+        workspace: Option<&PathBuf>,
+    ) -> Result<Vec<SpawnResult>, String> {
+        let mut results = Vec::new();
+        let workspace = workspace.unwrap_or(&PathBuf::from("/tmp/test")).clone();
+
+        for i in 0..count {
+            results.push(SpawnResult {
+                worker_id: format!("{}-worker-{}", worker_type, i + 1),
+                session_name: format!("test-{}-{}", worker_type, i + 1),
+                pid: 1000 + i as u32,
+                worker_type: worker_type.to_string(),
+                workspace: workspace.clone(),
+            });
+        }
+
+        Ok(results)
+    }
+}
+
+/// Create a rich context with a mock worker spawner for testing spawn_worker tool.
+fn create_rich_context_with_spawner() -> DashboardContext {
+    let mut ctx = create_rich_context();
+    ctx.worker_spawner = Some(Arc::new(MockWorkerSpawner));
+    ctx
 }

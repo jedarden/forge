@@ -40,6 +40,9 @@ futures-util.workspace = true
 # Logging
 tracing.workspace = true
 
+# Random number generation
+rand.workspace = true
+
 # Directories
 dirs = "5.0"
 
