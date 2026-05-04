@@ -1518,15 +1518,24 @@ mod tests {
     async fn test_mock_provider_with_tool_calls() {
         use crate::context::DashboardContext;
 
-        // For now, skip this test as and_then_tool_call needs fixing
-        // TODO: Fix and_then_tool_call to work with the Arc<Mutex> pattern
-        let provider = MockProvider::new();
+        // Test and_then_tool_call by creating a provider with a tool call response
+        let provider = MockProvider::new()
+            .with_response("Initial response")
+            .and_then_tool_call("test_tool", serde_json::json!({"param": "value"}));
 
         let context = DashboardContext::default();
-        let response = provider.process("Use tool", &context, &[]).await.unwrap();
 
-        // Just verify the provider works - tool call testing will come later
-        assert!(!response.text.is_empty() || response.tool_calls.is_empty());
+        // First call returns the initial response
+        let r1 = provider.process("test", &context, &[]).await.unwrap();
+        assert_eq!(r1.text, "Initial response");
+        assert!(r1.tool_calls.is_empty());
+
+        // Second call returns the tool call
+        let r2 = provider.process("test", &context, &[]).await.unwrap();
+        assert_eq!(r2.text, "");
+        assert_eq!(r2.tool_calls.len(), 1);
+        assert_eq!(r2.tool_calls[0].name, "test_tool");
+        assert_eq!(r2.tool_calls[0].parameters, serde_json::json!({"param": "value"}));
     }
 
     #[tokio::test]
