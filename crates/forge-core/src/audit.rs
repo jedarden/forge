@@ -15,7 +15,7 @@
 //! ## Example
 //!
 //! ```no_run
-//! use forge_core::audit::{AuditLogger, AuditEvent, EventType};
+//! use forge_core::audit::{AuditLogger, AuditEvent, EventType, Severity};
 //!
 //! # fn main() -> forge_core::Result<()> {
 //! let logger = AuditLogger::open("~/.forge/audit.db")?;
@@ -192,6 +192,8 @@ pub struct AuditEvent {
     pub event_type: EventType,
     /// Who performed the action (user ID, "system", worker_id, etc.)
     pub actor: String,
+    /// Session ID for team collaboration mode (if applicable)
+    pub session_id: Option<String>,
     /// Type of entity affected (worker, bead, config, etc.)
     pub entity_type: String,
     /// ID of the specific entity
@@ -218,6 +220,7 @@ impl AuditEvent {
             timestamp: Utc::now(),
             event_type,
             actor: actor.into(),
+            session_id: None,
             entity_type: entity_type.into(),
             entity_id: entity_id.into(),
             old_value: None,
@@ -248,6 +251,12 @@ impl AuditEvent {
     /// Set the severity level.
     pub fn with_severity(mut self, severity: Severity) -> Self {
         self.severity = severity;
+        self
+    }
+
+    /// Set the session ID for team collaboration attribution.
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
         self
     }
 
@@ -296,6 +305,8 @@ pub struct AuditFilter {
     pub event_types: Option<Vec<EventType>>,
     /// Filter by actor
     pub actor: Option<String>,
+    /// Filter by session ID (for team collaboration)
+    pub session_id: Option<String>,
     /// Filter by entity type
     pub entity_type: Option<String>,
     /// Filter by entity ID
@@ -330,6 +341,12 @@ impl AuditFilter {
     /// Set actor filter.
     pub fn with_actor(mut self, actor: impl Into<String>) -> Self {
         self.actor = Some(actor.into());
+        self
+    }
+
+    /// Set session ID filter (for team collaboration).
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
         self
     }
 
@@ -550,6 +567,7 @@ impl AuditLogger {
                     timestamp TEXT NOT NULL,
                     event_type TEXT NOT NULL,
                     actor TEXT NOT NULL,
+                    session_id TEXT,
                     entity_type TEXT NOT NULL,
                     entity_id TEXT NOT NULL,
                     old_value TEXT,
@@ -591,6 +609,12 @@ impl AuditLogger {
                 [],
             ).map_err(|e| ForgeError::audit_error(format!("failed to create severity index: {}", e)))?;
 
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_audit_logs_session_id
+                 ON audit_logs(session_id)",
+                [],
+            ).map_err(|e| ForgeError::audit_error(format!("failed to create session_id index: {}", e)))?;
+
             // Record schema version
             conn.execute(
                 "INSERT OR REPLACE INTO audit_schema_version (version) VALUES (?)",
@@ -612,19 +636,21 @@ impl AuditLogger {
         debug!(
             event_type = %event.event_type,
             actor = %event.actor,
+            session_id = ?event.session_id,
             entity = %format!("{}:{}", event.entity_type, event.entity_id),
             "Logging audit event"
         );
 
         conn.execute(
             "INSERT INTO audit_logs (
-                timestamp, event_type, actor, entity_type, entity_id,
+                timestamp, event_type, actor, session_id, entity_type, entity_id,
                 old_value, new_value, metadata, severity
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 event.timestamp.to_rfc3339(),
                 event.event_type.to_string(),
                 event.actor,
+                event.session_id,
                 event.entity_type,
                 event.entity_id,
                 event.old_value,
@@ -649,7 +675,7 @@ impl AuditLogger {
         let offset = filter.offset.unwrap_or(0);
 
         let sql = format!(
-            "SELECT timestamp, event_type, actor, entity_type, entity_id,
+            "SELECT timestamp, event_type, actor, session_id, entity_type, entity_id,
                     old_value, new_value, metadata, severity
              FROM audit_logs
              {}
@@ -685,7 +711,7 @@ impl AuditLogger {
             .query_map(param_refs.as_slice(), |row| {
                 let ts_str: String = row.get(0)?;
                 let event_type_str: String = row.get(1)?;
-                let severity_str: String = row.get(8)?;
+                let severity_str: String = row.get(9)?;
 
                 Ok(AuditEvent {
                     timestamp: parse_timestamp(ts_str).map_err(|e| {
@@ -699,11 +725,12 @@ impl AuditLogger {
                         )
                     })?,
                     actor: row.get(2)?,
-                    entity_type: row.get(3)?,
-                    entity_id: row.get(4)?,
-                    old_value: row.get(5)?,
-                    new_value: row.get(6)?,
-                    metadata: row.get(7)?,
+                    session_id: row.get(3)?,
+                    entity_type: row.get(4)?,
+                    entity_id: row.get(5)?,
+                    old_value: row.get(6)?,
+                    new_value: row.get(7)?,
+                    metadata: row.get(8)?,
                     severity: parse_severity(severity_str).map_err(|e| {
                         rusqlite::Error::ToSqlConversionFailure(
                             Box::new(ParseError(e))

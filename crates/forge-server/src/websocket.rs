@@ -438,8 +438,8 @@ impl ForgeServer {
                                                         }
                                                         self.broadcast(ServerMessage::BeadAssigned {
                                                             bead_id,
-                                                            assigned_to: assignment.assigned_to,
-                                                            assigned_by: assignment.assigned_by,
+                                                            assigned_to: assignment.assigned_to.unwrap_or_default(),
+                                                            assigned_by: assignment.assigned_by.unwrap_or_default(),
                                                         });
                                                     }
                                                 }
@@ -459,7 +459,7 @@ impl ForgeServer {
                                                                 "bead_unassignment",
                                                                 &bead_id,
                                                             )
-                                                            .with_old_value(format!("was_assigned_to={}", &assignment.assigned_to)));
+                                                            .with_old_value(format!("was_assigned_to={}", &assignment.assigned_to.as_deref().unwrap_or("<none>"))));
                                                         }
                                                     }
                                                 }

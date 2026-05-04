@@ -30,17 +30,21 @@
 //! ```
 
 pub mod activity_monitor;
+pub mod audit;
+pub mod assignment;
 pub mod deps;
 pub mod error;
 pub mod logging;
 pub mod recovery;
 #[cfg(feature = "self-update")]
 pub mod self_update;
+pub mod session;
 pub mod status;
 pub mod stuck_detection;
 pub mod types;
 pub mod watcher;
 pub mod worker_perf;
+pub mod workspace;
 
 // Re-export worker performance types
 pub use worker_perf::{
@@ -65,8 +69,14 @@ pub use recovery::{
     friendly_error_message, retry_with_backoff, retry_with_backoff_async, RecoveryAction,
     RetryConfig, RetryResult, Retryable,
 };
+pub use assignment::{
+    AssignmentManager, AssignmentPriority, AssignmentStats, AssignmentStatus, BeadAssignment,
+};
+pub use session::{ClientInfo, SessionAction, SessionManager, SessionStatus, UserSession, UserRole};
 pub use status::{StatusReader, StatusWriter, WorkerStatusInfo};
+pub use types::{WorkerStatus, BeadStatus, Priority, BeadType, WorkerTier, WorkerId, BeadId};
 pub use watcher::{StatusEvent, StatusWatcher, WatcherConfig};
+pub use workspace::{WorkspaceRegistry, query_beads_cross_workspace};
 
 // Re-export dependency checking utilities
 pub use deps::{check_and_report as check_dependencies, check_dependencies as dependency_check, DependencyCheck};

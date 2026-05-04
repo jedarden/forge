@@ -58,6 +58,6 @@ pub enum ServerError {
 
 impl From<ServerError> for ForgeError {
     fn from(err: ServerError) -> Self {
-        ForgeError::Server { message: err.to_string() }
+        ForgeError::Internal { message: err.to_string() }
     }
 }
