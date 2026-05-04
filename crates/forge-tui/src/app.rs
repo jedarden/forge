@@ -50,6 +50,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyEvent};
+use forge_config::ForgeConfig;
 use forge_chat::{ChatBackend, ChatConfig, ChatResponse, StreamingChatChunk};
 use forge_core::types::WorkerTier;
 use forge_worker::{
@@ -66,7 +67,7 @@ use ratatui::{
 };
 
 use crate::config_menu::{ConfigMenuType, build_budget_items, build_settings_items, build_worker_items, draw_config_menu};
-use crate::config_watcher::{ConfigEvent, ConfigWatcher, ForgeConfig};
+use crate::config_watcher::{ConfigEvent, ConfigWatcher};
 use crate::cost_panel::CostPanel;
 use crate::data::DataManager;
 use crate::event::{AppEvent, InputHandler};
