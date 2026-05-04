@@ -625,7 +625,11 @@ impl MockProvider {
     /// Add another response to the queue (chains with current responses).
     ///
     /// Note: This method may not work correctly when the provider is already
-    /// shared. For reliable multi-response setup, use `with_multiple_responses`.
+    /// shared via `Arc<Mutex<>>`. For reliable multi-response setup, use
+    /// `with_multiple_responses` for initial configuration, or `add_response`
+    /// for dynamic modification after sharing.
+    ///
+    /// For modifying responses on a shared provider, use `add_response` instead.
     pub fn and_then_response(mut self, text: impl Into<String>) -> Self {
         // Clone the Arc first to avoid borrow issues
         let responses_arc = self.responses.clone();
@@ -645,7 +649,10 @@ impl MockProvider {
     /// Add a tool call response to the queue.
     ///
     /// Note: This method may not work correctly when the provider is already
-    /// shared. Consider creating responses manually for complex scenarios.
+    /// shared via `Arc<Mutex<>>`. For dynamic tool call chaining on shared
+    /// providers, use `add_tool_call_response` instead.
+    ///
+    /// For modifying responses on a shared provider, use `add_tool_call_response`.
     pub fn and_then_tool_call(
         mut self,
         tool_name: impl Into<String>,
@@ -665,7 +672,10 @@ impl MockProvider {
     /// Add an error response to the queue.
     ///
     /// Note: This method may not work correctly when the provider is already
-    /// shared. Consider creating responses manually for complex scenarios.
+    /// shared via `Arc<Mutex<>>`. For dynamic error chaining on shared providers,
+    /// use `add_error` instead.
+    ///
+    /// For modifying responses on a shared provider, use `add_error`.
     pub fn and_then_error(mut self, error_message: impl Into<String>) -> Self {
         let responses_arc = self.responses.clone();
         let mut current = match responses_arc.try_lock() {
@@ -676,6 +686,95 @@ impl MockProvider {
         current.push(MockResponse::error(error_message));
         self.responses = Arc::new(Mutex::new(current));
         self
+    }
+
+    // ============ Methods for Shared Provider (Arc<Mutex<>>) Pattern ============
+    //
+    // The following methods work on &self and can be used when the provider
+    // is shared via Arc<Mutex<MockProvider>>. Use these for dynamic response
+    // chaining after the provider has been shared.
+
+    /// Add a tool call response to the queue (works on shared references).
+    ///
+    /// Unlike `and_then_tool_call`, this method works on `&self` and can be called
+    /// even when the provider is shared via `Arc<Mutex<>>`. It modifies the shared
+    /// response queue directly through the mutex.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use forge_chat::provider::MockProvider;
+    /// # use std::sync::Arc;
+    /// # async fn example() {
+    /// let provider = Arc::new(MockProvider::new());
+    /// let provider_ref = provider.clone();
+    ///
+    /// // This works because add_tool_call_response takes &self
+    /// provider_ref.add_tool_call_response("tool_name".to_string(), serde_json::json!({})).await;
+    /// # }
+    /// ```
+    pub async fn add_tool_call_response(&self, tool_name: String, parameters: serde_json::Value) {
+        let mut responses = self.responses.lock().await;
+        responses.push(MockResponse::success("").with_tool_call(tool_name, parameters));
+    }
+
+    /// Add a text response to the queue (works on shared references).
+    ///
+    /// Unlike `and_then_response`, this method works on `&self` and can be called
+    /// even when the provider is shared via `Arc<Mutex<>>`.
+    pub async fn add_response(&self, text: String) {
+        let mut responses = self.responses.lock().await;
+        responses.push(MockResponse::success(text));
+    }
+
+    /// Add an error response to the queue (works on shared references).
+    ///
+    /// Unlike `and_then_error`, this method works on `&self` and can be called
+    /// even when the provider is shared via `Arc<Mutex<>>`.
+    pub async fn add_error(&self, error_message: String) {
+        let mut responses = self.responses.lock().await;
+        responses.push(MockResponse::error(error_message));
+    }
+
+    /// Add multiple responses to the queue (works on shared references).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use forge_chat::provider::MockProvider;
+    /// # async fn example() {
+    /// let provider = MockProvider::new();
+    /// provider.add_multiple_responses(["First", "Second", "Third"]).await;
+    /// # }
+    /// ```
+    pub async fn add_multiple_responses<I>(&self, responses: I)
+    where
+        I: IntoIterator,
+        I::Item: Into<String>,
+    {
+        let mut mock_responses = self.responses.lock().await;
+        for text in responses {
+            mock_responses.push(MockResponse::success(text.into()));
+        }
+    }
+
+    /// Clear all responses from the queue.
+    ///
+    /// This is useful when you want to start fresh without the default response.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use forge_chat::provider::MockProvider;
+    /// # async fn example() {
+    /// let provider = MockProvider::new();
+    /// provider.clear_responses().await;
+    /// provider.add_response("Custom response".to_string()).await;
+    /// # }
+    /// ```
+    pub async fn clear_responses(&self) {
+        let mut responses = self.responses.lock().await;
+        responses.clear();
     }
 
     /// Simulate errors after N calls.
@@ -1767,5 +1866,211 @@ mod tests {
                 panic!("Unexpected error type: {:?}", other);
             }
         }
+    }
+
+    // ============ Tests for Shared Provider (Arc<Mutex<>>) Pattern ============
+
+    #[tokio::test]
+    async fn test_mock_provider_add_tool_call_response_on_shared() {
+        use std::sync::Arc;
+
+        use crate::context::DashboardContext;
+
+        // Create a shared provider and clear the default response
+        let provider = Arc::new(MockProvider::new());
+        provider.clear_responses().await;
+
+        let provider_clone = Arc::clone(&provider);
+
+        // Add a tool call response via the shared reference
+        provider_clone
+            .add_tool_call_response(
+                "get_worker_status".to_string(),
+                serde_json::json!({"worker_id": "worker-1"}),
+            )
+            .await;
+
+        let context = DashboardContext::default();
+
+        // The response should be available through the original Arc
+        let response = provider.process("test", &context, &[]).await.unwrap();
+        assert!(response.tool_calls.len() == 1);
+        assert_eq!(response.tool_calls[0].name, "get_worker_status");
+        assert_eq!(
+            response.tool_calls[0].parameters,
+            serde_json::json!({"worker_id": "worker-1"})
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_add_response_on_shared() {
+        use std::sync::Arc;
+
+        use crate::context::DashboardContext;
+
+        // Create a shared provider and clear the default response
+        let provider = Arc::new(MockProvider::new());
+        provider.clear_responses().await;
+
+        let provider_clone = Arc::clone(&provider);
+
+        // Add responses via the shared reference
+        provider_clone
+            .add_response("First response".to_string())
+            .await;
+        provider_clone
+            .add_response("Second response".to_string())
+            .await;
+
+        let context = DashboardContext::default();
+
+        // Both responses should be available
+        let r1 = provider.process("test1", &context, &[]).await.unwrap();
+        assert_eq!(r1.text, "First response");
+
+        let r2 = provider.process("test2", &context, &[]).await.unwrap();
+        assert_eq!(r2.text, "Second response");
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_add_multiple_responses_on_shared() {
+        use std::sync::Arc;
+
+        use crate::context::DashboardContext;
+
+        // Create a shared provider and clear the default response
+        let provider = Arc::new(MockProvider::new());
+        provider.clear_responses().await;
+
+        // Add multiple responses at once
+        provider
+            .add_multiple_responses(["First", "Second", "Third"])
+            .await;
+
+        let context = DashboardContext::default();
+
+        let r1 = provider.process("test1", &context, &[]).await.unwrap();
+        assert_eq!(r1.text, "First");
+
+        let r2 = provider.process("test2", &context, &[]).await.unwrap();
+        assert_eq!(r2.text, "Second");
+
+        let r3 = provider.process("test3", &context, &[]).await.unwrap();
+        assert_eq!(r3.text, "Third");
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_add_error_on_shared() {
+        use std::sync::Arc;
+
+        use crate::context::DashboardContext;
+
+        // Create a shared provider and clear the default response
+        let provider = Arc::new(MockProvider::new());
+        provider.clear_responses().await;
+
+        provider
+            .add_response("Normal response".to_string())
+            .await;
+
+        // Add an error response
+        provider
+            .add_error("Simulated error".to_string())
+            .await;
+
+        let context = DashboardContext::default();
+
+        // First call succeeds
+        let r1 = provider.process("test1", &context, &[]).await;
+        assert!(r1.is_ok());
+        assert_eq!(r1.unwrap().text, "Normal response");
+
+        // Second call fails with the error
+        let r2 = provider.process("test2", &context, &[]).await;
+        assert!(r2.is_err());
+        match r2 {
+            Err(ChatError::ApiError(msg)) => {
+                assert!(msg.contains("Simulated error"));
+            }
+            _ => panic!("Expected ApiError"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_dynamic_tool_call_chaining() {
+        use std::sync::Arc;
+
+        use crate::context::DashboardContext;
+
+        // This test demonstrates the use case: dynamically adding tool calls
+        // after the provider has been shared (e.g., in a multi-turn conversation)
+        let provider = Arc::new(MockProvider::new());
+        provider.clear_responses().await;
+
+        // Initial state: add an initial response
+        provider
+            .add_response("Hello, how can I help?".to_string())
+            .await;
+
+        let context = DashboardContext::default();
+
+        // First call gets the initial response
+        let r1 = provider.process("query 1", &context, &[]).await.unwrap();
+        assert_eq!(r1.text, "Hello, how can I help?");
+
+        // Now dynamically add tool calls (simulating a conversation flow)
+        // Note: The initial response is still in the queue (single response is reused)
+        // Adding more responses means they'll be consumed in order
+        provider
+            .add_tool_call_response("get_status".to_string(), serde_json::json!({}))
+            .await;
+        provider
+            .add_response("Status: All systems operational".to_string())
+            .await;
+
+        // Second call: we now have 3 responses (original + 2 new), so the first is removed
+        // The first response is still "Hello, how can I help?"
+        let r2 = provider.process("query 2", &context, &[]).await.unwrap();
+        assert_eq!(r2.text, "Hello, how can I help?");
+
+        // Third call: now we have 2 responses, first is the tool call
+        let r3 = provider.process("query 3", &context, &[]).await.unwrap();
+        assert_eq!(r3.tool_calls[0].name, "get_status");
+
+        // Fourth call: now we have 1 response left, the text response
+        let r4 = provider.process("query 4", &context, &[]).await.unwrap();
+        assert_eq!(r4.text, "Status: All systems operational");
+    }
+
+    #[tokio::test]
+    async fn test_mock_provider_shared_between_multiple_tasks() {
+        use std::sync::Arc;
+
+        use crate::context::DashboardContext;
+
+        // Create a shared provider and clear the default response
+        let provider = Arc::new(MockProvider::new());
+        provider.clear_responses().await;
+
+        // Add responses from one "task"
+        let provider_task1 = Arc::clone(&provider);
+        provider_task1
+            .add_response("Response from task 1".to_string())
+            .await;
+
+        // Add responses from another "task"
+        let provider_task2 = Arc::clone(&provider);
+        provider_task2
+            .add_response("Response from task 2".to_string())
+            .await;
+
+        let context = DashboardContext::default();
+
+        // Both responses are available to all tasks
+        let r1 = provider.process("test1", &context, &[]).await.unwrap();
+        assert_eq!(r1.text, "Response from task 1");
+
+        let r2 = provider.process("test2", &context, &[]).await.unwrap();
+        assert_eq!(r2.text, "Response from task 2");
     }
 }
