@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-05-04
+
+### Production Release
+This release marks FORGE as production-ready with all core features fully implemented and tested.
+
+### Completed
+- **All Phase 1-3 Features**: Complete implementation of MVP, Intelligence, and Advanced Features phases
+- **forge-config Crate**: Full configuration management with validation, sanitization, and hot-reload
+- **Cost Tracking**: Complete database implementation with monthly cost queries
+- **Chat Backend**: Pluggable provider system with comprehensive test coverage
+- **Worker Management**: Full TUI integration with spawn, kill, pause, and resume functionality
+- **Test Coverage**: 1000+ tests passing across all crates
+
+### Infrastructure
+- **Self-Update**: Built-in binary update mechanism with Ctrl+U hotkey
+- **Hot-Reload**: Configuration changes applied without restart
+- **Graceful Error Recovery**: Configurable recovery policies for workers
+- **Audit Logging**: Complete audit trail in forge-chat
+
+### Changes from v0.2.0
+- Version bump to 0.3.0 for production release
+- All tests passing (forge-cost test_monthly_costs fixed)
+- No dead code warnings in workspace
+- Clean compilation with minimal clippy warnings
+
 ## [0.2.0] - 2026-03-25
 
 ### Added
