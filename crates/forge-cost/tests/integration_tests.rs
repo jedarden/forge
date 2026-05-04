@@ -500,7 +500,7 @@ fn test_monthly_costs() {
     let calls = vec![
         ApiCall::new(now, "worker-1", "claude-opus", 100, 50, 100.0),
         ApiCall::new(
-            now - Duration::days(1),
+            now - Duration::hours(2),
             "worker-1",
             "claude-sonnet",
             200,
@@ -508,7 +508,7 @@ fn test_monthly_costs() {
             50.0,
         ),
         ApiCall::new(
-            now - Duration::days(2),
+            now - Duration::hours(4),
             "worker-2",
             "claude-haiku",
             500,
