@@ -13,7 +13,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::config_watcher::ForgeConfig;
+use forge_config::ForgeConfig;
 
 /// Type of configuration menu to display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
