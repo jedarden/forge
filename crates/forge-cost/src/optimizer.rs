@@ -801,7 +801,7 @@ impl<'a> CostOptimizer<'a> {
         }
 
         // Sort recommendations by priority
-        recommendations.sort_by(|a, b| b.priority.cmp(&a.priority));
+        recommendations.sort_by_key(|b| std::cmp::Reverse(b.priority));
 
         // Calculate totals
         let current_monthly_spend = self.query.get_current_month_costs()?.total_cost_usd;

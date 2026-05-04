@@ -572,7 +572,7 @@ mod tests {
         let tracker = SubscriptionTracker::new();
         let now = chrono::NaiveDate::from_ymd_opt(2026, 2, 12).unwrap().and_hms_opt(12, 0, 0).unwrap().and_utc();
 
-        let (start, end) = tracker.parse_billing_period(&Some("2026-02-28".to_string()), now).unwrap();
+        let (_start, end) = tracker.parse_billing_period(&Some("2026-02-28".to_string()), now).unwrap();
 
         assert_eq!(end.day(), 28);
         assert_eq!(end.month(), 2);
@@ -584,7 +584,7 @@ mod tests {
         let tracker = SubscriptionTracker::new();
         let now = chrono::NaiveDate::from_ymd_opt(2026, 2, 12).unwrap().and_hms_opt(12, 0, 0).unwrap().and_utc();
 
-        let (start, end) = tracker.parse_billing_period(&Some("15".to_string()), now).unwrap();
+        let (_start, end) = tracker.parse_billing_period(&Some("15".to_string()), now).unwrap();
 
         // Should be 15th of current or next month
         assert!(end.day() == 15);

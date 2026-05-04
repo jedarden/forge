@@ -685,8 +685,8 @@ fn backup_config(forge_dir: &std::path::Path, config_path: &std::path::Path) -> 
             let path = entry.path();
             if path.is_file() {
                 // Check if the file contains any comments that suggest custom modifications
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    if content.contains("# CUSTOM:") || content.contains("# USER:") || content.contains("# Modified by") {
+                if let Ok(content) = std::fs::read_to_string(&path)
+                    && (content.contains("# CUSTOM:") || content.contains("# USER:") || content.contains("# Modified by")) {
                         eprintln!("⚠️  Warning: {} may contain custom modifications", path.display());
                         // Backup the launcher script too
                         let launcher_backup = forge_dir.join(format!(
@@ -696,7 +696,6 @@ fn backup_config(forge_dir: &std::path::Path, config_path: &std::path::Path) -> 
                         ));
                         let _ = std::fs::copy(&path, &launcher_backup);
                     }
-                }
             }
         }
     }

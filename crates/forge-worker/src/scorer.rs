@@ -533,9 +533,8 @@ mod tests {
         let max_score = scorer.score(0, 3, Some(20), &["critical".to_string()]);
         assert!(max_score <= 100, "Score {} should be <= 100", max_score);
 
-        // Min possible score
-        let min_score = scorer.score(4, 0, None, &[]);
-        assert!(min_score >= 0, "Score {} should be >= 0", min_score);
+        // Min possible score - u32 is always >= 0, just verify the calculation runs
+        let _min_score = scorer.score(4, 0, None, &[]);
     }
 
     #[test]

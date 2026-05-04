@@ -645,7 +645,7 @@ impl<'a> MetricsPanel<'a> {
 
         // Sort by tasks completed (descending)
         let mut sorted_workers = workers.clone();
-        sorted_workers.sort_by(|a, b| b.tasks_completed.cmp(&a.tasks_completed));
+        sorted_workers.sort_by_key(|b| std::cmp::Reverse(b.tasks_completed));
 
         let mut lines = Vec::new();
         lines.push(Line::from(vec![
@@ -708,47 +708,6 @@ impl<'a> MetricsPanel<'a> {
         paragraph.render(area, buf);
     }
 
-    /// Render compact worker efficiency for narrow layout.
-    fn render_worker_efficiency_compact(&self, area: Rect, buf: &mut Buffer) {
-        let workers = if !self.data.worker_efficiency_7day.is_empty() {
-            &self.data.worker_efficiency_7day
-        } else {
-            &self.data.worker_efficiency
-        };
-
-        if workers.is_empty() {
-            let msg = Paragraph::new("No worker data").style(Style::default().fg(Color::Gray));
-            msg.render(area, buf);
-            return;
-        }
-
-        let mut sorted_workers = workers.clone();
-        sorted_workers.sort_by(|a, b| b.tasks_completed.cmp(&a.tasks_completed));
-
-        // Create a single line summary
-        let top3: Vec<String> = sorted_workers
-            .iter()
-            .take(3)
-            .map(|w| {
-                let name = if w.worker_id.len() > 10 {
-                    &w.worker_id[..10]
-                } else {
-                    &w.worker_id
-                };
-                format!("{}:{}", name, w.tasks_completed)
-            })
-            .collect();
-
-        let summary = format!("Top Workers: {}", top3.join(" | "));
-
-        let line = Line::from(vec![
-            Span::styled("⚡ ", Style::default().fg(Color::Yellow)),
-            Span::styled(summary, Style::default().fg(Color::White)),
-        ]);
-
-        let paragraph = Paragraph::new(line);
-        paragraph.render(area, buf);
-    }
 }
 
 impl Widget for MetricsPanel<'_> {
