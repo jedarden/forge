@@ -1,7 +1,7 @@
 {
   "env": {
     "ANTHROPIC_AUTH_TOKEN": "proxy-handles-auth",
-    "ANTHROPIC_BASE_URL": "http://zai-proxy-apexalgo.tail1b1987.ts.net:8080",
+    "ANTHROPIC_BASE_URL": "http://zai-proxy-hub.tail1b1987.ts.net:8080",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-5",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5",

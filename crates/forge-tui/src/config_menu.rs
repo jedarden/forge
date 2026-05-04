@@ -262,23 +262,28 @@ pub fn build_worker_items(config: &ForgeConfig) -> Vec<ConfigMenuItem> {
     ]
 }
 
+/// Parameters for drawing a configuration menu.
+pub struct ConfigMenuParams<'a> {
+    pub area: Rect,
+    pub menu_type: ConfigMenuType,
+    pub items: &'a [ConfigMenuItem],
+    pub selected: usize,
+    pub editing: bool,
+    pub edit_buffer: &'a str,
+    pub theme: &'a crate::theme::Theme,
+}
+
 /// Draw a configuration menu overlay.
 pub fn draw_config_menu(
     frame: &mut Frame,
-    area: Rect,
-    menu_type: ConfigMenuType,
-    items: &[ConfigMenuItem],
-    selected: usize,
-    editing: bool,
-    edit_buffer: &str,
-    theme: &crate::theme::Theme,
+    params: ConfigMenuParams<'_>,
 ) {
     // Calculate overlay dimensions
-    let overlay_width = 70.min(area.width.saturating_sub(4));
-    let content_height = items.len() as u16 + 6; // header + items + footer
-    let overlay_height = content_height.max(12).min(area.height.saturating_sub(4));
-    let overlay_x = (area.width - overlay_width) / 2;
-    let overlay_y = (area.height - overlay_height) / 2;
+    let overlay_width = 70.min(params.area.width.saturating_sub(4));
+    let content_height = params.items.len() as u16 + 6; // header + items + footer
+    let overlay_height = content_height.max(12).min(params.area.height.saturating_sub(4));
+    let overlay_x = (params.area.width - overlay_width) / 2;
+    let overlay_y = (params.area.height - overlay_height) / 2;
 
     let overlay_area = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
 
@@ -290,17 +295,17 @@ pub fn draw_config_menu(
 
     // Title with hotkey hint
     lines.push(Line::from(Span::styled(
-        format!("{} Configuration [{}]", menu_type.title(), menu_type.hotkey()),
+        format!("{} Configuration [{}]", params.menu_type.title(), params.menu_type.hotkey()),
         Style::default()
-            .fg(theme.colors.header)
+            .fg(params.theme.colors.header)
             .add_modifier(Modifier::BOLD),
     )));
     lines.push(Line::raw("")); // Empty line
 
     // Menu items
-    for (i, item) in items.iter().enumerate() {
-        let is_selected = i == selected;
-        let is_editing = is_selected && editing;
+    for (i, item) in params.items.iter().enumerate() {
+        let is_selected = i == params.selected;
+        let is_editing = is_selected && params.editing;
 
         // Build the line
         let prefix = if is_selected { "> " } else { "  " };
@@ -310,20 +315,20 @@ pub fn draw_config_menu(
             let label_span = Span::styled(
                 format!("{}{}:", prefix, item.label),
                 Style::default()
-                    .fg(theme.colors.hotkey)
+                    .fg(params.theme.colors.hotkey)
                     .add_modifier(Modifier::BOLD),
             );
             let input_span = Span::styled(
-                edit_buffer,
+                params.edit_buffer,
                 Style::default()
                     .fg(Color::Black)
-                    .bg(theme.colors.hotkey),
+                    .bg(params.theme.colors.hotkey),
             );
             let cursor_span = Span::styled(
                 "_",
                 Style::default()
                     .fg(Color::Black)
-                    .bg(theme.colors.hotkey)
+                    .bg(params.theme.colors.hotkey)
                     .add_modifier(Modifier::SLOW_BLINK),
             );
             lines.push(Line::from(vec![label_span, Span::raw(" "), input_span, cursor_span]));
@@ -331,17 +336,17 @@ pub fn draw_config_menu(
             // Normal display mode
             let label_style = if is_selected {
                 Style::default()
-                    .fg(theme.colors.hotkey)
+                    .fg(params.theme.colors.hotkey)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(theme.colors.text)
+                Style::default().fg(params.theme.colors.text)
             };
             let value_style = if is_selected {
                 Style::default()
                     .fg(Color::Black)
-                    .bg(theme.colors.hotkey)
+                    .bg(params.theme.colors.hotkey)
             } else {
-                Style::default().fg(theme.colors.text_dim)
+                Style::default().fg(params.theme.colors.text_dim)
             };
 
             let label_span = Span::styled(format!("{}{}", prefix, item.label), label_style);
@@ -355,27 +360,27 @@ pub fn draw_config_menu(
     lines.push(Line::raw("")); // Empty line
 
     // Footer instructions
-    let footer = if editing {
+    let footer = if params.editing {
         "Enter: Save | Esc: Cancel"
     } else {
         "Enter/Edit: Change | Esc: Close | Up/Down: Navigate"
     };
     lines.push(Line::from(Span::styled(
         footer,
-        Style::default().fg(theme.colors.text_dim),
+        Style::default().fg(params.theme.colors.text_dim),
     )));
 
     // Create the menu widget
     let menu = Paragraph::new(lines)
-        .style(Style::default().fg(theme.colors.text))
+        .style(Style::default().fg(params.theme.colors.text))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme.colors.header))
+                .border_style(Style::default().fg(params.theme.colors.header))
                 .title(Span::styled(
-                    format!(" {} ", menu_type.title()),
+                    format!(" {} ", params.menu_type.title()),
                     Style::default()
-                        .fg(theme.colors.header)
+                        .fg(params.theme.colors.header)
                         .add_modifier(Modifier::BOLD),
                 ))
                 .style(Style::default().bg(Color::Black)),

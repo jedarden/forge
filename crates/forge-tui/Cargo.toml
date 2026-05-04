@@ -10,6 +10,7 @@ rust-version.workspace = true
 
 [dependencies]
 forge-core = { path = "../forge-core" }
+forge-config = { path = "../forge-config" }
 forge-cost = { path = "../forge-cost" }
 forge-worker = { path = "../forge-worker" }
 forge-chat = { path = "../forge-chat" }

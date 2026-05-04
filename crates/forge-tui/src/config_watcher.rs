@@ -932,11 +932,10 @@ impl ConfigWatcher {
                                     }
                                 }
                             }
-                            EventKind::Remove(_) => {
-                                if event_tx_clone.send(ConfigEvent::Removed).is_err() {
+                            EventKind::Remove(_)
+                                if event_tx_clone.send(ConfigEvent::Removed).is_err() => {
                                     debug!("Failed to send remove event - channel closed");
                                 }
-                            }
                             _ => {}
                         }
                     }
@@ -985,7 +984,6 @@ impl ConfigWatcher {
 mod tests {
     use super::*;
     use std::fs;
-    use std::io::Write;
     use tempfile::TempDir;
 
     #[test]

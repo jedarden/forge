@@ -439,12 +439,11 @@ fn get_staging_path(_current_exe: &Path) -> crate::Result<PathBuf> {
 pub fn has_staged_update() -> Option<PathBuf> {
     let temp_dir = std::env::temp_dir().join("forge-update");
     let staging = temp_dir.join("forge-staged");
-    if staging.exists() {
-        if let Ok(meta) = fs::metadata(&staging) {
-            if meta.len() > 0 {
-                return Some(staging);
-            }
-        }
+    if staging.exists()
+        && let Ok(meta) = fs::metadata(&staging)
+        && meta.len() > 0
+    {
+        return Some(staging);
     }
     None
 }

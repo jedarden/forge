@@ -1,0 +1,265 @@
+crates/forge-tui/src/config_error_handler.rs:20:    pub line: Option<usize>,
+crates/forge-tui/src/config_error_handler.rs:22:    pub column: Option<usize>,
+crates/forge-tui/src/data.rs:89:    pub fn health_counts(&self) -> (usize, usize, usize) {
+crates/forge-tui/src/data.rs:125:    pub fn activity_counts(&self) -> (usize, usize, usize) {
+crates/forge-tui/src/data.rs:162:    pub fn total_worker_count(&self) -> usize {
+crates/forge-tui/src/data.rs:191:    pub fn format_worker_pool_summary_with_paused(&self, paused_count: usize) -> String {
+crates/forge-tui/src/data.rs:533:fn truncate_string(s: &str, max_len: usize) -> String {
+crates/forge-tui/src/data.rs:625:    cached_worker_count: usize,
+crates/forge-tui/src/data.rs:627:    cached_bead_count: usize,
+crates/forge-tui/src/data.rs:1955:    pub fn acknowledge_all_alerts(&mut self) -> usize {
+crates/forge-tui/src/perf_panel.rs:86:            render_sparkline(&loop_samples, inner.width.saturating_sub(2) as usize)
+crates/forge-tui/src/perf_panel.rs:91:            render_sparkline(&render_samples, inner.width.saturating_sub(2) as usize)
+crates/forge-tui/src/perf_panel.rs:145:fn render_sparkline(values: &[u64], width: usize) -> String {
+crates/forge-tui/src/perf_panel.rs:154:        let idx = ((i as f64) * step).min(values.len() as f64 - 1.0) as usize;
+crates/forge-tui/src/perf_panel.rs:157:        result.push(blocks[((normalized * 7.0).round() as usize).min(7)]);
+crates/forge-tui/src/log.rs:33:pub const DEFAULT_BUFFER_CAPACITY: usize = 1000;
+crates/forge-tui/src/log.rs:38:/// Default batch size for UI updates (10 entries per ADR 0008).
+crates/forge-tui/src/log.rs:39:pub const DEFAULT_BATCH_SIZE: usize = 10;
+crates/forge-tui/src/log.rs:306:    capacity: usize,
+crates/forge-tui/src/log.rs:308:    total_added: usize,
+crates/forge-tui/src/log.rs:310:    dropped_count: usize,
+crates/forge-tui/src/log.rs:315:    pub fn new(capacity: usize) -> Self {
+crates/forge-tui/src/log.rs:349:    pub fn len(&self) -> usize {
+crates/forge-tui/src/log.rs:359:    pub fn capacity(&self) -> usize {
+crates/forge-tui/src/log.rs:364:    pub fn total_added(&self) -> usize {
+crates/forge-tui/src/log.rs:369:    pub fn dropped_count(&self) -> usize {
+crates/forge-tui/src/log.rs:384:    pub fn last_n(&self, n: usize) -> impl Iterator<Item = &LogEntry> {
+crates/forge-tui/src/log.rs:478:    /// Batch size for sending entries
+crates/forge-tui/src/log.rs:479:    pub batch_size: usize,
+crates/forge-tui/src/log.rs:493:            batch_size: DEFAULT_BATCH_SIZE,
+crates/forge-tui/src/log.rs:515:    /// Set the batch size.
+crates/forge-tui/src/log.rs:516:    pub fn with_batch_size(mut self, size: usize) -> Self {
+crates/forge-tui/src/log.rs:517:        self.batch_size = size;
+crates/forge-tui/src/log.rs:710:    pub fn new(capacity: usize) -> Self {
+crates/forge-tui/src/log.rs:747:    pub fn len(&self) -> usize {
+crates/forge-tui/src/config_menu.rs:267:    selected: usize,
+crates/forge-tui/src/subscription_panel.rs:416:    pub fn active_count(&self) -> usize {
+crates/forge-tui/src/subscription_panel.rs:427:pub fn render_usage_bar(pct: f64, width: usize, color: Color) -> Line<'static> {
+crates/forge-tui/src/subscription_panel.rs:429:    let filled = ((pct / 100.0) * width as f64).round() as usize;
+crates/forge-tui/src/subscription_panel.rs:547:                let bar_width = 15.min(area.width.saturating_sub(20) as usize);
+crates/forge-tui/src/subscription_panel.rs:692:                let bar_width = 9.min(area.width.saturating_sub(14) as usize);
+crates/forge-tui/src/subscription_panel.rs:693:                let filled = ((pct / 100.0) * bar_width as f64).round() as usize;
+crates/forge-tui/src/subscription_panel.rs:783:            let bar_width: usize = 10;
+crates/forge-tui/src/subscription_panel.rs:784:            let filled = ((pct / 100.0) * bar_width as f64).round() as usize;
+crates/forge-tui/src/worker_panel.rs:26:    selected_index: usize,
+crates/forge-tui/src/worker_panel.rs:54:    pub fn selected(mut self, index: usize) -> Self {
+crates/forge-tui/src/worker_panel.rs:412:fn truncate_string(s: &str, max_len: usize) -> String {
+crates/forge-tui/src/error_recovery.rs:22:const MAX_ERROR_HISTORY: usize = 50;
+crates/forge-tui/src/error_recovery.rs:88:    pub id: usize,
+crates/forge-tui/src/error_recovery.rs:123:    next_id: usize,
+crates/forge-tui/src/error_recovery.rs:127:    category_counts: std::collections::HashMap<ErrorCategory, usize>,
+crates/forge-tui/src/error_recovery.rs:149:    ) -> usize {
+crates/forge-tui/src/error_recovery.rs:185:    pub fn mark_degraded(&mut self, component: impl Into<String>, error_id: usize) {
+crates/forge-tui/src/error_recovery.rs:215:    pub fn acknowledge(&mut self, error_id: usize) {
+crates/forge-tui/src/error_recovery.rs:227:    pub fn recent_errors(&self, count: usize) -> Vec<&RecordedError> {
+crates/forge-tui/src/error_recovery.rs:242:    pub fn count_by_category(&self, category: ErrorCategory) -> usize {
+crates/forge-tui/src/error_recovery.rs:263:    pub fn total_errors(&self) -> usize {
+crates/forge-tui/src/error_recovery.rs:296:    ) -> usize {
+crates/forge-tui/src/error_recovery.rs:312:    pub fn mark_degraded(&self, component: impl Into<String>, error_id: usize) {
+crates/forge-tui/src/error_recovery.rs:334:    pub fn recent_errors(&self, count: usize) -> Vec<RecordedError> {
+crates/forge-tui/src/error_recovery.rs:358:    pub fn acknowledge(&self, error_id: usize) {
+crates/forge-tui/src/bead.rs:97:    pub dependency_count: usize,
+crates/forge-tui/src/bead.rs:101:    pub dependent_count: usize,
+crates/forge-tui/src/bead.rs:259:    pub total_issues: usize,
+crates/forge-tui/src/bead.rs:262:    pub open_issues: usize,
+crates/forge-tui/src/bead.rs:265:    pub in_progress_issues: usize,
+crates/forge-tui/src/bead.rs:268:    pub closed_issues: usize,
+crates/forge-tui/src/bead.rs:271:    pub blocked_issues: usize,
+crates/forge-tui/src/bead.rs:274:    pub deferred_issues: usize,
+crates/forge-tui/src/bead.rs:277:    pub ready_issues: usize,
+crates/forge-tui/src/bead.rs:331:    pub fn actionable_count(&self) -> usize {
+crates/forge-tui/src/bead.rs:349:    pub total_ready: usize,
+crates/forge-tui/src/bead.rs:350:    pub total_blocked: usize,
+crates/forge-tui/src/bead.rs:351:    pub total_in_progress: usize,
+crates/forge-tui/src/bead.rs:352:    pub total_open: usize,
+crates/forge-tui/src/bead.rs:568:    pub fn total_bead_count(&self) -> usize {
+crates/forge-tui/src/bead.rs:838:    pub fn task_count_filtered(&self, priority_filter: Option<u8>) -> usize {
+crates/forge-tui/src/bead.rs:844:    pub fn task_count_filtered_with_search(&self, priority_filter: Option<u8>, search_query: &str) -> usize {
+crates/forge-tui/src/bead.rs:860:    pub fn workspace_count(&self) -> usize {
+crates/forge-tui/src/bead.rs:1140:fn truncate_str(s: &str, max_len: usize) -> String {
+crates/forge-tui/src/log_watcher.rs:71:/// Default channel buffer size.
+crates/forge-tui/src/log_watcher.rs:72:pub const DEFAULT_CHANNEL_BUFFER: usize = 256;
+crates/forge-tui/src/log_watcher.rs:126:    /// Channel buffer size
+crates/forge-tui/src/log_watcher.rs:127:    pub channel_buffer: usize,
+crates/forge-tui/src/log_watcher.rs:560:    pub fn tracked_file_count(&self) -> usize {
+crates/forge-tui/src/activity_panel.rs:31:pub const DEFAULT_ACTIVITY_CAPACITY: usize = 100;
+crates/forge-tui/src/activity_panel.rs:156:    capacity: usize,
+crates/forge-tui/src/activity_panel.rs:158:    total_added: usize,
+crates/forge-tui/src/activity_panel.rs:160:    scroll_offset: usize,
+crates/forge-tui/src/activity_panel.rs:175:    pub fn new(capacity: usize) -> Self {
+crates/forge-tui/src/activity_panel.rs:216:    pub fn len(&self) -> usize {
+crates/forge-tui/src/activity_panel.rs:226:    pub fn capacity(&self) -> usize {
+crates/forge-tui/src/activity_panel.rs:231:    pub fn total_added(&self) -> usize {
+crates/forge-tui/src/activity_panel.rs:236:    pub fn scroll_up(&mut self, n: usize) {
+crates/forge-tui/src/activity_panel.rs:245:    pub fn scroll_down(&mut self, n: usize) {
+crates/forge-tui/src/activity_panel.rs:270:    pub fn scroll_offset(&self) -> usize {
+crates/forge-tui/src/activity_panel.rs:277:    pub fn visible_entries(&self, max_lines: usize) -> Vec<&ActivityEntry> {
+crates/forge-tui/src/activity_panel.rs:458:        let max_lines = inner.height as usize;
+crates/forge-tui/src/activity_panel.rs:502:            let max_msg_len = (area.width as usize).saturating_sub(15);
+crates/forge-tui/src/status.rs:602:    pub total: usize,
+crates/forge-tui/src/status.rs:604:    pub active: usize,
+crates/forge-tui/src/status.rs:606:    pub idle: usize,
+crates/forge-tui/src/status.rs:608:    pub failed: usize,
+crates/forge-tui/src/status.rs:610:    pub stopped: usize,
+crates/forge-tui/src/status.rs:612:    pub error: usize,
+crates/forge-tui/src/status.rs:614:    pub starting: usize,
+crates/forge-tui/src/status.rs:616:    pub paused: usize,
+crates/forge-tui/src/status.rs:621:    pub fn healthy(&self) -> usize {
+crates/forge-tui/src/status.rs:626:    pub fn unhealthy(&self) -> usize {
+crates/forge-tui/src/app.rs:104:    PauseAllWorkers { count: usize },
+crates/forge-tui/src/app.rs:108:    ResumeAllWorkers { count: usize },
+crates/forge-tui/src/app.rs:130:    scroll_offset: usize,
+crates/forge-tui/src/app.rs:137:    /// Cached terminal size for layout recalculation
+crates/forge-tui/src/app.rs:138:    cached_size: Option<Rect>,
+crates/forge-tui/src/app.rs:169:    chat_spinner_frame: usize,
+crates/forge-tui/src/app.rs:173:    streaming_position: usize,
+crates/forge-tui/src/app.rs:197:    kill_dialog_selected: usize,
+crates/forge-tui/src/app.rs:209:    selected_task_index: usize,
+crates/forge-tui/src/app.rs:211:    selected_alert_index: usize,
+crates/forge-tui/src/app.rs:231:    selected_worker_index: usize,
+crates/forge-tui/src/app.rs:257:    config_menu_selected: usize,
+crates/forge-tui/src/app.rs:567:            cached_size: None,
+crates/forge-tui/src/app.rs:650:            cached_size: None,
+crates/forge-tui/src/app.rs:1337:    /// Check if terminal size changed.
+crates/forge-tui/src/app.rs:1338:    fn size_changed(&self, area: Rect) -> bool {
+crates/forge-tui/src/app.rs:1339:        match self.cached_size {
+crates/forge-tui/src/app.rs:1345:    /// Update cached terminal size.
+crates/forge-tui/src/app.rs:1346:    fn update_cached_size(&mut self, area: Rect) {
+crates/forge-tui/src/app.rs:1347:        self.cached_size = Some(area);
+crates/forge-tui/src/app.rs:1836:        const CHARS_PER_FRAME: usize = 3;
+crates/forge-tui/src/app.rs:3724:                        asset_size,
+crates/forge-tui/src/app.rs:3727:                        let result = perform_update(&download_url, asset_size, None).await;
+crates/forge-tui/src/app.rs:3964:        // Update cached size if changed
+crates/forge-tui/src/app.rs:3965:        if self.size_changed(area) {
+crates/forge-tui/src/app.rs:3966:            self.update_cached_size(area);
+crates/forge-tui/src/app.rs:4122:            as usize;
+crates/forge-tui/src/app.rs:4490:        let bar_width: usize = 15;
+crates/forge-tui/src/app.rs:4491:        let filled = ((pct / 100.0) * bar_width as f64).round() as usize;
+crates/forge-tui/src/app.rs:5325:        // Calculate centered overlay area - increased size for more content
+crates/forge-tui/src/app.rs:5699:                "─".repeat(overlay_width as usize - 2),
+crates/forge-tui/src/app.rs:5790:                    let truncated = if line.len() > (overlay_width as usize - 4) {
+crates/forge-tui/src/app.rs:5791:                        format!("{}...", &line[..(overlay_width as usize - 7)])
+crates/forge-tui/src/app.rs:5920:        let msg_width = (message.len() + 4).min(area.width as usize - 4) as u16;
+crates/forge-tui/src/app.rs:5969:        let progress_percent = self.update_progress.percent as usize;
+crates/forge-tui/src/app.rs:5970:        let bar_width = (overlay_width as usize).saturating_sub(4);
+crates/forge-tui/src/app.rs:6297:    fn test_minimum_viable_terminal_size() {
+crates/forge-tui/src/app.rs:6300:        // Minimum size that should still render something
+crates/forge-tui/src/perf_metrics.rs:6:const WINDOW_SIZE: usize = 60;
+crates/forge-tui/src/perf_metrics.rs:158:    pub fn recent_worker_spawns(&self) -> usize {
+crates/forge-tui/src/perf_metrics.rs:162:    pub fn recent_worker_exits(&self) -> usize {
+crates/forge-tui/src/perf_metrics.rs:196:    sorted[((p as usize * sorted.len()) / 100).min(sorted.len() - 1)]
+crates/forge-tui/src/config_watcher.rs:93:    pub fn line_number(&self) -> Option<usize> {
+crates/forge-tui/src/config_watcher.rs:103:    pub fn column_number(&self) -> Option<usize> {
+crates/forge-tui/src/routing_panel.rs:24:    pub total_decisions: usize,
+crates/forge-tui/src/routing_panel.rs:26:    pub by_tier: std::collections::HashMap<WorkerTier, usize>,
+crates/forge-tui/src/routing_panel.rs:28:    pub by_model: std::collections::HashMap<String, usize>,
+crates/forge-tui/src/routing_panel.rs:30:    pub by_reason: std::collections::HashMap<RoutingReason, usize>,
+crates/forge-tui/src/routing_panel.rs:36:    pub complexity_distribution: (usize, usize, usize),
+crates/forge-tui/src/routing_panel.rs:407:fn render_bar(percentage: f64, width: usize) -> Span<'static> {
+crates/forge-tui/src/routing_panel.rs:408:    let filled = ((percentage / 100.0) * width as f64).round() as usize;
+crates/forge-tui/src/metrics_panel.rs:200:pub fn render_sparkline(values: &[i64], width: usize) -> String {
+crates/forge-tui/src/metrics_panel.rs:215:        let idx = ((i as f64) * step).min(values.len() as f64 - 1.0) as usize;
+crates/forge-tui/src/metrics_panel.rs:224:        let block_idx = ((normalized * 7.0).round() as usize).min(7);
+crates/forge-tui/src/metrics_panel.rs:235:    width: usize,
+crates/forge-tui/src/metrics_panel.rs:244:    let filled = (pct * width as f64).round() as usize;
+crates/forge-tui/src/metrics_panel.rs:287:pub fn truncate_model_name(model: &str, max_len: usize) -> String {
+crates/forge-tui/src/metrics_panel.rs:458:            let bar_width = (area.width.saturating_sub(8) as usize).max(10);
+crates/forge-tui/src/metrics_panel.rs:557:        let sparkline = render_sparkline(&values, area.width.saturating_sub(10) as usize);
+crates/forge-tui/src/metrics_panel.rs:600:        let sparkline = render_sparkline(&values, area.width.saturating_sub(14) as usize);
+crates/forge-tui/src/cost_panel.rs:280:    pub fn expensive_worker_count(&self) -> usize {
+crates/forge-tui/src/cost_panel.rs:374:pub fn render_sparkline(values: &[f64], width: usize) -> String {
+crates/forge-tui/src/cost_panel.rs:389:        let idx = ((i as f64) * step).min(values.len() as f64 - 1.0) as usize;
+crates/forge-tui/src/cost_panel.rs:398:        let block_idx = ((normalized * 7.0).round() as usize).min(7);
+crates/forge-tui/src/cost_panel.rs:409:    width: usize,
+crates/forge-tui/src/cost_panel.rs:418:    let filled = (pct * width as f64).round() as usize;
+crates/forge-tui/src/cost_panel.rs:455:pub fn truncate_model_name(model: &str, max_len: usize) -> String {
+crates/forge-tui/src/cost_panel.rs:755:        let sparkline = render_sparkline(&values, area.width.saturating_sub(10) as usize);
+crates/forge-tui/src/cost_panel.rs:889:        let worker_limit = (area.height.saturating_sub(4) as usize).min(8);
+crates/forge-tui/src/widget.rs:566:        let filled = (pct * self.width as f64).round() as usize;
+crates/forge-tui/src/widget.rs:567:        let empty = (self.width as usize).saturating_sub(filled);
+crates/forge-tui/src/widget.rs:580:        let total_units = self.width as usize * 8;
+crates/forge-tui/src/widget.rs:581:        let filled_units = (pct * total_units as f64).round() as usize;
+crates/forge-tui/src/widget.rs:584:        let empty_chars = (self.width as usize)
+crates/forge-tui/src/widget.rs:588:        let mut result = String::with_capacity(self.width as usize);
+crates/forge-tui/src/widget.rs:596:        if full_chars + empty_chars < self.width as usize {
+crates/forge-tui/src/widget.rs:643:        let bar_width = area.width.min(self.width) as usize;
+crates/forge-tui/src/widget.rs:661:        let filled = (pct * bar_width as f64).round() as usize;
+crates/forge-tui/src/widget.rs:769:        let bar_width = area.width.min(self.width) as usize;
+crates/forge-tui/src/widget.rs:771:        let filled_units = (pct * total_units as f64).round() as usize;
+crates/forge-tui/src/widget.rs:1063:    pub fn render_string(&self, width: usize) -> String {
+crates/forge-tui/src/widget.rs:1092:                        ((i as f64) * step).floor() as usize
+crates/forge-tui/src/widget.rs:1105:                    let block_idx = (normalized * 7.0).round() as usize;
+crates/forge-tui/src/widget.rs:1113:                        ((i as f64) * step).floor() as usize
+crates/forge-tui/src/widget.rs:1126:                    let block_idx = (normalized * 7.0).round() as usize;
+crates/forge-tui/src/widget.rs:1154:        let width = area.width.saturating_sub(2) as usize; // Leave space for border
+crates/forge-tui/src/widget.rs:1210:pub fn render_sparkline(values: &[u64], width: usize) -> String {
+crates/forge-tui/src/widget.rs:1217:pub fn render_sparkline_i64(values: &[i64], width: usize) -> String {
+crates/forge-tui/src/alert.rs:254:    max_active: usize,
+crates/forge-tui/src/alert.rs:256:    critical_count: usize,
+crates/forge-tui/src/alert.rs:258:    warning_count: usize,
+crates/forge-tui/src/alert.rs:269:    pub fn new(max_active: usize) -> Self {
+crates/forge-tui/src/alert.rs:351:    pub fn acknowledge_all_for_worker(&mut self, worker_id: &str) -> usize {
+crates/forge-tui/src/alert.rs:369:    pub fn acknowledge_all(&mut self) -> usize {
+crates/forge-tui/src/alert.rs:405:    pub fn resolve_all_for_worker(&mut self, worker_id: &str) -> usize {
+crates/forge-tui/src/alert.rs:457:    pub fn active_count(&self) -> usize {
+crates/forge-tui/src/alert.rs:462:    pub fn unacknowledged_count(&self) -> usize {
+crates/forge-tui/src/alert.rs:470:    pub fn critical_count(&self) -> usize {
+crates/forge-tui/src/alert.rs:475:    pub fn warning_count(&self) -> usize {
+crates/forge-tui/src/alert.rs:531:    pub critical: usize,
+crates/forge-tui/src/alert.rs:533:    pub warning: usize,
+crates/forge-tui/src/alert.rs:535:    pub total: usize,
+crates/forge-tui/src/integration_tests.rs:659:    fn test_e2e_stability_large_terminal_sizes() {
+crates/forge-tui/src/integration_tests.rs:662:        // Test various terminal sizes including extreme cases
+crates/forge-tui/src/integration_tests.rs:663:        let sizes = [
+crates/forge-tui/src/integration_tests.rs:671:        for (width, height) in sizes {
+crates/forge-tui/src/integration_tests.rs:2562:        let sizes = [
+crates/forge-tui/src/integration_tests.rs:2569:        for (width, height) in sizes {
+crates/forge-tui/src/integration_tests.rs:3347:        // Minimum viable size: 40x15
+crates/forge-tui/src/integration_tests.rs:3368:    fn test_responsive_all_views_at_different_sizes() {
+crates/forge-tui/src/integration_tests.rs:3371:        let sizes = [(80, 24), (120, 40), (200, 50), (60, 20)];
+crates/forge-tui/src/integration_tests.rs:3374:        for (width, height) in sizes {
+crates/forge-tui/src/integration_tests.rs:3839:    // These tests verify that forge properly adapts to different terminal sizes
+crates/forge-tui/src/integration_tests.rs:3966:    /// Test real-time resize from UltraWide to Wide.
+crates/forge-tui/src/integration_tests.rs:3969:    fn test_responsive_resize_ultrawide_to_wide() {
+crates/forge-tui/src/integration_tests.rs:3983:        // Resize to Wide mode (150x40)
+crates/forge-tui/src/integration_tests.rs:3989:            "Worker Pool should remain visible after resize to Wide"
+crates/forge-tui/src/integration_tests.rs:3993:            "Task Queue should remain visible after resize to Wide"
+crates/forge-tui/src/integration_tests.rs:3997:            "Activity Log should remain visible after resize to Wide"
+crates/forge-tui/src/integration_tests.rs:4001:            "Subscriptions should remain visible after resize to Wide"
+crates/forge-tui/src/integration_tests.rs:4009:    /// Test real-time resize from Wide to Narrow.
+crates/forge-tui/src/integration_tests.rs:4012:    fn test_responsive_resize_wide_to_narrow() {
+crates/forge-tui/src/integration_tests.rs:4020:        // Resize to Narrow mode (80x25)
+crates/forge-tui/src/integration_tests.rs:4026:            "Worker Pool should remain visible after resize to Narrow"
+crates/forge-tui/src/integration_tests.rs:4030:            "Task Queue should remain visible after resize to Narrow"
+crates/forge-tui/src/integration_tests.rs:4034:            "Activity Log should remain visible after resize to Narrow"
+crates/forge-tui/src/integration_tests.rs:4042:    /// Test layout restoration after resize cycle.
+crates/forge-tui/src/integration_tests.rs:4045:    fn test_responsive_resize_restore_cycle() {
+crates/forge-tui/src/integration_tests.rs:4087:    /// Test multiple rapid resizes don't cause crashes.
+crates/forge-tui/src/integration_tests.rs:4090:    fn test_responsive_rapid_resize_no_crash() {
+crates/forge-tui/src/integration_tests.rs:4093:        // Rapid resize sequence: UltraWide -> Wide -> Narrow -> Wide -> UltraWide
+crates/forge-tui/src/integration_tests.rs:4094:        let sizes: [(u16, u16); 5] = [(200, 50), (150, 40), (80, 25), (150, 40), (200, 50)];
+crates/forge-tui/src/integration_tests.rs:4096:        for (width, height) in sizes {
+crates/forge-tui/src/integration_tests.rs:4102:                "Header should be visible at size {}x{}",
+crates/forge-tui/src/integration_tests.rs:4110:                "Worker Pool should be visible at size {}x{}",
+crates/forge-tui/src/integration_tests.rs:4290:    /// Test that all views work correctly at each layout size.
+crates/forge-tui/src/integration_tests.rs:4292:    fn test_responsive_all_views_at_all_sizes() {
+crates/forge-tui/src/integration_tests.rs:4297:        let sizes = [
+crates/forge-tui/src/integration_tests.rs:4303:        for (width, height) in sizes {
+crates/forge-tui/src/integration_tests.rs:4315:                    "View {} should show its title at size {}x{}",
+crates/forge-tui/src/integration_tests.rs:4324:    /// Test resize across all boundary transitions.
+crates/forge-tui/src/integration_tests.rs:4340:            // Render at initial size
+crates/forge-tui/src/integration_tests.rs:4343:            // Resize to new size - should not panic
+crates/forge-tui/src/integration_tests.rs:5121:    // These tests verify rendering at exact boundary sizes:
+crates/forge-tui/src/integration_tests.rs:5207:    /// Minimum size that qualifies for wide mode
+crates/forge-tui/src/integration_tests.rs:5285:    /// Minimum size that qualifies for ultrawide mode
+crates/forge-tui/src/integration_tests.rs:5332:    /// Test dynamic resize transitions: narrow -> wide -> ultrawide
+crates/forge-tui/src/integration_tests.rs:5334:    fn test_boundary_dynamic_resize_transitions() {
+crates/forge-tui/src/integration_tests.rs:5341:        // Resize to wide
+crates/forge-tui/src/integration_tests.rs:5346:        // Resize to ultrawide
+crates/forge-tui/src/integration_tests.rs:5352:        // Resize back down to narrow
+crates/forge-tui/src/integration_tests.rs:5357:    /// Test that all 10 sizes render without crash
+crates/forge-tui/src/integration_tests.rs:5359:    fn test_boundary_all_sizes_no_crash() {
+crates/forge-tui/src/integration_tests.rs:5360:        let sizes = [
+crates/forge-tui/src/integration_tests.rs:5373:        for (width, height) in sizes {
+crates/forge-tui/src/integration_tests.rs:5375:            // This should not panic for any size

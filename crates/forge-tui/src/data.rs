@@ -467,7 +467,7 @@ impl WorkerData {
         } else if let Some(ref tmux) = self.tmux_sessions {
             // Fall back to tmux session activity
             let mut workers: Vec<_> = tmux.workers.iter().collect();
-            workers.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+            workers.sort_by_key(|b| std::cmp::Reverse(b.last_activity));
 
             for worker in workers.iter().take(10) {
                 let time_str = worker.last_activity.format("%H:%M:%S").to_string();
