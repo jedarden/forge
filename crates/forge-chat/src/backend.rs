@@ -13,6 +13,7 @@ use crate::context::{ContextProvider, ContextSource, DashboardContext, RealConte
 use crate::error::{ChatError, Result};
 use crate::provider::{ChatProvider, ProviderTool, create_provider};
 use crate::rate_limit::RateLimiter;
+use crate::spawner::WorkerSpawner;
 use crate::tools::{ActionConfirmation, ToolCall, ToolRegistry, ToolResult};
 
 /// Response from the chat backend.
@@ -167,6 +168,8 @@ pub struct ChatBackend {
     tool_registry: ToolRegistry,
     context_provider: Arc<ContextProvider>,
     conversation_history: RwLock<Vec<ConversationMessage>>,
+    /// Optional worker spawner for action tools.
+    worker_spawner: Option<Arc<dyn WorkerSpawner>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -196,6 +199,7 @@ impl ChatBackend {
             tool_registry,
             context_provider,
             conversation_history: RwLock::new(Vec::new()),
+            worker_spawner: None,
         })
     }
 
@@ -220,6 +224,7 @@ impl ChatBackend {
             tool_registry,
             context_provider,
             conversation_history: RwLock::new(Vec::new()),
+            worker_spawner: None,
         })
     }
 
@@ -244,7 +249,17 @@ impl ChatBackend {
             tool_registry,
             context_provider,
             conversation_history: RwLock::new(Vec::new()),
+            worker_spawner: None,
         })
+    }
+
+    /// Set the worker spawner for action tools.
+    ///
+    /// This enables the chat backend to spawn real workers instead of
+    /// returning placeholder results.
+    pub fn with_worker_spawner(mut self, spawner: Arc<dyn WorkerSpawner>) -> Self {
+        self.worker_spawner = Some(spawner);
+        self
     }
 
     /// Get the provider being used.
@@ -268,7 +283,12 @@ impl ChatBackend {
         info!("Processing chat command with {}: {}", provider_name, input);
 
         // Get current context
-        let context = self.context_provider.get_context().await?;
+        let mut context = self.context_provider.get_context().await?;
+
+        // Inject worker spawner if available
+        if let Some(ref spawner) = self.worker_spawner {
+            context = context.with_worker_spawner(Arc::clone(spawner));
+        }
 
         // Build the prompt with context
         let prompt = self.build_prompt(input, &context).await;
