@@ -57,6 +57,30 @@ impl SessionsPanel {
         }
     }
 
+    /// Add a user to the sessions panel.
+    pub fn add_user(&mut self, user_id: String, display_name: String, role: UserRole) {
+        // Check if user already exists
+        if self.sessions.iter().any(|s| s.user_id == user_id) {
+            return;
+        }
+
+        let session = UserSession::new(
+            &format!("session-{}", user_id),
+            &user_id,
+            &display_name,
+            role,
+        );
+        self.sessions.push(session);
+    }
+
+    /// Remove a user from the sessions panel.
+    pub fn remove_user(&mut self, user_id: &str) {
+        self.sessions.retain(|s| s.user_id != user_id);
+        if self.selected_index >= self.sessions.len() && !self.sessions.is_empty() {
+            self.selected_index = self.sessions.len().saturating_sub(1);
+        }
+    }
+
     /// Draw the sessions panel.
     pub fn draw(&mut self, frame: &mut Frame, area: Rect, layout_mode: LayoutMode, focused: bool) {
         let border_style = if focused {

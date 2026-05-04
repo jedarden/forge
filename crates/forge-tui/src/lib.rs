@@ -70,7 +70,7 @@ pub use widget::{
     render_sparkline_i64,
 };
 
-pub use app::{App, AppResult};
+pub use app::{App, AppResult, ClientConfig};
 pub use bead::{Bead, BeadManager, BeadStats};
 pub use cost_panel::{
     BudgetAlertLevel, BudgetConfig, CostPanel, CostPanelData, CostSummaryCompact,
