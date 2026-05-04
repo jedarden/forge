@@ -9,7 +9,7 @@ use forge_server::{
     assignment::BeadAssignmentTracker,
     protocol::{ClientMessage, ServerMessage},
 };
-use forge_core::{UserRole, BeadStatus, WorkerStatus, Priority};
+use forge_core::UserRole;
 use tokio::time::{sleep, Duration};
 
 /// Test authentication with default users.
@@ -105,7 +105,7 @@ async fn test_session_management() {
     // Update activity
     manager.update_activity(&operator_session.session_id).await.unwrap();
     let session = manager.get_session(&operator_session.session_id).await.unwrap();
-    assert!(!session.is_stale());
+    assert!(!session.is_stale(3600)); // 1 hour timeout
 }
 
 /// Test bead assignment tracking.
@@ -128,7 +128,7 @@ async fn test_bead_assignment() {
     // Get specific assignment
     let assignment = tracker.get_assignment("bead-1").await;
     assert!(assignment.is_some());
-    assert_eq!(assignment.unwrap().assigned_to, "user-a");
+    assert_eq!(assignment.unwrap().assigned_to, Some("user-a".to_string()));
 
     // Unassign a bead
     let removed = tracker.unassign("bead-2").await.unwrap();
@@ -143,7 +143,7 @@ async fn test_bead_assignment() {
     tracker.assign("bead-1", "user-a", "admin").await.unwrap();
     let reassigned = tracker.reassign("bead-1", "user-a", "user-c", "admin").await;
     assert!(reassigned.is_ok());
-    assert_eq!(reassigned.unwrap().assigned_to, "user-c");
+    assert_eq!(reassigned.unwrap().assigned_to, Some("user-c".to_string()));
 }
 
 /// Test concurrent session management.
@@ -213,7 +213,7 @@ async fn test_stale_session_cleanup() {
 
     // Sessions should not be stale immediately
     let retrieved = manager.get_session(&session.session_id).await.unwrap();
-    assert!(!retrieved.is_stale());
+    assert!(!retrieved.is_stale(3600)); // 1 hour timeout
 
     // Cleanup should not remove active sessions
     let stale = manager.cleanup_stale().await;

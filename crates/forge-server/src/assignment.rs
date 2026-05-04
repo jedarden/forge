@@ -38,13 +38,13 @@ impl BeadAssignmentTracker {
         {
             let assignments = self.assignments.read().await;
             if let Some(existing) = assignments.get(&bead_id) {
-                if existing.assigned_to == to_user {
+                if existing.assigned_to.as_deref() == Some(&to_user) {
                     return Ok(existing.clone());
                 }
             }
         }
 
-        let assignment = BeadAssignment::new(&bead_id, &to_user, &by_user);
+        let assignment = BeadAssignment::assigned(&bead_id, &to_user, &by_user, forge_core::AssignmentPriority::Normal);
 
         // Add to assignments
         {
@@ -74,11 +74,13 @@ impl BeadAssignmentTracker {
 
         if let Some(ref assignment) = assignment {
             // Remove from user_assignments
-            let mut user_assignments = self.user_assignments.write().await;
-            if let Some(bead_ids) = user_assignments.get_mut(&assignment.assigned_to) {
-                bead_ids.retain(|id| id != &bead_id);
-                if bead_ids.is_empty() {
-                    user_assignments.remove(&assignment.assigned_to);
+            if let Some(ref assigned_to) = assignment.assigned_to {
+                let mut user_assignments = self.user_assignments.write().await;
+                if let Some(bead_ids) = user_assignments.get_mut(assigned_to) {
+                    bead_ids.retain(|id| id != &bead_id);
+                    if bead_ids.is_empty() {
+                        user_assignments.remove(assigned_to);
+                    }
                 }
             }
         }
@@ -126,11 +128,13 @@ impl BeadAssignmentTracker {
         {
             let assignments = self.assignments.read().await;
             if let Some(existing) = assignments.get(&bead_id) {
-                if existing.assigned_to != from_user {
+                if existing.assigned_to.as_deref() != Some(&from_user) {
                     return Err(ForgeError::ConfigValidation {
                         message: format!(
                             "bead {} is assigned to {}, not {}",
-                            bead_id, existing.assigned_to, from_user
+                            bead_id,
+                            existing.assigned_to.as_deref().unwrap_or(&"<unassigned>".to_string()),
+                            from_user
                         )
                     });
                 }
@@ -178,12 +182,12 @@ mod tests {
         let assignment = tracker.assign("bead-1", "user-a", "admin").await.unwrap();
 
         assert_eq!(assignment.bead_id, "bead-1");
-        assert_eq!(assignment.assigned_to, "user-a");
-        assert_eq!(assignment.assigned_by, "admin");
+        assert_eq!(assignment.assigned_to, Some("user-a".to_string()));
+        assert_eq!(assignment.assigned_by, Some("admin".to_string()));
 
         let retrieved = tracker.get_assignment("bead-1").await;
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().assigned_to, "user-a");
+        assert_eq!(retrieved.unwrap().assigned_to, Some("user-a".to_string()));
     }
 
     #[tokio::test]
@@ -222,7 +226,7 @@ mod tests {
         tracker.assign("bead-1", "user-a", "admin").await.unwrap();
         let new_assignment = tracker.reassign("bead-1", "user-a", "user-b", "admin").await.unwrap();
 
-        assert_eq!(new_assignment.assigned_to, "user-b");
+        assert_eq!(new_assignment.assigned_to, Some("user-b".to_string()));
 
         let user_a_assignments = tracker.user_assignments("user-a").await;
         assert_eq!(user_a_assignments.len(), 0);

@@ -130,12 +130,14 @@ impl SessionManager {
             .collect()
     }
 
-    /// Clean up stale sessions (no activity for 5 minutes).
+    /// Clean up stale sessions (no activity for 1 hour).
     pub async fn cleanup_stale(&self) -> Vec<UserSession> {
+        const STALE_TIMEOUT_SECONDS: i64 = 3600; // 1 hour
+
         let stale_ids = {
             let sessions = self.sessions.read().await;
             sessions.iter()
-                .filter(|(_, s)| s.is_stale())
+                .filter(|(_, s)| s.is_stale(STALE_TIMEOUT_SECONDS))
                 .map(|(id, _)| id.clone())
                 .collect::<Vec<_>>()
         };
@@ -237,7 +239,7 @@ mod tests {
         assert_eq!(session.user_id, "user1");
         assert_eq!(session.display_name, "User One");
         assert_eq!(session.role, UserRole::Operator);
-        assert!(!session.is_stale());
+        assert!(!session.is_stale(3600)); // 1 hour timeout
     }
 
     #[tokio::test]
@@ -277,7 +279,7 @@ mod tests {
 
         let session = manager.get_session(&session_id).await.unwrap();
         // Session should still be active (just updated)
-        assert!(!session.is_stale());
+        assert!(!session.is_stale(3600)); // 1 hour timeout
     }
 
     #[tokio::test]

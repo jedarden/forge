@@ -54,6 +54,7 @@ pub mod log_watcher;
 pub mod metrics_panel;
 pub mod perf_metrics;
 pub mod perf_panel;
+pub mod sessions_panel;
 pub mod status;
 pub mod subscription_panel;
 pub mod theme;
@@ -96,6 +97,7 @@ pub use subscription_panel::{
     SubscriptionAction, SubscriptionData, SubscriptionPanel, SubscriptionService,
     SubscriptionStatus, SubscriptionSummaryCompact, format_subscription_summary,
 };
+pub use sessions_panel::{SessionsPanel};
 pub use theme::{Theme, ThemeColors, ThemeManager, ThemeName};
 pub use view::{FocusPanel, LayoutMode, View};
 pub use worker_panel::{WorkerPanel, format_health_summary_narrow};

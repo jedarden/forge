@@ -46,8 +46,9 @@
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
+use std::thread;
 
 use crossterm::event::{self, Event, KeyEvent};
 use forge_config::ForgeConfig;
@@ -107,6 +108,44 @@ pub enum PendingAction {
     ResumeWorker { worker_id: String },
     /// Resume all workers
     ResumeAllWorkers { count: usize },
+}
+
+/// Request message to the server client background task.
+#[derive(Clone, Debug)]
+pub enum ServerClientRequest {
+    /// Assign a bead to a user
+    AssignBead { bead_id: String, to: String },
+    /// Unassign a bead
+    UnassignBead { bead_id: String },
+    /// Send chat message to server
+    SendChat { message: String },
+    /// Update current view
+    UpdateView { view: String },
+    /// Spawn worker (if permitted)
+    SpawnWorker { model: String, count: u32 },
+    /// Kill worker (if permitted)
+    KillWorker { worker_id: String },
+}
+
+/// Message from the server client background task to the UI.
+#[derive(Clone, Debug)]
+pub enum ServerClientMessage {
+    /// Connected and authenticated successfully
+    Connected { session: forge_core::UserSession, server_url: String },
+    /// State update received from server
+    StateUpdate { workers: Vec<forge_server::protocol::WorkerState>, beads: Vec<forge_server::protocol::BeadState> },
+    /// User joined the session
+    UserJoined { user: String, display_name: String, role: forge_core::UserRole },
+    /// User left the session
+    UserLeft { user: String },
+    /// Bead assigned notification
+    BeadAssigned { bead_id: String, assigned_to: String, assigned_by: String },
+    /// Chat message from another user
+    ChatMessage { from: String, message: String, timestamp: chrono::DateTime<chrono::Utc> },
+    /// Connection error
+    ConnectionError { message: String },
+    /// Disconnected from server
+    Disconnected,
 }
 
 /// Main application state.
@@ -254,6 +293,18 @@ pub struct App {
     config_menu_editing: bool,
     /// Input buffer for config editing
     config_menu_input: String,
+    /// Sessions panel for team collaboration (multi-user mode)
+    sessions_panel: crate::sessions_panel::SessionsPanel,
+    /// Server client for multi-user collaboration mode
+    server_client_tx: Option<Sender<ServerClientRequest>>,
+    /// Receiver for server client state updates
+    server_client_rx: Option<Receiver<ServerClientMessage>>,
+    /// Current user session in server mode
+    user_session: Option<forge_core::UserSession>,
+    /// Whether we're connected to a FORGE server
+    is_server_connected: bool,
+    /// Server connection URL (for display)
+    server_url: Option<String>,
 }
 
 /// Temporary storage for chat exchange data during streaming display.
@@ -618,6 +669,12 @@ impl App {
             config_menu_selected: 0,
             config_menu_editing: false,
             config_menu_input: String::new(),
+            sessions_panel: crate::sessions_panel::SessionsPanel::new(),
+            server_client_tx: None,
+            server_client_rx: None,
+            user_session: None,
+            is_server_connected: false,
+            server_url: None,
         }
     }
 
@@ -701,6 +758,12 @@ impl App {
             config_menu_selected: 0,
             config_menu_editing: false,
             config_menu_input: String::new(),
+            sessions_panel: crate::sessions_panel::SessionsPanel::new(),
+            server_client_tx: None,
+            server_client_rx: None,
+            user_session: None,
+            is_server_connected: false,
+            server_url: None,
         }
     }
 
@@ -1435,6 +1498,7 @@ impl App {
                 View::Alerts => FocusPanel::None,
                 View::Routing => FocusPanel::None,
                 View::Chat => FocusPanel::ChatInput,
+                View::Sessions => FocusPanel::SessionsList,
             };
 
             // Update input handler for chat mode
@@ -4330,6 +4394,7 @@ impl App {
             View::Alerts => self.draw_alerts(frame, area),
             View::Routing => self.draw_routing(frame, area),
             View::Chat => self.draw_chat(frame, area),
+            View::Sessions => self.draw_sessions(frame, area),
         }
     }
 
@@ -5443,6 +5508,19 @@ impl App {
             );
 
         frame.render_widget(input, chunks[1]);
+    }
+
+    /// Draw the Sessions view (team collaboration / multi-user mode).
+    fn draw_sessions(&mut self, frame: &mut Frame, area: Rect) {
+        let layout_mode = self.get_layout_mode(area.width);
+        let focused = self.focus_panel == FocusPanel::SessionsList;
+
+        // In a real implementation, this would pull from an active server connection
+        // For now, we show an empty state or static demo data
+        let sessions = vec![]; // Empty until connected to a server
+
+        self.sessions_panel.set_sessions(sessions);
+        self.sessions_panel.draw(frame, area, layout_mode, focused);
     }
 
 

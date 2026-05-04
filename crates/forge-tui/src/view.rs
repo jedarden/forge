@@ -33,6 +33,8 @@ pub enum View {
     Routing,
     /// Conversational chat interface (activated with `:`)
     Chat,
+    /// Team sessions (multi-user collaboration mode)
+    Sessions,
 }
 
 impl View {
@@ -50,6 +52,7 @@ impl View {
             View::Alerts => 'a',
             View::Routing => 'r',
             View::Chat => ':',
+            View::Sessions => 's',
         }
     }
 
@@ -67,6 +70,7 @@ impl View {
             View::Alerts => "Alerts",
             View::Routing => "Routing",
             View::Chat => "Chat",
+            View::Sessions => "Sessions",
         }
     }
 
@@ -76,7 +80,7 @@ impl View {
     }
 
     /// All views in display order (for Tab cycling).
-    pub const ALL: [View; 11] = [
+    pub const ALL: [View; 12] = [
         View::Overview,
         View::Workers,
         View::Tasks,
@@ -88,6 +92,7 @@ impl View {
         View::Alerts,
         View::Routing,
         View::Chat,
+        View::Sessions,
     ];
 
     /// Returns the next view in the cycle (for Tab navigation).
@@ -120,6 +125,7 @@ impl View {
             'a' => Some(View::Alerts),
             'r' => Some(View::Routing),
             ':' => Some(View::Chat),
+            's' => Some(View::Sessions),
             _ => None,
         }
     }
@@ -157,6 +163,8 @@ pub enum FocusPanel {
     ChatInput,
     /// Alert list panel
     AlertList,
+    /// Sessions list panel (team collaboration)
+    SessionsList,
 }
 
 impl FocusPanel {
@@ -229,6 +237,7 @@ mod tests {
         assert_eq!(View::Alerts.hotkey(), 'a');
         assert_eq!(View::Routing.hotkey(), 'r');
         assert_eq!(View::Chat.hotkey(), ':');
+        assert_eq!(View::Sessions.hotkey(), 's');
     }
 
     #[test]
@@ -239,14 +248,15 @@ mod tests {
         assert_eq!(View::from_hotkey('a'), Some(View::Alerts));
         assert_eq!(View::from_hotkey('r'), Some(View::Routing));
         assert_eq!(View::from_hotkey(':'), Some(View::Chat));
+        assert_eq!(View::from_hotkey('s'), Some(View::Sessions));
         assert_eq!(View::from_hotkey('x'), None);
     }
 
     #[test]
     fn test_view_cycling() {
         assert_eq!(View::Overview.next(), View::Workers);
-        assert_eq!(View::Chat.next(), View::Overview); // wraps around
-        assert_eq!(View::Overview.prev(), View::Chat); // wraps around
+        assert_eq!(View::Sessions.next(), View::Overview); // wraps around
+        assert_eq!(View::Overview.prev(), View::Sessions); // wraps around
         assert_eq!(View::Workers.prev(), View::Overview);
     }
 
@@ -257,6 +267,7 @@ mod tests {
         assert_eq!(View::Alerts.title(), "Alerts");
         assert_eq!(View::Routing.title(), "Routing");
         assert_eq!(View::Chat.title(), "Chat");
+        assert_eq!(View::Sessions.title(), "Sessions");
     }
 
     #[test]
