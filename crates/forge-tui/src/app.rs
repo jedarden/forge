@@ -53,7 +53,7 @@ use crossterm::event::{self, Event, KeyEvent};
 use forge_chat::{ChatBackend, ChatConfig, ChatResponse, StreamingChatChunk};
 use forge_core::types::WorkerTier;
 use forge_worker::{
-    CrashRecoveryManager, LaunchConfig, SpawnRequest, WorkerLauncher,
+    LaunchConfig, SpawnRequest, WorkerLauncher,
     discovery::DiscoveredWorker,
 };
 use ratatui::{
@@ -209,10 +209,8 @@ pub struct App {
     selected_task_index: usize,
     /// Currently selected alert index in the alerts list
     selected_alert_index: usize,
-    /// Whether to show the alert detail overlay
-    show_alert_detail: bool,
-    /// Configuration watcher for hot-reload
-    config_watcher: Option<ConfigWatcher>,
+    /// Configuration watcher for hot-reload (stored to keep file watcher alive)
+    _config_watcher: Option<ConfigWatcher>,
     /// Receiver for config change events
     config_rx: Option<Receiver<ConfigEvent>>,
     /// Current forge configuration
@@ -231,16 +229,10 @@ pub struct App {
     selected_worker_index: usize,
     /// Error recovery manager for tracking and recovering from errors
     error_recovery: SharedErrorRecoveryManager,
-    /// Last known good chat backend status (for graceful degradation)
-    last_known_chat_available: bool,
-    /// Timestamp of last successful data fetch
-    last_successful_data_fetch: Option<Instant>,
     /// Last failed chat query (for retry functionality)
     last_failed_query: Option<String>,
     /// Whether retry is available (set when network error occurs)
     retry_available: bool,
-    /// Crash recovery manager for handling worker crashes
-    crash_recovery: CrashRecoveryManager,
     /// Network connectivity status (false = network unreachable)
     network_available: bool,
     /// Last network error message (for display in banner)
@@ -502,7 +494,6 @@ impl App {
         let chat_start = Instant::now();
         info!("⏱️ Initializing chat backend...");
         let chat_backend = Self::init_chat_backend().map(Arc::new);
-        let last_known_chat_available = chat_backend.is_some();
         info!("⏱️ Chat backend initialized in {:?}", chat_start.elapsed());
 
         // Initialize worker launcher and runtime
@@ -603,8 +594,7 @@ impl App {
             show_task_detail: false,
             selected_task_index: 0,
             selected_alert_index: 0,
-            show_alert_detail: false,
-            config_watcher,
+            _config_watcher: config_watcher,
             config_rx,
             forge_config,
             data_poll_interval,
@@ -613,11 +603,8 @@ impl App {
             paused_workers: std::collections::HashSet::new(),
             selected_worker_index: 0,
             error_recovery: SharedErrorRecoveryManager::new(),
-            last_known_chat_available,
-            last_successful_data_fetch: None,
             last_failed_query: None,
             retry_available: false,
-            crash_recovery: CrashRecoveryManager::new(),
             network_available: true,
             network_error_message: None,
             network_unavailable_since: None,
@@ -662,7 +649,6 @@ impl App {
             chat_backend: None, // Don't initialize in test mode
             chat_response_tx: None,
             chat_response_rx: None,
-            last_known_chat_available: false, // No chat backend in test mode
             chat_pending: false,
             streaming_response: String::new(),
             streaming_position: 0,
@@ -687,8 +673,7 @@ impl App {
             show_task_detail: false,
             selected_task_index: 0,
             selected_alert_index: 0,
-            show_alert_detail: false,
-            config_watcher: None, // Don't initialize in test mode
+            _config_watcher: None, // Don't initialize in test mode
             config_rx: None,
             forge_config: ForgeConfig::default(),
             data_poll_interval: Duration::from_millis(DEFAULT_DATA_POLL_INTERVAL_MS),
@@ -700,10 +685,8 @@ impl App {
             paused_workers: std::collections::HashSet::new(),
             selected_worker_index: 0,
             error_recovery: SharedErrorRecoveryManager::new(),
-            last_successful_data_fetch: None,
             last_failed_query: None,
             retry_available: false,
-            crash_recovery: CrashRecoveryManager::new(),
             network_available: true,
             network_error_message: None,
             network_unavailable_since: None,
@@ -1116,7 +1099,7 @@ impl App {
 
                 // Load last 10 entries
                 let mut entries: Vec<forge_chat::HistoryEntry> = Vec::new();
-                for line in reader.lines().flatten() {
+                for line in reader.lines().map_while(Result::ok) {
                     if line.trim().is_empty() {
                         continue;
                     }
@@ -1198,7 +1181,7 @@ impl App {
                         let reader = BufReader::new(file);
                         reader
                             .lines()
-                            .filter_map(std::result::Result::ok)
+                            .map_while(std::result::Result::ok)
                             .filter(|line| !line.trim().is_empty())
                             .filter_map(|line| serde_json::from_str(&line).ok())
                             .collect()
@@ -1265,7 +1248,7 @@ impl App {
                 let reader = BufReader::new(file);
                 let entries: Vec<forge_chat::HistoryEntry> = reader
                     .lines()
-                    .filter_map(std::result::Result::ok)
+                    .map_while(std::result::Result::ok)
                     .filter(|line| !line.trim().is_empty())
                     .filter_map(|line| serde_json::from_str(&line).ok())
                     .collect();
@@ -3297,25 +3280,23 @@ impl App {
         use crossterm::event::KeyCode;
 
         match key.code {
-            KeyCode::Char('k') | KeyCode::Up => {
+            KeyCode::Char('k') | KeyCode::Up
                 // Move selection up
-                if self.kill_dialog_selected > 0 {
+                if self.kill_dialog_selected > 0 => {
                     self.kill_dialog_selected -= 1;
                     self.kill_dialog_error = None; // Clear error on navigation
                     self.mark_dirty();
                 }
-            }
-            KeyCode::Char('j') | KeyCode::Down => {
+            KeyCode::Char('j') | KeyCode::Down
                 // Move selection down
-                if self.kill_dialog_selected + 1 < self.kill_dialog_workers.len() {
+                if self.kill_dialog_selected + 1 < self.kill_dialog_workers.len() => {
                     self.kill_dialog_selected += 1;
                     self.kill_dialog_error = None; // Clear error on navigation
                     self.mark_dirty();
                 }
-            }
-            KeyCode::Enter => {
+            KeyCode::Enter
                 // Request confirmation before killing the selected worker
-                if self.kill_dialog_selected < self.kill_dialog_workers.len() {
+                if self.kill_dialog_selected < self.kill_dialog_workers.len() => {
                     let worker = &self.kill_dialog_workers[self.kill_dialog_selected];
                     let suffix = worker.suffix.clone();
                     let worker_type = worker.worker_type.to_string();
@@ -3327,7 +3308,6 @@ impl App {
                     self.show_confirmation = true;
                     self.mark_dirty();
                 }
-            }
             KeyCode::Esc | KeyCode::Char('q') => {
                 // Close dialog
                 self.show_kill_dialog = false;
@@ -3398,13 +3378,12 @@ impl App {
                 self.show_task_detail = false;
                 self.mark_dirty();
             }
-            KeyCode::Char('k') | KeyCode::Up => {
+            KeyCode::Char('k') | KeyCode::Up
                 // Move selection up in task list
-                if self.selected_task_index > 0 {
+                if self.selected_task_index > 0 => {
                     self.selected_task_index -= 1;
                     self.mark_dirty();
                 }
-            }
             KeyCode::Char('j') | KeyCode::Down => {
                 // Move selection down in task list
                 self.selected_task_index += 1;
@@ -3488,20 +3467,18 @@ impl App {
             KeyCode::Char(c) if !self.config_menu_editing => {
                 // Navigation in non-editing mode
                 match c {
-                    'j' => {
+                    'j'
                         // Down with bounds checking
-                        if self.config_menu_selected < item_count.saturating_sub(1) {
+                        if self.config_menu_selected < item_count.saturating_sub(1) => {
                             self.config_menu_selected += 1;
                             self.mark_dirty();
                         }
-                    }
-                    'k' => {
+                    'k'
                         // Up with bounds checking
-                        if self.config_menu_selected > 0 {
+                        if self.config_menu_selected > 0 => {
                             self.config_menu_selected -= 1;
                             self.mark_dirty();
                         }
-                    }
                     'q' => {
                         self.show_config_menu = false;
                         self.config_menu_input.clear();
@@ -3519,18 +3496,16 @@ impl App {
                 self.config_menu_input.pop();
                 self.mark_dirty();
             }
-            KeyCode::Up if !self.config_menu_editing => {
-                if self.config_menu_selected > 0 {
+            KeyCode::Up if !self.config_menu_editing
+                && self.config_menu_selected > 0 => {
                     self.config_menu_selected -= 1;
                     self.mark_dirty();
                 }
-            }
-            KeyCode::Down if !self.config_menu_editing => {
-                if self.config_menu_selected < item_count.saturating_sub(1) {
+            KeyCode::Down if !self.config_menu_editing
+                && self.config_menu_selected < item_count.saturating_sub(1) => {
                     self.config_menu_selected += 1;
                     self.mark_dirty();
                 }
-            }
             _ => {}
         }
     }
@@ -4079,13 +4054,15 @@ impl App {
                 let theme = self.theme_manager.current();
                 draw_config_menu(
                     frame,
-                    area,
-                    menu_type,
-                    &items,
-                    self.config_menu_selected,
-                    self.config_menu_editing,
-                    &self.config_menu_input,
-                    theme,
+                    crate::config_menu::ConfigMenuParams {
+                        area,
+                        menu_type,
+                        items: &items,
+                        selected: self.config_menu_selected,
+                        editing: self.config_menu_editing,
+                        edit_buffer: &self.config_menu_input,
+                        theme,
+                    },
                 );
             }
         }
@@ -6302,8 +6279,8 @@ mod tests {
         let buffer = render_app(&mut app, 100, 30);
 
         assert!(
-            buffer_contains(&buffer, "FORGE v0.2.0"),
-            "Header should contain FORGE v0.2.0 title"
+            buffer_contains(&buffer, "FORGE v0.3.0"),
+            "Header should contain FORGE v0.3.0 title"
         );
     }
 
@@ -6376,7 +6353,7 @@ mod tests {
         assert!(buffer.area.height == 20);
 
         // Should render header and some content
-        assert!(buffer_contains(&buffer, "FORGE v0.2.0"));
+        assert!(buffer_contains(&buffer, "FORGE v0.3.0"));
     }
 
     #[test]
@@ -6390,7 +6367,7 @@ mod tests {
         assert!(buffer.area.height == 50);
 
         // Should render content
-        assert!(buffer_contains(&buffer, "FORGE v0.2.0"));
+        assert!(buffer_contains(&buffer, "FORGE v0.3.0"));
     }
 
     #[test]
@@ -6758,7 +6735,7 @@ mod tests {
 
     #[test]
     fn test_app_creation() {
-        let mut app = App::new();
+        let app = App::new();
         assert_eq!(app.current_view(), View::Overview);
         assert!(!app.should_quit());
         assert!(!app.show_help());
@@ -7039,7 +7016,7 @@ mod tests {
             let buffer = render_app(&mut app, 199, height);
             assert_eq!(buffer.area.height, height);
             // Should render something without panic
-            assert!(buffer_contains(&buffer, "FORGE v0.2.0"));
+            assert!(buffer_contains(&buffer, "FORGE v0.3.0"));
         }
     }
 

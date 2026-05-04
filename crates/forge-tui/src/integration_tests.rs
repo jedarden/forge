@@ -131,8 +131,8 @@ mod tests {
 
         // Verify the header is rendered
         assert!(
-            buffer_contains(&buffer, "FORGE v0.2.0"),
-            "Application should render FORGE v0.2.0 header"
+            buffer_contains(&buffer, "FORGE v0.3.0"),
+            "Application should render FORGE v0.3.0 header"
         );
 
         // Verify the overview panels are rendered
@@ -721,7 +721,7 @@ mod tests {
         // 1. Verify initial state
         assert_eq!(app.current_view(), View::Overview);
         let buffer = render_app(&mut app, 120, 40);
-        assert!(buffer_contains(&buffer, "FORGE v0.2.0"));
+        assert!(buffer_contains(&buffer, "FORGE v0.3.0"));
 
         // 2. Navigate through views
         app.switch_view(View::Workers);
@@ -1820,7 +1820,7 @@ mod tests {
         }
 
         // Create app with custom status dir
-        let mut app = App::with_status_dir(status_dir);
+        let app = App::with_status_dir(status_dir);
 
         // Render Workers view
         let mut app = app;
@@ -2238,18 +2238,18 @@ mod tests {
 
         // Narrow mode
         let narrow = render_app(&mut app, 80, 30);
-        assert!(buffer_contains(&narrow, "FORGE v0.2.0"));
+        assert!(buffer_contains(&narrow, "FORGE v0.3.0"));
         assert!(buffer_contains(&narrow, "Worker Pool"));
 
         // Wide mode
         let wide = render_app(&mut app, 150, 40);
-        assert!(buffer_contains(&wide, "FORGE v0.2.0"));
+        assert!(buffer_contains(&wide, "FORGE v0.3.0"));
         assert!(buffer_contains(&wide, "Worker Pool"));
         assert!(buffer_contains(&wide, "Subscriptions"));
 
         // Ultra-wide mode
         let ultrawide = render_app(&mut app, 220, 50);
-        assert!(buffer_contains(&ultrawide, "FORGE v0.2.0"));
+        assert!(buffer_contains(&ultrawide, "FORGE v0.3.0"));
         assert!(buffer_contains(&ultrawide, "Cost Breakdown"));
         assert!(buffer_contains(&ultrawide, "Quick Actions"));
     }
@@ -2630,7 +2630,7 @@ mod tests {
         // App should still be functional
         assert!(!app.should_quit());
         let buffer = render_app(&mut app, 120, 40);
-        assert!(buffer_contains(&buffer, "FORGE v0.2.0"));
+        assert!(buffer_contains(&buffer, "FORGE v0.3.0"));
     }
 
     #[test]
@@ -2644,7 +2644,7 @@ mod tests {
 
         // App should still render without panic
         let buffer = render_app(&mut app, 120, 40);
-        assert!(buffer_contains(&buffer, "FORGE v0.2.0"));
+        assert!(buffer_contains(&buffer, "FORGE v0.3.0"));
 
         // Go back to top
         app.handle_app_event(AppEvent::GoToTop);
@@ -3314,7 +3314,7 @@ mod tests {
         // Ultra-wide: 200x50
         let buffer = render_app(&mut app, 200, 50);
 
-        assert!(buffer_contains(&buffer, "FORGE v0.2.0"));
+        assert!(buffer_contains(&buffer, "FORGE v0.3.0"));
         assert!(buffer_contains(&buffer, "Worker Pool"));
     }
 
@@ -3325,7 +3325,7 @@ mod tests {
         // Wide: 150x35
         let buffer = render_app(&mut app, 150, 35);
 
-        assert!(buffer_contains(&buffer, "FORGE v0.2.0"));
+        assert!(buffer_contains(&buffer, "FORGE v0.3.0"));
         assert!(buffer_contains(&buffer, "Worker Pool"));
     }
 
@@ -3361,7 +3361,7 @@ mod tests {
 
         // Should handle gracefully
         assert_eq!(buffer.area.width, 400);
-        assert!(buffer_contains(&buffer, "FORGE v0.2.0"));
+        assert!(buffer_contains(&buffer, "FORGE v0.3.0"));
     }
 
     #[test]
@@ -3613,7 +3613,7 @@ mod tests {
             // Verify data is consistent after each update
             assert_eq!(data.active_count(), 1);
             let status = data.get(SubscriptionService::ClaudePro).unwrap();
-            assert_eq!(status.current_usage, (i * 5) as u64);
+            assert_eq!(status.current_usage, i * 5);
         }
     }
 
@@ -3641,7 +3641,7 @@ mod tests {
 
             // Verify data is consistent
             assert!(data.has_data());
-            assert_eq!(data.today_calls(), (i * 10) as i64);
+            assert_eq!(data.today_calls(), i * 10);
         }
     }
 
@@ -4252,12 +4252,12 @@ mod tests {
         // UltraWide should have more content (6 panels vs 4 or 3)
         // This is a soft check - just verify they render without error
         assert!(
-            content_ultrawide.len() > 0,
+            !content_ultrawide.is_empty(),
             "UltraWide content should not be empty"
         );
-        assert!(content_wide.len() > 0, "Wide content should not be empty");
+        assert!(!content_wide.is_empty(), "Wide content should not be empty");
         assert!(
-            content_narrow.len() > 0,
+            !content_narrow.is_empty(),
             "Narrow content should not be empty"
         );
     }
@@ -4450,12 +4450,10 @@ mod tests {
         let mut found_starting = false;
         let max_wait = Duration::from_millis(500);
         while start.elapsed() < max_wait {
-            if let Some(event) = watcher.recv_timeout(Duration::from_millis(50)) {
-                if let StatusEvent::WorkerUpdated { ref status, .. } = event {
-                    if status.status == WorkerStatus::Starting {
-                        found_starting = true;
-                        break;
-                    }
+            if let Some(StatusEvent::WorkerUpdated { ref status, .. }) = watcher.recv_timeout(Duration::from_millis(50)) {
+                if status.status == WorkerStatus::Starting {
+                    found_starting = true;
+                    break;
                 }
             }
         }
@@ -4523,12 +4521,10 @@ mod tests {
             // Wait for the update to propagate
             let start = std::time::Instant::now();
             while start.elapsed() < Duration::from_millis(200) {
-                if let Some(event) = watcher.recv_timeout(Duration::from_millis(50)) {
-                    if let StatusEvent::WorkerUpdated { ref status, .. } = event {
-                        if status.worker_id == "transition-worker" {
-                            observed_statuses.push(status.status);
-                            break;
-                        }
+                if let Some(StatusEvent::WorkerUpdated { ref status, .. }) = watcher.recv_timeout(Duration::from_millis(50)) {
+                    if status.worker_id == "transition-worker" {
+                        observed_statuses.push(status.status);
+                        break;
                     }
                 }
             }
@@ -4600,11 +4596,9 @@ mod tests {
         // Wait for file creation to be processed
         let start = std::time::Instant::now();
         while start.elapsed() < Duration::from_secs(1) {
-            if let Some(event) = watcher.recv_timeout(Duration::from_millis(50)) {
-                if let StatusEvent::WorkerUpdated { ref worker_id, .. } = event {
-                    if worker_id == "task-worker" {
-                        break;
-                    }
+            if let Some(StatusEvent::WorkerUpdated { ref worker_id, .. }) = watcher.recv_timeout(Duration::from_millis(50)) {
+                if worker_id == "task-worker" {
+                    break;
                 }
             }
         }
@@ -4630,14 +4624,12 @@ mod tests {
         // Wait for update
         let mut task_updated = false;
         while start.elapsed() < Duration::from_secs(1) {
-            if let Some(event) = watcher.recv_timeout(Duration::from_millis(50)) {
-                if let StatusEvent::WorkerUpdated { ref status, .. } = event {
-                    if status.worker_id == "task-worker"
-                        && status.current_task == Some("fg-123".to_string())
-                    {
-                        task_updated = true;
-                        break;
-                    }
+            if let Some(StatusEvent::WorkerUpdated { ref status, .. }) = watcher.recv_timeout(Duration::from_millis(50)) {
+                if status.worker_id == "task-worker"
+                    && status.current_task == Some("fg-123".to_string())
+                {
+                    task_updated = true;
+                    break;
                 }
             }
         }
@@ -4710,12 +4702,10 @@ mod tests {
         // Wait for update
         let mut count_updated = false;
         while start.elapsed() < Duration::from_secs(1) {
-            if let Some(event) = watcher.recv_timeout(Duration::from_millis(50)) {
-                if let StatusEvent::WorkerUpdated { ref status, .. } = event {
-                    if status.worker_id == "productive-worker" && status.tasks_completed == 1 {
-                        count_updated = true;
-                        break;
-                    }
+            if let Some(StatusEvent::WorkerUpdated { ref status, .. }) = watcher.recv_timeout(Duration::from_millis(50)) {
+                if status.worker_id == "productive-worker" && status.tasks_completed == 1 {
+                    count_updated = true;
+                    break;
                 }
             }
         }
@@ -4782,12 +4772,10 @@ mod tests {
         // Wait for the removal event
         let mut worker_removed = false;
         while start.elapsed() < Duration::from_secs(2) {
-            if let Some(event) = watcher.recv_timeout(Duration::from_millis(50)) {
-                if let StatusEvent::WorkerRemoved { ref worker_id } = event {
-                    if worker_id == "doomed-worker" {
-                        worker_removed = true;
-                        break;
-                    }
+            if let Some(StatusEvent::WorkerRemoved { ref worker_id }) = watcher.recv_timeout(Duration::from_millis(50)) {
+                if worker_id == "doomed-worker" {
+                    worker_removed = true;
+                    break;
                 }
             }
         }
@@ -4843,15 +4831,13 @@ mod tests {
         // Wait for the update
         let mut status_updated = false;
         while start.elapsed() < Duration::from_secs(2) {
-            if let Some(event) = watcher.recv_timeout(Duration::from_millis(50)) {
-                if let StatusEvent::WorkerUpdated { ref status, .. } = event {
-                    if status.worker_id == "graceful-worker"
-                        && (status.status == WorkerStatus::Stopped
-                            || status.status == WorkerStatus::Failed)
-                    {
-                        status_updated = true;
-                        break;
-                    }
+            if let Some(StatusEvent::WorkerUpdated { ref status, .. }) = watcher.recv_timeout(Duration::from_millis(50)) {
+                if status.worker_id == "graceful-worker"
+                    && (status.status == WorkerStatus::Stopped
+                        || status.status == WorkerStatus::Failed)
+                {
+                    status_updated = true;
+                    break;
                 }
             }
         }
@@ -4896,14 +4882,13 @@ mod tests {
 
         // Rapidly change status multiple times
         let statuses = ["starting", "active", "idle", "active", "failed", "stopped"];
-        let mut last_json = String::new();
 
         for status in &statuses {
-            last_json = format!(
+            let json = format!(
                 r#"{{"worker_id": "rapid-worker", "status": "{}", "tasks_completed": 0}}"#,
                 status
             );
-            fs::write(&worker_path, &last_json).unwrap();
+            fs::write(&worker_path, json).unwrap();
             thread::sleep(Duration::from_millis(30)); // Rapid but not instant
         }
 
@@ -4959,11 +4944,9 @@ mod tests {
         // Wait for all workers to be detected
         let mut detected_count = 0;
         while start.elapsed() < Duration::from_secs(2) && detected_count < worker_count {
-            if let Some(event) = watcher.recv_timeout(Duration::from_millis(50)) {
-                if let StatusEvent::WorkerUpdated { ref worker_id, .. } = event {
-                    if worker_id.starts_with("concurrent-") {
-                        detected_count += 1;
-                    }
+            if let Some(StatusEvent::WorkerUpdated { ref worker_id, .. }) = watcher.recv_timeout(Duration::from_millis(50)) {
+                if worker_id.starts_with("concurrent-") {
+                    detected_count += 1;
                 }
             }
         }
