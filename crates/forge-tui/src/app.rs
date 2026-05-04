@@ -490,18 +490,18 @@ impl App {
         let theme_manager = ThemeManager::load_config();
         info!("⏱️ ThemeManager loaded in {:?}", theme_start.elapsed());
 
-        // Time chat backend initialization
-        let chat_start = Instant::now();
-        info!("⏱️ Initializing chat backend...");
-        let chat_backend = Self::init_chat_backend().map(Arc::new);
-        info!("⏱️ Chat backend initialized in {:?}", chat_start.elapsed());
-
-        // Initialize worker launcher and runtime
+        // Initialize worker launcher and runtime (needed before chat backend for worker spawning)
         let worker_launcher = WorkerLauncher::new();
         let worker_runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("Failed to create worker runtime");
+
+        // Time chat backend initialization
+        let chat_start = Instant::now();
+        info!("⏱️ Initializing chat backend...");
+        let chat_backend = Self::init_chat_backend_with_worker_spawner(&worker_runtime, &worker_launcher).map(Arc::new);
+        info!("⏱️ Chat backend initialized in {:?}", chat_start.elapsed());
 
         // Initialize config watcher for hot-reload (skip in test mode to save inotify instances)
         let config_start = Instant::now();
@@ -865,6 +865,220 @@ impl App {
                 let backend_start = std::time::Instant::now();
                 match rt.block_on(ChatBackend::new(chat_config)) {
                     Ok(backend) => {
+                        info!(
+                            "⏱️ ✅ Chat backend initialized successfully in {:?} (total: {:?})",
+                            backend_start.elapsed(),
+                            start.elapsed()
+                        );
+                        Some(backend)
+                    }
+                    Err(e) => {
+                        error!(
+                            "⏱️ ❌ Failed to initialize chat backend: {} (took {:?})",
+                            e,
+                            start.elapsed()
+                        );
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                error!(
+                    "⏱️ ❌ Failed to create tokio runtime: {} (took {:?})",
+                    e,
+                    start.elapsed()
+                );
+                None
+            }
+        }
+    }
+
+    /// Initialize chat backend from config.yaml with worker spawner support.
+    ///
+    /// Returns None if config is missing or initialization fails.
+    /// Errors are logged but don't prevent app startup.
+    fn init_chat_backend_with_worker_spawner(
+        _worker_runtime: &tokio::runtime::Runtime,
+        _worker_launcher: &WorkerLauncher,
+    ) -> Option<ChatBackend> {
+        use forge_chat::config::{AuditConfig, ConfirmationConfig, RateLimitConfig};
+        use forge_chat::spawner::RealWorkerSpawner;
+        use forge_chat::ChatProviderFactory;
+        use tracing::{error, info, warn};
+
+        let start = std::time::Instant::now();
+        info!("⏱️ init_chat_backend_with_worker_spawner() started");
+
+        // Load config from ~/.forge/config.yaml
+        let config_path = match dirs::home_dir() {
+            Some(home) => home.join(".forge/config.yaml"),
+            None => {
+                warn!("⏱️ Could not determine home directory (took {:?})", start.elapsed());
+                return None;
+            }
+        };
+
+        info!(
+            "⏱️ Initializing chat backend from {}",
+            config_path.display()
+        );
+
+        if !config_path.exists() {
+            warn!(
+                "⏱️ Chat config not found at {} (took {:?})",
+                config_path.display(),
+                start.elapsed()
+            );
+            return None;
+        }
+
+        let read_start = std::time::Instant::now();
+        let config_str = match std::fs::read_to_string(&config_path) {
+            Ok(s) => s,
+            Err(e) => {
+                error!(
+                    "⏱️ Failed to read chat config: {} (took {:?})",
+                    e,
+                    start.elapsed()
+                );
+                return None;
+            }
+        };
+        info!("⏱️ Config file read in {:?}", read_start.elapsed());
+
+        // Parse the full config YAML
+        let parse_start = std::time::Instant::now();
+        let yaml: serde_yaml::Value = match serde_yaml::from_str(&config_str) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    "⏱️ Failed to parse config YAML: {} (took {:?})",
+                    e,
+                    start.elapsed()
+                );
+                return None;
+            }
+        };
+        info!("⏱️ YAML parsed in {:?}", parse_start.elapsed());
+
+        // Extract chat_backend section
+        let chat_backend = yaml.get("chat_backend")?;
+        let command = chat_backend.get("command")?.as_str()?;
+
+        // Read optional args (not required — providers may handle args internally)
+        let args: Vec<String> = chat_backend
+            .get("args")
+            .and_then(|v| v.as_sequence())
+            .map(|seq| {
+                seq.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Read model (optional, defaults to "sonnet")
+        let model = chat_backend
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("sonnet")
+            .to_string();
+
+        // Determine provider: explicit `provider` field takes precedence; fall back to
+        // inferring from `command` for backwards compatibility (opencode → opencode,
+        // anything else → claude-cli).
+        let provider_name = chat_backend
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .unwrap_or_else(|| {
+                if command == "opencode" {
+                    "opencode"
+                } else {
+                    "claude-cli"
+                }
+            });
+
+        info!("⏱️ Using provider: {}", provider_name);
+
+        // Warn about command/provider field mismatches before delegating to factory.
+        match provider_name {
+            "opencode" if command != "opencode" => {
+                warn!(
+                    "Provider is 'opencode' but command is '{}' — using command as binary path",
+                    command
+                );
+            }
+            "claude-cli" if command == "opencode" => {
+                warn!(
+                    "Provider is 'claude-cli' but command is 'opencode' — this may not work as \
+                     expected. Set provider: opencode to use the OpenCode provider."
+                );
+            }
+            _ => {}
+        }
+
+        // Read model_aliases (only consumed by the opencode provider).
+        let model_aliases = chat_backend
+            .get("model_aliases")
+            .and_then(|v| v.as_mapping())
+            .map(|m| {
+                m.iter()
+                    .filter_map(|(k, v)| {
+                        let key = k.as_str()?.to_string();
+                        let val = v.as_str()?.to_string();
+                        Some((key, val))
+                    })
+                    .collect::<std::collections::HashMap<String, String>>()
+            });
+
+        // Use the factory to build the ProviderConfig from the provider name string.
+        let provider_config = match ChatProviderFactory::create_config(
+            provider_name,
+            command,
+            &model,
+            args,
+            model_aliases,
+        ) {
+            Ok(config) => config,
+            Err(e) => {
+                error!("Failed to create provider config: {}", e);
+                return None;
+            }
+        };
+
+        let chat_config = ChatConfig {
+            provider: provider_config,
+            rate_limit: RateLimitConfig::default(),
+            audit: AuditConfig::default(),
+            confirmations: ConfirmationConfig::default(),
+        };
+
+        // Get workspace path
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/coder".to_string());
+        let workspace = std::env::var("FORGE_WORKSPACE")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from(&home).join("forge"));
+
+        // Create RealWorkerSpawner with default launcher detection
+        let worker_spawner: Arc<dyn forge_chat::spawner::WorkerSpawner> = match RealWorkerSpawner::with_default_launcher(workspace) {
+            Some(spawner) => Arc::new(spawner),
+            None => {
+                warn!("⏱️ No worker launcher script found, worker spawning via chat will not be available");
+                Arc::new(forge_chat::spawner::NoOpWorkerSpawner)
+            }
+        };
+
+        // Initialize backend (async, but we block here during startup)
+        let runtime_start = std::time::Instant::now();
+        match tokio::runtime::Runtime::new() {
+            Ok(rt) => {
+                info!(
+                    "⏱️ Created tokio runtime for chat backend in {:?}",
+                    runtime_start.elapsed()
+                );
+                let backend_start = std::time::Instant::now();
+                match rt.block_on(ChatBackend::new(chat_config)) {
+                    Ok(backend) => {
+                        let backend = backend.with_worker_spawner(worker_spawner);
                         info!(
                             "⏱️ ✅ Chat backend initialized successfully in {:?} (total: {:?})",
                             backend_start.elapsed(),
