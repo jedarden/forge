@@ -1147,6 +1147,25 @@ fn truncate_str(s: &str, max_len: usize) -> String {
     }
 }
 
+impl Default for Bead {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            title: String::new(),
+            description: String::new(),
+            status: "open".to_string(),
+            priority: 2,
+            issue_type: "task".to_string(),
+            assignee: None,
+            labels: Vec::new(),
+            dependency_count: 0,
+            dependent_count: 0,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1272,24 +1291,5 @@ mod tests {
         assert!(summary.contains("Ready: 5"));
         assert!(summary.contains("Blocked: 2"));
         assert!(summary.contains("In Progress: 3"));
-    }
-}
-
-impl Default for Bead {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            title: String::new(),
-            description: String::new(),
-            status: "open".to_string(),
-            priority: 2,
-            issue_type: "task".to_string(),
-            assignee: None,
-            labels: Vec::new(),
-            dependency_count: 0,
-            dependent_count: 0,
-            created_at: String::new(),
-            updated_at: String::new(),
-        }
     }
 }

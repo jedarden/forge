@@ -44,19 +44,21 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use notify::RecursiveMode;
-use notify_debouncer_full::{
-    DebounceEventResult, DebouncedEvent, NoCache, RecommendedCache, new_debouncer_opt,
-};
+use notify_debouncer_full::{DebounceEventResult, DebouncedEvent, new_debouncer_opt};
 
 // In tests, use PollWatcher to avoid inotify instance limits.
 // In production, use RecommendedWatcher (inotify on Linux) for efficiency.
 #[cfg(test)]
 use notify::PollWatcher;
 #[cfg(test)]
+use notify_debouncer_full::NoCache;
+#[cfg(test)]
 type DebouncerType = notify_debouncer_full::Debouncer<PollWatcher, NoCache>;
 
 #[cfg(not(test))]
 use notify::RecommendedWatcher;
+#[cfg(not(test))]
+use notify_debouncer_full::RecommendedCache;
 #[cfg(not(test))]
 type DebouncerType = notify_debouncer_full::Debouncer<RecommendedWatcher, RecommendedCache>;
 use serde::{Deserialize, Serialize};

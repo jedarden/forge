@@ -12,3 +12,6 @@ rust-version.workspace = true
 forge-core = { path = "../forge-core" }
 serde.workspace = true
 serde_yaml.workspace = true
+dirs = "5.0"
+thiserror.workspace = true
+tracing.workspace = true

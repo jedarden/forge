@@ -37,17 +37,21 @@ use forge_cost::{ApiCall, LogParser};
 use forge_core::worker_perf::TaskEvent;
 use serde_json::Value;
 use notify::{Event as NotifyEvent, EventKind, RecursiveMode};
-use notify_debouncer_full::{DebounceEventResult, NoCache, RecommendedCache, new_debouncer_opt};
+use notify_debouncer_full::{DebounceEventResult, new_debouncer_opt};
 
 // In tests, use PollWatcher to avoid inotify instance limits.
 // In production, use RecommendedWatcher (inotify on Linux) for efficiency.
 #[cfg(test)]
 use notify::PollWatcher;
 #[cfg(test)]
+use notify_debouncer_full::NoCache;
+#[cfg(test)]
 type DebouncerType = notify_debouncer_full::Debouncer<PollWatcher, NoCache>;
 
 #[cfg(not(test))]
 use notify::RecommendedWatcher;
+#[cfg(not(test))]
+use notify_debouncer_full::RecommendedCache;
 #[cfg(not(test))]
 type DebouncerType = notify_debouncer_full::Debouncer<RecommendedWatcher, RecommendedCache>;
 use std::collections::HashMap;
@@ -304,9 +308,6 @@ pub struct LogWatcher {
     /// Tracked files with their positions
     tracked_files: HashMap<PathBuf, TrackedFile>,
 
-    /// File tailer for reading new content
-    tailer: FileTailer,
-
     /// The debounced file watcher (stored for proper cleanup)
     _debouncer: Option<DebouncerType>,
 }
@@ -405,7 +406,6 @@ impl LogWatcher {
             log_dir: config.log_dir.clone(),
             parser: LogParser::new(),
             tracked_files: HashMap::new(),
-            tailer: FileTailer::new(event_tx),
             _debouncer: Some(debouncer),
         };
 

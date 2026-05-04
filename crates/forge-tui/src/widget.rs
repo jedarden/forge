@@ -770,11 +770,10 @@ impl ProgressBar {
         let total_units = bar_width * 8;
         let filled_units = (pct * total_units as f64).round() as usize;
 
-        let mut x = area.left();
         let y = area.top();
 
-        for i in 0..bar_width {
-            if x >= area.right() {
+        for (offset_x, i) in (area.left()..).zip(0..bar_width) {
+            if offset_x >= area.right() {
                 break;
             }
 
@@ -792,11 +791,9 @@ impl ProgressBar {
             let ch = chars[level];
             let fg_color = if level > 0 { color } else { Color::DarkGray };
 
-            buf[(x, y)]
+            buf[(offset_x, y)]
                 .set_char(ch)
                 .set_style(Style::default().fg(fg_color));
-
-            x += 1;
         }
     }
 }

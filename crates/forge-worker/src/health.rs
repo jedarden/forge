@@ -834,10 +834,6 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn create_test_status_file(dir: &PathBuf, worker_id: &str, content: &str) {
-        std::fs::write(dir.join(format!("{}.json", worker_id)), content).unwrap();
-    }
-
     #[test]
     fn test_health_monitor_config_default() {
         let config = HealthMonitorConfig::default();

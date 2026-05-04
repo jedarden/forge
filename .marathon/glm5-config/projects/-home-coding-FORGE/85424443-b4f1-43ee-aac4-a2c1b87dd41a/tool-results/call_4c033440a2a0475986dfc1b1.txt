@@ -1,0 +1,341 @@
+crates/forge-tui/src/config_error_handler.rs:201:# chat_backend:
+crates/forge-tui/src/config_error_handler.rs-202-#   command: claude-code
+crates/forge-tui/src/config_error_handler.rs-203-#   args:
+/home/coding/FORGE/crates/forge-tui/src/config_error_handler.rs-204-#     - --headless
+/home/coding/FORGE/crates/forge-tui/src/config_error_handler.rs-205-#     - --model
+/home/coding/FORGE/crates/forge-tui/src/config_error_handler.rs-206-#     - sonnet
+crates/forge-tui/src/config_error_handler.rs-207-#   model: sonnet
+/home/coding/FORGE/crates/forge-tui/src/config_error_handler.rs-208-"#
+/home/coding/FORGE/crates/forge-tui/src/config_error_handler.rs-209-    .to_string()
+/home/coding/FORGE/crates/forge-tui/src/config_error_handler.rs-210-}
+/home/coding/FORGE/crates/forge-tui/src/config_error_handler.rs-211-
+/home/coding/FORGE/crates/forge-tui/src/config_error_handler.rs-212-/// Non-interactive error handling for automated/headless environments.
+/home/coding/FORGE/crates/forge-tui/src/config_error_handler.rs-213-///
+/home/coding/FORGE/crates/forge-tui/src/config_error_handler.rs-214-/// This function logs the error and uses defaults without user interaction.
+crates/forge-tui/src/config_error_handler.rs-215-pub fn handle_config_error_non_interactive(error: &ConfigError) -> io::Result<()> {
+/home/coding/FORGE/crates/forge-tui/src/config_error_handler.rs-216-    error!("{}", error.format());
+/home/coding/FORGE/crates/forge-tui/src/config_error_handler.rs-217-
+/home/coding/FORGE/crates/forge-tui/src/config_error_handler.rs-218-    // Create backup
+/home/coding/FORGE/crates/forge-tui/src/config_error_handler.rs-219-    if let Err(e) = backup_config(&error.path) {
+crates/forge-tui/src/config_error_handler.rs-220-        warn!("Could not create backup: {}", e);
+/home/coding/FORGE/crates/forge-tui/src/config_error_handler.rs-221-    } else {
+--
+crates/forge-tui/src/error_recovery.rs:414:pub fn chat_backend_guidance() -> Vec<String> {
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-415-    vec![
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-416-        "Chat is unavailable - using hotkey-only mode".to_string(),
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-417-        "Press W for workers, T for tasks, C for costs".to_string(),
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-418-        "Check ~/.forge/logs/ for backend error details".to_string(),
+crates/forge-tui/src/error_recovery.rs-419-        "Try ':restart-backend' command".to_string(),
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-420-    ]
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-421-}
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-422-
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-423-#[cfg(test)]
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-424-mod tests {
+crates/forge-tui/src/error_recovery.rs-425-    use super::*;
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-426-
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-427-    #[test]
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-428-    fn test_record_error() {
+crates/forge-tui/src/error_recovery.rs-429-        let mut mgr = ErrorRecoveryManager::new();
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-430-
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-431-        let id = mgr.record_error(
+crates/forge-tui/src/error_recovery.rs-432-            ErrorCategory::Database,
+crates/forge-tui/src/error_recovery.rs-433-            ErrorSeverity::Error,
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-434-            "Database locked",
+--
+crates/forge-tui/src/error_recovery.rs:453:            chat_backend_guidance(),
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-454-        );
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-455-
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-456-        mgr.mark_degraded("chat", id);
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-457-
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-458-        assert!(mgr.is_degraded("chat"));
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-459-        assert!(!mgr.is_degraded("database"));
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-460-
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-461-        mgr.mark_recovered("chat");
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-462-        assert!(!mgr.is_degraded("chat"));
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-463-    }
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-464-
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-465-    #[test]
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-466-    fn test_fatal_errors() {
+crates/forge-tui/src/error_recovery.rs-467-        let mut mgr = ErrorRecoveryManager::new();
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-468-
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-469-        mgr.record_error(
+crates/forge-tui/src/error_recovery.rs-470-            ErrorCategory::Terminal,
+crates/forge-tui/src/error_recovery.rs-471-            ErrorSeverity::Fatal,
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-472-            "Terminal init failed",
+/home/coding/FORGE/crates/forge-tui/src/error_recovery.rs-473-            "Cannot initialize terminal",
+--
+crates/forge-tui/src/lib.rs:106:    chat_backend_guidance,
+/home/coding/FORGE/crates/forge-tui/src/lib.rs-107-};
+--
+crates/forge-tui/src/app.rs:32://! - `chat_backend: Option<ChatBackend>` - Initialized from config.yaml
+/home/coding/FORGE/crates/forge-tui/src/app.rs-33-//!
+/home/coding/FORGE/crates/forge-tui/src/app.rs-34-//! ## Error Handling
+/home/coding/FORGE/crates/forge-tui/src/app.rs-35-//!
+crates/forge-tui/src/app.rs-36-/! - Backend initialization failures: App runs without chat (display error in UI)
+crates/forge-tui/src/app.rs-37-/! - Request timeout: Background task implements 30s timeout
+crates/forge-tui/src/app.rs-38-/! - API errors: Captured in response, displayed in chat history as error messages
+/home/coding/FORGE/crates/forge-tui/src/app.rs-39-//!
+/home/coding/FORGE/crates/forge-tui/src/app.rs-40-//! ## Performance
+/home/coding/FORGE/crates/forge-tui/src/app.rs-41-//!
+/home/coding/FORGE/crates/forge-tui/src/app.rs-42-//! - Background task prevents UI blocking
+/home/coding/FORGE/crates/forge-tui/src/app.rs-43-//! - Response polling adds <1ms per frame
+/home/coding/FORGE/crates/forge-tui/src/app.rs-44-//! - Chat history limited to 10 exchanges (~1KB memory)
+/home/coding/FORGE/crates/forge-tui/src/app.rs-45-
+crates/forge-tui/src/app.rs-46-use std::io;
+crates/forge-tui/src/app.rs-47-use std::path::PathBuf;
+crates/forge-tui/src/app.rs-48-use std::sync::Arc;
+crates/forge-tui/src/app.rs-49-use std::sync::mpsc::{self, Receiver, Sender};
+crates/forge-tui/src/app.rs-50-use std::time::{Duration, Instant};
+/home/coding/FORGE/crates/forge-tui/src/app.rs-51-
+crates/forge-tui/src/app.rs-52-use crossterm::event::{self, Event, KeyEvent};
+crates/forge-tui/src/app.rs:53:use forge_chat::{ChatBackend, ChatConfig, ChatResponse, StreamingChatChunk};
+crates/forge-tui/src/app.rs-54-use forge_core::types::WorkerTier;
+crates/forge-tui/src/app.rs-55-use forge_worker::{
+/home/coding/FORGE/crates/forge-tui/src/app.rs-56-    CrashRecoveryManager, LaunchConfig, SpawnRequest, WorkerLauncher,
+crates/forge-tui/src/app.rs-57-    discovery::DiscoveredWorker,
+/home/coding/FORGE/crates/forge-tui/src/app.rs-58-};
+crates/forge-tui/src/app.rs-59-use ratatui::{
+/home/coding/FORGE/crates/forge-tui/src/app.rs-60-    Frame, Terminal,
+crates/forge-tui/src/app.rs-61-    backend::CrosstermBackend,
+crates/forge-tui/src/app.rs-62-    layout::{Constraint, Direction, Layout, Rect},
+crates/forge-tui/src/app.rs-63-    style::{Color, Modifier, Style},
+crates/forge-tui/src/app.rs-64-    text::{Line, Span, Text},
+crates/forge-tui/src/app.rs-65-    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
+/home/coding/FORGE/crates/forge-tui/src/app.rs-66-};
+/home/coding/FORGE/crates/forge-tui/src/app.rs-67-
+crates/forge-tui/src/app.rs-68-use crate::config_menu::{ConfigMenuType, build_budget_items, build_settings_items, build_worker_items, draw_config_menu};
+crates/forge-tui/src/app.rs-69-use crate::config_watcher::{ConfigEvent, ConfigWatcher, ForgeConfig};
+crates/forge-tui/src/app.rs-70-use crate::cost_panel::CostPanel;
+crates/forge-tui/src/app.rs-71-use crate::data::DataManager;
+crates/forge-tui/src/app.rs-72-use crate::event::{AppEvent, InputHandler};
+crates/forge-tui/src/app.rs-73-use crate::metrics_panel::MetricsPanel;
+--
+crates/forge-tui/src/app.rs:161:    chat_backend: Option<Arc<ChatBackend>>,
+/home/coding/FORGE/crates/forge-tui/src/app.rs-162-    /// Channel for sending responses from background thread to UI
+crates/forge-tui/src/app.rs-163-    chat_response_tx: Option<Sender<(String, Result<ChatResponse, forge_chat::ChatError>)>>,
+/home/coding/FORGE/crates/forge-tui/src/app.rs-164-    /// Channel receiver for chat responses from background thread
+crates/forge-tui/src/app.rs-165-    chat_response_rx: Option<Receiver<(String, Result<ChatResponse, forge_chat::ChatError>)>>,
+/home/coding/FORGE/crates/forge-tui/src/app.rs-166-    /// Whether a chat request is pending
+crates/forge-tui/src/app.rs-167-    chat_pending: bool,
+/home/coding/FORGE/crates/forge-tui/src/app.rs-168-    /// Spinner animation frame index (0-3 for 4-frame spinner)
+crates/forge-tui/src/app.rs-169-    chat_spinner_frame: usize,
+/home/coding/FORGE/crates/forge-tui/src/app.rs-170-    /// Partial response being streamed (for visual streaming effect)
+crates/forge-tui/src/app.rs-171-    streaming_response: String,
+/home/coding/FORGE/crates/forge-tui/src/app.rs-172-    /// Current streaming position (character index - used for simulated streaming fallback)
+crates/forge-tui/src/app.rs-173-    streaming_position: usize,
+/home/coding/FORGE/crates/forge-tui/src/app.rs-174-    /// Whether streaming is active (real-time from API or simulated)
+crates/forge-tui/src/app.rs-175-    streaming_active: bool,
+/home/coding/FORGE/crates/forge-tui/src/app.rs-176-    /// Complete response received but not yet displayed (for simulated streaming fallback)
+crates/forge-tui/src/app.rs-177-    pending_complete_response: Option<String>,
+/home/coding/FORGE/crates/forge-tui/src/app.rs-178-    /// Channel receiver for real-time streaming chunks from API
+crates/forge-tui/src/app.rs-179-    streaming_chunk_rx: Option<std::sync::mpsc::Receiver<StreamingChatChunk>>,
+/home/coding/FORGE/crates/forge-tui/src/app.rs-180-    /// Whether we're doing real-time API streaming (vs simulated)
+crates/forge-tui/src/app.rs-181-    real_streaming_active: bool,
+--
+crates/forge-tui/src/app.rs:504:        let chat_backend = Self::init_chat_backend().map(Arc::new);
+crates/forge-tui/src/app.rs:505:        let last_known_chat_available = chat_backend.is_some();
+crates/forge-tui/src/app.rs-506-        info!("⏱️ Chat backend initialized in {:?}", chat_start.elapsed());
+/home/coding/FORGE/crates/forge-tui/src/app.rs-507-
+/home/coding/FORGE/crates/forge-tui/src/app.rs-508-        // Initialize worker launcher and runtime
+crates/forge-tui/src/app.rs-509-        let worker_launcher = WorkerLauncher::new();
+crates/forge-tui/src/app.rs-510-        let worker_runtime = tokio::runtime::Builder::new_current_thread()
+/home/coding/FORGE/crates/forge-tui/src/app.rs-511-            .enable_all()
+/home/coding/FORGE/crates/forge-tui/src/app.rs-512-            .build()
+/home/coding/FORGE/crates/forge-tui/src/app.rs-513-            .expect("Failed to create worker runtime");
+/home/coding/FORGE/crates/forge-tui/src/app.rs-514-
+/home/coding/FORGE/crates/forge-tui/src/app.rs-515-        // Initialize config watcher for hot-reload (skip in test mode to save inotify instances)
+crates/forge-tui/src/app.rs-516-        let config_start = Instant::now();
+/home/coding/FORGE/crates/forge-tui/src/app.rs-517-        info!("⏱️ Initializing config watcher...");
+/home/coding/FORGE/crates/forge-tui/src/app.rs-518-        let (config_watcher, config_rx, forge_config) = if cfg!(test) {
+/home/coding/FORGE/crates/forge-tui/src/app.rs-519-            info!("⏱️ Skipping config watcher in test mode");
+crates/forge-tui/src/app.rs-520-            (None, None, ForgeConfig::default())
+/home/coding/FORGE/crates/forge-tui/src/app.rs-521-        } else {
+crates/forge-tui/src/app.rs-522-            match ConfigWatcher::new() {
+/home/coding/FORGE/crates/forge-tui/src/app.rs-523-                Some((watcher, rx)) => {
+/home/coding/FORGE/crates/forge-tui/src/app.rs-524-                    let config = watcher.current_config().clone();
+crates/forge-tui/src/app.rs-525-                    info!("⏱️ Config watcher initialized in {:?}", config_start.elapsed());
+--
+crates/forge-tui/src/app.rs:579:            chat_backend,
+crates/forge-tui/src/app.rs-580-            chat_response_tx: None,
+crates/forge-tui/src/app.rs-581-            chat_response_rx: None,
+crates/forge-tui/src/app.rs-582-            chat_pending: false,
+crates/forge-tui/src/app.rs-583-            chat_spinner_frame: 0,
+crates/forge-tui/src/app.rs-584-            streaming_response: String::new(),
+crates/forge-tui/src/app.rs-585-            streaming_position: 0,
+crates/forge-tui/src/app.rs-586-            streaming_active: false,
+crates/forge-tui/src/app.rs-587-            pending_complete_response: None,
+crates/forge-tui/src/app.rs-588-            streaming_chunk_rx: None,
+crates/forge-tui/src/app.rs-589-            real_streaming_active: false,
+crates/forge-tui/src/app.rs-590-            streaming_query: None,
+crates/forge-tui/src/app.rs-591-            chat_history: Vec::new(),
+crates/forge-tui/src/app.rs-592-            chat_scroll_offset: 0,
+/home/coding/FORGE/crates/forge-tui/src/app.rs-593-            worker_launcher,
+/home/coding/FORGE/crates/forge-tui/src/app.rs-594-            worker_runtime,
+crates/forge-tui/src/app.rs-595-            show_kill_dialog: false,
+crates/forge-tui/src/app.rs-596-            kill_dialog_workers: Vec::new(),
+crates/forge-tui/src/app.rs-597-            kill_dialog_selected: 0,
+crates/forge-tui/src/app.rs-598-            kill_dialog_error: None,
+crates/forge-tui/src/app.rs-599-            priority_filter: None,
+--
+crates/forge-tui/src/app.rs:662:            chat_backend: None, // Don't initialize in test mode
+crates/forge-tui/src/app.rs-663-            chat_response_tx: None,
+crates/forge-tui/src/app.rs-664-            chat_response_rx: None,
+crates/forge-tui/src/app.rs-665-            last_known_chat_available: false, // No chat backend in test mode
+crates/forge-tui/src/app.rs-666-            chat_pending: false,
+crates/forge-tui/src/app.rs-667-            streaming_response: String::new(),
+crates/forge-tui/src/app.rs-668-            streaming_position: 0,
+crates/forge-tui/src/app.rs-669-            streaming_active: false,
+crates/forge-tui/src/app.rs-670-            pending_complete_response: None,
+crates/forge-tui/src/app.rs-671-            streaming_chunk_rx: None,
+crates/forge-tui/src/app.rs-672-            real_streaming_active: false,
+crates/forge-tui/src/app.rs-673-            streaming_query: None,
+crates/forge-tui/src/app.rs-674-            chat_history: Vec::new(),
+crates/forge-tui/src/app.rs-675-            chat_scroll_offset: 0,
+crates/forge-tui/src/app.rs-676-            worker_launcher: WorkerLauncher::new(),
+crates/forge-tui/src/app.rs-677-            worker_runtime: tokio::runtime::Builder::new_current_thread()
+/home/coding/FORGE/crates/forge-tui/src/app.rs-678-                .enable_all()
+/home/coding/FORGE/crates/forge-tui/src/app.rs-679-                .build()
+/home/coding/FORGE/crates/forge-tui/src/app.rs-680-                .expect("Failed to create worker runtime"),
+crates/forge-tui/src/app.rs-681-            show_kill_dialog: false,
+crates/forge-tui/src/app.rs-682-            kill_dialog_workers: Vec::new(),
+--
+crates/forge-tui/src/app.rs:723:    fn init_chat_backend() -> Option<ChatBackend> {
+crates/forge-tui/src/app.rs-724-        use forge_chat::config::{
+/home/coding/FORGE/crates/forge-tui/src/app.rs-725-            AuditConfig, ClaudeCliConfig, ConfirmationConfig, ProviderConfig, RateLimitConfig,
+/home/coding/FORGE/crates/forge-tui/src/app.rs-726-        };
+crates/forge-tui/src/app.rs-727-        use tracing::{error, info, warn};
+/home/coding/FORGE/crates/forge-tui/src/app.rs-728-
+crates/forge-tui/src/app.rs-729-        let start = std::time::Instant::now();
+crates/forge-tui/src/app.rs:730:        info!("⏱️ init_chat_backend() started");
+/home/coding/FORGE/crates/forge-tui/src/app.rs-731-
+/home/coding/FORGE/crates/forge-tui/src/app.rs-732-        // Load config from ~/.forge/config.yaml
+crates/forge-tui/src/app.rs-733-        let config_path = match dirs::home_dir() {
+/home/coding/FORGE/crates/forge-tui/src/app.rs-734-            Some(home) => home.join(".forge/config.yaml"),
+/home/coding/FORGE/crates/forge-tui/src/app.rs-735-            None => {
+crates/forge-tui/src/app.rs-736-                warn!("⏱️ Could not determine home directory (took {:?})", start.elapsed());
+/home/coding/FORGE/crates/forge-tui/src/app.rs-737-                return None;
+/home/coding/FORGE/crates/forge-tui/src/app.rs-738-            }
+/home/coding/FORGE/crates/forge-tui/src/app.rs-739-        };
+/home/coding/FORGE/crates/forge-tui/src/app.rs-740-
+/home/coding/FORGE/crates/forge-tui/src/app.rs-741-        info!(
+/home/coding/FORGE/crates/forge-tui/src/app.rs-742-            "⏱️ Initializing chat backend from {}",
+/home/coding/FORGE/crates/forge-tui/src/app.rs-743-            config_path.display()
+/home/coding/FORGE/crates/forge-tui/src/app.rs-744-        );
+/home/coding/FORGE/crates/forge-tui/src/app.rs-745-
+/home/coding/FORGE/crates/forge-tui/src/app.rs-746-        if !config_path.exists() {
+/home/coding/FORGE/crates/forge-tui/src/app.rs-747-            warn!(
+crates/forge-tui/src/app.rs-748-                "⏱️ Chat config not found at {} (took {:?})",
+/home/coding/FORGE/crates/forge-tui/src/app.rs-749-                config_path.display(),
+/home/coding/FORGE/crates/forge-tui/src/app.rs-750-                start.elapsed()
+--
+crates/forge-tui/src/app.rs:784:        // Extract chat_backend section
+crates/forge-tui/src/app.rs:785:        let chat_backend = yaml.get("chat_backend")?;
+crates/forge-tui/src/app.rs:786:        let command = chat_backend.get("command")?.as_str()?;
+crates/forge-tui/src/app.rs:787:        let args = chat_backend
+/home/coding/FORGE/crates/forge-tui/src/app.rs-788-            .get("args")?
+/home/coding/FORGE/crates/forge-tui/src/app.rs-789-            .as_sequence()?
+/home/coding/FORGE/crates/forge-tui/src/app.rs-790-            .iter()
+/home/coding/FORGE/crates/forge-tui/src/app.rs-791-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+crates/forge-tui/src/app.rs-792-            .collect::<Vec<_>>();
+/home/coding/FORGE/crates/forge-tui/src/app.rs-793-
+crates/forge-tui/src/app.rs:794:        // Build ChatConfig
+crates/forge-tui/src/app.rs:795:        let model = chat_backend
+/home/coding/FORGE/crates/forge-tui/src/app.rs-796-            .get("model")
+/home/coding/FORGE/crates/forge-tui/src/app.rs-797-            .and_then(|v| v.as_str())
+/home/coding/FORGE/crates/forge-tui/src/app.rs-798-            .unwrap_or("sonnet")
+/home/coding/FORGE/crates/forge-tui/src/app.rs-799-            .to_string();
+/home/coding/FORGE/crates/forge-tui/src/app.rs-800-
+/home/coding/FORGE/crates/forge-tui/src/app.rs-801-        let cli_config = ClaudeCliConfig {
+crates/forge-tui/src/app.rs-802-            binary_path: command.to_string(),
+/home/coding/FORGE/crates/forge-tui/src/app.rs-803-            model,
+crates/forge-tui/src/app.rs-804-            extra_args: args,
+crates/forge-tui/src/app.rs-805-            ..Default::default()
+/home/coding/FORGE/crates/forge-tui/src/app.rs-806-        };
+/home/coding/FORGE/crates/forge-tui/src/app.rs-807-
+crates/forge-tui/src/app.rs:808:        let chat_config = ChatConfig {
+crates/forge-tui/src/app.rs-809-            provider: ProviderConfig::ClaudeCli(cli_config),
+crates/forge-tui/src/app.rs-810-            rate_limit: RateLimitConfig::default(),
+crates/forge-tui/src/app.rs-811-            audit: AuditConfig::default(),
+crates/forge-tui/src/app.rs-812-            confirmations: ConfirmationConfig::default(),
+/home/coding/FORGE/crates/forge-tui/src/app.rs-813-        };
+/home/coding/FORGE/crates/forge-tui/src/app.rs-814-
+/home/coding/FORGE/crates/forge-tui/src/app.rs-815-        // Initialize backend (async, but we block here during startup)
+crates/forge-tui/src/app.rs-816-        let runtime_start = std::time::Instant::now();
+crates/forge-tui/src/app.rs-817-        match tokio::runtime::Runtime::new() {
+/home/coding/FORGE/crates/forge-tui/src/app.rs-818-            Ok(rt) => {
+/home/coding/FORGE/crates/forge-tui/src/app.rs-819-                info!(
+crates/forge-tui/src/app.rs-820-                    "⏱️ Created tokio runtime for chat backend in {:?}",
+/home/coding/FORGE/crates/forge-tui/src/app.rs-821-                    runtime_start.elapsed()
+/home/coding/FORGE/crates/forge-tui/src/app.rs-822-                );
+crates/forge-tui/src/app.rs-823-                let backend_start = std::time::Instant::now();
+crates/forge-tui/src/app.rs-824-                match rt.block_on(ChatBackend::new(chat_config)) {
+/home/coding/FORGE/crates/forge-tui/src/app.rs-825-                    Ok(backend) => {
+/home/coding/FORGE/crates/forge-tui/src/app.rs-826-                        info!(
+crates/forge-tui/src/app.rs-827-                            "⏱️ ✅ Chat backend initialized successfully in {:?} (total: {:?})",
+/home/coding/FORGE/crates/forge-tui/src/app.rs-828-                            backend_start.elapsed(),
+--
+crates/forge-tui/src/app.rs:1910:        let Some(backend) = &self.chat_backend else {
+/home/coding/FORGE/crates/forge-tui/src/app.rs-1911-            self.status_message = Some("Chat backend not initialized".to_string());
+/home/coding/FORGE/crates/forge-tui/src/app.rs-1912-            return;
+/home/coding/FORGE/crates/forge-tui/src/app.rs-1913-        };
+/home/coding/FORGE/crates/forge-tui/src/app.rs-1914-
+/home/coding/FORGE/crates/forge-tui/src/app.rs-1915-        // Get the streaming config
+/home/coding/FORGE/crates/forge-tui/src/app.rs-1916-        let Some(api_config) = backend.get_streaming_config() else {
+/home/coding/FORGE/crates/forge-tui/src/app.rs-1917-            info!("Streaming config not available, falling back to non-streaming");
+/home/coding/FORGE/crates/forge-tui/src/app.rs-1918-            // Fall back to simulated streaming via non-streaming request
+/home/coding/FORGE/crates/forge-tui/src/app.rs-1919-            return;
+/home/coding/FORGE/crates/forge-tui/src/app.rs-1920-        };
+/home/coding/FORGE/crates/forge-tui/src/app.rs-1921-
+crates/forge-tui/src/app.rs-1922-        info!("Starting real-time streaming chat request: {}", query);
+/home/coding/FORGE/crates/forge-tui/src/app.rs-1923-
+/home/coding/FORGE/crates/forge-tui/src/app.rs-1924-        // Create channel for streaming chunks
+crates/forge-tui/src/app.rs-1925-        let (chunk_tx, chunk_rx) = std::sync::mpsc::channel::<StreamingChatChunk>();
+/home/coding/FORGE/crates/forge-tui/src/app.rs-1926-
+/home/coding/FORGE/crates/forge-tui/src/app.rs-1927-        // Store the streaming state
+/home/coding/FORGE/crates/forge-tui/src/app.rs-1928-        self.streaming_chunk_rx = Some(chunk_rx);
+/home/coding/FORGE/crates/forge-tui/src/app.rs-1929-        self.real_streaming_active = true;
+/home/coding/FORGE/crates/forge-tui/src/app.rs-1930-        self.streaming_active = true;
+--
+crates/forge-tui/src/app.rs:2315:                        if let Some(backend) = &self.chat_backend {
+crates/forge-tui/src/app.rs-2316-                            let backend_clone = Arc::clone(backend);
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2317-                            let query_clone = query.clone();
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2318-
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2319-                            // Create channel if not already created
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2320-                            if self.chat_response_rx.is_none() {
+crates/forge-tui/src/app.rs-2321-                                let (tx, rx) = mpsc::channel();
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2322-                                self.chat_response_tx = Some(tx);
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2323-                                self.chat_response_rx = Some(rx);
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2324-                            }
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2325-
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2326-                            let tx = self.chat_response_tx.as_ref().unwrap().clone();
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2327-
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2328-                            // Spawn background thread to process request
+crates/forge-tui/src/app.rs-2329-                            std::thread::spawn(move || {
+crates/forge-tui/src/app.rs-2330-                                use tracing::info;
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2331-
+crates/forge-tui/src/app.rs-2332-                                info!("Chat retry thread started for query: {}", query_clone);
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2333-
+crates/forge-tui/src/app.rs-2334-                                let result = match tokio::runtime::Runtime::new() {
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2335-                                    Ok(rt) => rt.block_on(backend_clone.process_command(&query_clone)),
+--
+crates/forge-tui/src/app.rs:2527:                    if let Some(backend) = &self.chat_backend {
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2528-                        // Check if streaming is supported
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2529-                        let supports_streaming = backend.supports_streaming();
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2530-
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2531-                        self.status_message = Some(format!(
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2532-                            "⏳ Processing{}...",
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2533-                            if supports_streaming { " (streaming)" } else { "" }
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2534-                        ));
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2535-                        self.chat_pending = true;
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2536-
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2537-                        if supports_streaming {
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2538-                            // Use real-time streaming
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2539-                            self.start_streaming_chat_request(&query);
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2540-                        } else {
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2541-                            // Fall back to non-streaming request
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2542-                            // Clone Arc for thread
+crates/forge-tui/src/app.rs-2543-                            let backend_clone = Arc::clone(backend);
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2544-                            let query_clone = query.clone();
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2545-
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2546-                            // Create channel if not already created
+/home/coding/FORGE/crates/forge-tui/src/app.rs-2547-                            if self.chat_response_rx.is_none() {
