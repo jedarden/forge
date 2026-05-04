@@ -7,6 +7,9 @@
 use std::path::PathBuf;
 use thiserror::Error;
 
+// Import UserRole for the permission_denied helper
+use crate::session::UserRole;
+
 /// Result type alias using [`ForgeError`].
 pub type Result<T> = std::result::Result<T, ForgeError>;
 
@@ -293,6 +296,27 @@ pub enum ForgeError {
     Timeout { operation: String, timeout_secs: u64 },
 
     // =========================================================================
+    // Audit Errors
+    // =========================================================================
+    /// Audit log operation failed
+    #[error("Audit log error: {message}")]
+    Audit { message: String },
+
+    // =========================================================================
+    // Session Errors (Team Collaboration)
+    // =========================================================================
+    /// Session management error
+    #[error("Session error: {message}")]
+    Session { message: String },
+
+    /// Permission denied for session action (role-based)
+    #[error("Permission denied: {action} requires {required_role} role")]
+    RolePermissionDenied {
+        action: String,
+        required_role: String,
+    },
+
+    // =========================================================================
     // Internal Errors
     // =========================================================================
     /// Internal error (bug in FORGE)
@@ -462,6 +486,31 @@ impl ForgeError {
             reason: reason.into(),
             last_task,
             recoverable,
+        }
+    }
+
+    /// Create an audit log error
+    pub fn audit_error(message: impl Into<String>) -> Self {
+        Self::Audit {
+            message: message.into(),
+        }
+    }
+
+    /// Create a session error
+    pub fn session_error(message: impl Into<String>) -> Self {
+        Self::Session {
+            message: message.into(),
+        }
+    }
+
+    /// Create a permission denied error
+    pub fn permission_denied(
+        action: impl Into<String>,
+        required_role: UserRole,
+    ) -> Self {
+        Self::RolePermissionDenied {
+            action: action.into(),
+            required_role: required_role.to_string(),
         }
     }
 }

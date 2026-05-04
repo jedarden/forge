@@ -16,12 +16,14 @@ path = "src/main.rs"
 forge-core = { path = "crates/forge-core" }
 forge-tui = { path = "crates/forge-tui" }
 forge-init = { path = "crates/forge-init" }
+forge-server = { path = "crates/forge-server" }
 clap.workspace = true
 crossterm.workspace = true
 tracing.workspace = true
 chrono.workspace = true
 serde_json.workspace = true
 dirs = "5.0"
+tokio = { workspace = true }
 
 [features]
 default = ["self-update"]
@@ -37,6 +39,7 @@ members = [
     "crates/forge-tui",
     "crates/forge-chat",
     "crates/forge-init",
+    "crates/forge-server",
 ]
 
 [workspace.package]

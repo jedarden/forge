@@ -29,6 +29,7 @@ use clap::{Parser, Subcommand};
 use forge_core::{LogGuard, StatusWriter, init_logging};
 use forge_init::{detection, generator, guidance, validator, wizard};
 use forge_tui::{App, ForgeConfig};
+use forge_server::{ServerConfig, create_server};
 use tracing::{error, info};
 
 /// FORGE Agent Orchestration Dashboard
@@ -50,6 +51,18 @@ struct Cli {
     /// Directory for log files (defaults to ~/.forge/logs/)
     #[arg(long)]
     log_dir: Option<std::path::PathBuf>,
+
+    /// Enable server mode for multi-user collaboration
+    #[arg(long)]
+    server: bool,
+
+    /// Server bind address (default: 127.0.0.1)
+    #[arg(long, default_value = "127.0.0.1")]
+    server_bind: String,
+
+    /// Server port (default: 8080)
+    #[arg(long, default_value = "8080")]
+    server_port: u16,
 
     /// Subcommands
     #[command(subcommand)]
@@ -280,6 +293,11 @@ fn main() -> ExitCode {
     }
 
     info!("Starting FORGE dashboard");
+
+    // Check if server mode is enabled
+    if cli.server {
+        return run_server_mode(cli.server_bind, cli.server_port);
+    }
 
     // Mark startup as successful (app initialized without crashing)
     #[cfg(feature = "self-update")]
@@ -1097,6 +1115,61 @@ fn print_validation_results(results: &validator::ComprehensiveValidationResults,
         println!("✅ Validation passed");
     } else {
         println!("❌ Validation failed");
+    }
+}
+
+/// Run FORGE in server mode for multi-user collaboration.
+fn run_server_mode(bind_address: String, port: u16) -> ExitCode {
+    use tokio::runtime::Runtime;
+
+    info!("Starting FORGE in server mode on {}:{}", bind_address, port);
+    eprintln!("🚀 FORGE Server Mode");
+    eprintln!("   Listening on {}:{}", bind_address, port);
+    eprintln!();
+
+    let rt = match Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => {
+            error!("Failed to create async runtime: {}", e);
+            eprintln!("Error: Failed to create async runtime: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    // Clone values before moving config
+    let server_bind_address = bind_address.clone();
+    let server_port = port;
+
+    let config = ServerConfig {
+        bind_address,
+        port,
+    };
+
+    let result = rt.block_on(async {
+
+        let server = create_server(config).await;
+        eprintln!("✅ Server initialized with default auth");
+        eprintln!("   Default users:");
+        eprintln!("     - admin/admin123 (Admin)");
+        eprintln!("     - operator/operator123 (Operator)");
+        eprintln!("     - viewer/viewer123 (Viewer)");
+        eprintln!();
+        eprintln!("   Connect clients to: ws://{}:{}/ws", server_bind_address, server_port);
+        eprintln!();
+
+        server.run().await
+    });
+
+    match result {
+        Ok(()) => {
+            info!("FORGE server exited normally");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            error!("FORGE server error: {}", e);
+            eprintln!("Server error: {}", e);
+            ExitCode::from(1)
+        }
     }
 }
 
