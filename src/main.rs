@@ -64,6 +64,18 @@ struct Cli {
     #[arg(long, default_value = "8080")]
     server_port: u16,
 
+    /// Enable client mode and connect to a FORGE server
+    #[arg(long, value_name = "URL")]
+    connect: Option<String>,
+
+    /// Username for server authentication
+    #[arg(long, value_name = "USER")]
+    user: Option<String>,
+
+    /// Password for server authentication
+    #[arg(long, value_name = "PASSWORD")]
+    password: Option<String>,
+
     /// Subcommands
     #[command(subcommand)]
     command: Option<Commands>,
@@ -297,6 +309,15 @@ fn main() -> ExitCode {
     // Check if server mode is enabled
     if cli.server {
         return run_server_mode(cli.server_bind, cli.server_port);
+    }
+
+    // Check if client mode is enabled
+    if let Some(server_url) = &cli.connect {
+        return run_client_mode(
+            server_url.clone(),
+            cli.user.unwrap_or_else(|| "viewer".to_string()),
+            cli.password.unwrap_or_else(|| "viewer123".to_string()),
+        );
     }
 
     // Mark startup as successful (app initialized without crashing)
@@ -1168,6 +1189,35 @@ fn run_server_mode(bind_address: String, port: u16) -> ExitCode {
         Err(e) => {
             error!("FORGE server error: {}", e);
             eprintln!("Server error: {}", e);
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// Run FORGE in client mode, connecting to a remote FORGE server.
+fn run_client_mode(server_url: String, user: String, password: String) -> ExitCode {
+    use forge_tui::{ClientConfig, App};
+
+    info!("Starting FORGE in client mode, connecting to {}", server_url);
+    eprintln!("🔗 FORGE Client Mode");
+    eprintln!("   Connecting to: {}", server_url);
+    eprintln!("   User: {}", user);
+    eprintln!();
+
+    let client_config = ClientConfig {
+        server_url,
+        user_id: user,
+        password,
+    };
+
+    match App::run_with_client(client_config) {
+        Ok(()) => {
+            info!("FORGE client exited normally");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            error!("FORGE client error: {}", e);
+            eprintln!("Error: {}", e);
             ExitCode::from(1)
         }
     }

@@ -54,6 +54,7 @@ use crossterm::event::{self, Event, KeyEvent};
 use forge_config::ForgeConfig;
 use forge_chat::{ChatBackend, ChatConfig, ChatResponse, StreamingChatChunk};
 use forge_core::types::WorkerTier;
+use forge_core::{UserSession, UserRole, SessionManager};
 use forge_worker::{
     LaunchConfig, SpawnRequest, WorkerLauncher,
     discovery::DiscoveredWorker,
@@ -146,6 +147,17 @@ pub enum ServerClientMessage {
     ConnectionError { message: String },
     /// Disconnected from server
     Disconnected,
+}
+
+/// Configuration for connecting to a FORGE server as a client.
+#[derive(Clone, Debug)]
+pub struct ClientConfig {
+    /// Server WebSocket URL (e.g., ws://localhost:8080/ws)
+    pub server_url: String,
+    /// User ID for authentication
+    pub user_id: String,
+    /// Password for authentication
+    pub password: String,
 }
 
 /// Main application state.
@@ -299,8 +311,10 @@ pub struct App {
     server_client_tx: Option<Sender<ServerClientRequest>>,
     /// Receiver for server client state updates
     server_client_rx: Option<Receiver<ServerClientMessage>>,
-    /// Current user session in server mode
+    /// Current user session in server mode (or local session)
     user_session: Option<forge_core::UserSession>,
+    /// Session manager for team collaboration
+    session_manager: SessionManager,
     /// Whether we're connected to a FORGE server
     is_server_connected: bool,
     /// Server connection URL (for display)
@@ -594,6 +608,9 @@ impl App {
         // Initialize history manager and load previous history
         let history_manager = forge_chat::HistoryManager::new().ok();
 
+        // Initialize session manager for team collaboration
+        let session_manager = SessionManager::new();
+
         info!("⏱️ App::new() completed in {:?}", start.elapsed());
 
         Self {
@@ -673,6 +690,7 @@ impl App {
             server_client_tx: None,
             server_client_rx: None,
             user_session: None,
+            session_manager,
             is_server_connected: false,
             server_url: None,
         }
@@ -762,6 +780,7 @@ impl App {
             server_client_tx: None,
             server_client_rx: None,
             user_session: None,
+            session_manager: SessionManager::new(),
             is_server_connected: false,
             server_url: None,
         }
@@ -1453,6 +1472,60 @@ impl App {
             self.last_timestamp_update = Instant::now();
         }
         self.cached_timestamp.clone().unwrap_or_default()
+    }
+
+    /// Get or create the current user session.
+    ///
+    /// For local mode, creates a default session with Admin role.
+    /// For server mode, returns the session from the server connection.
+    fn get_or_create_user_session(&mut self) -> &UserSession {
+        if self.user_session.is_none() {
+            // Create a default local session
+            let session_id = format!("local-{}", std::process::id());
+            let user_id = std::env::var("USER")
+                .or_else(|_| std::env::var("USERNAME"))
+                .unwrap_or_else(|_| "user".to_string());
+            let display_name = format!("{}@local", user_id);
+            self.user_session = Some(UserSession::new(
+                session_id,
+                user_id,
+                display_name,
+                UserRole::Admin, // Local users have full admin privileges
+            ));
+
+            // Register with session manager
+            if let Some(ref session) = self.user_session {
+                let _ = self.session_manager.register_session(session.clone());
+            }
+        }
+        self.user_session.as_ref().unwrap()
+    }
+
+    /// Get the current session ID for audit logging.
+    pub fn current_session_id(&mut self) -> Option<String> {
+        self.get_or_create_user_session().session_id.clone().into()
+    }
+
+    /// Get the current user ID for audit logging.
+    pub fn current_user_id(&mut self) -> String {
+        self.get_or_create_user_session().user_id.clone()
+    }
+
+    /// Get the current user role for permission checks.
+    pub fn current_user_role(&mut self) -> UserRole {
+        self.get_or_create_user_session().role
+    }
+
+    /// Set the current user session (for server mode).
+    pub fn set_user_session(&mut self, session: UserSession) {
+        self.user_session = Some(session);
+    }
+
+    /// Update activity timestamp for the current session.
+    pub fn update_session_activity(&mut self) {
+        if let Some(ref session) = self.user_session {
+            let _ = self.session_manager.update_activity(&session.session_id);
+        }
     }
 
     /// Get layout mode with caching.
@@ -4024,7 +4097,7 @@ impl App {
         let mut terminal = Terminal::new(backend)?;
 
         // Main loop
-        let result = self.run_loop(&mut terminal);
+        let result = self.run_inner(&mut terminal);
 
         // Restore terminal
         crossterm::terminal::disable_raw_mode()?;
@@ -4060,8 +4133,328 @@ impl App {
         result
     }
 
+    /// Run the TUI in client mode, connecting to a FORGE server.
+    ///
+    /// This method starts the TUI application in client mode, where it connects
+    /// to a remote FORGE server via WebSocket for multi-user collaboration.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Client configuration with server URL and credentials
+    pub fn run_with_client(config: ClientConfig) -> AppResult<()> {
+        use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+        use tokio::runtime::Runtime;
+
+        info!("Starting FORGE in client mode, connecting to {}", config.server_url);
+
+        // Create tokio runtime for async WebSocket client
+        let rt = Runtime::new()
+            .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+
+        // Create channels for communication with the background client task
+        let (request_tx, request_rx) = mpsc::channel::<ServerClientRequest>();
+        let (response_tx, response_rx) = mpsc::channel::<ServerClientMessage>();
+
+        // Clone config for the background task
+        let server_url = config.server_url.clone();
+        let user_id = config.user_id.clone();
+        let password = config.password.clone();
+
+        // Spawn background task for WebSocket client
+        rt.spawn(async move {
+            Self::run_client_background_task(server_url, user_id, password, request_rx, response_tx).await;
+        });
+
+        // Create app with client mode enabled
+        let mut app = Self::new();
+        app.server_client_tx = Some(request_tx);
+        app.server_client_rx = Some(response_rx);
+        app.server_url = Some(config.server_url.clone());
+
+        // Setup terminal
+        crossterm::terminal::enable_raw_mode()?;
+        let mut stdout = io::stdout();
+        crossterm::execute!(
+            stdout,
+            crossterm::terminal::EnterAlternateScreen,
+            crossterm::event::EnableMouseCapture
+        )?;
+        let backend = CrosstermBackend::new(stdout);
+        let mut terminal = Terminal::new(backend)?;
+
+        // Show connecting message
+        app.status_message = Some(format!("Connecting to {}...", config.server_url));
+        app.mark_dirty();
+
+        // Main loop with server client polling
+        let result = app.run_loop_with_client(&mut terminal);
+
+        // Restore terminal
+        crossterm::terminal::disable_raw_mode()?;
+        crossterm::execute!(
+            terminal.backend_mut(),
+            crossterm::terminal::LeaveAlternateScreen,
+            crossterm::event::DisableMouseCapture
+        )?;
+        terminal.show_cursor()?;
+
+        result
+    }
+
+    /// Background task that runs the WebSocket client.
+    ///
+    /// This task handles all WebSocket communication with the FORGE server,
+    /// including authentication, receiving state updates, and sending requests.
+    async fn run_client_background_task(
+        server_url: String,
+        user_id: String,
+        password: String,
+        request_rx: Receiver<ServerClientRequest>,
+        response_tx: Sender<ServerClientMessage>,
+    ) {
+        use forge_server::client::ForgeClient;
+        use tokio::sync::mpsc;
+
+        info!("Client background task: connecting to {}", server_url);
+
+        // Create async channels for tokio task
+        let (async_req_tx, mut async_req_rx) = mpsc::channel::<ServerClientRequest>(100);
+
+        // Forward sync requests to async channel
+        thread::spawn(move || {
+            while let Ok(req) = request_rx.recv() {
+                if async_req_tx.blocking_send(req).is_err() {
+                    warn!("Failed to forward request to async task");
+                    break;
+                }
+            }
+        });
+
+        // Create client
+        let client = ForgeClient::new(forge_server::client::ClientConfig {
+            server_url,
+            user_id,
+            password,
+        });
+
+        // Subscribe to state updates
+        let mut state_rx = client.subscribe();
+
+        // Connect and run the client
+        let connect_result = client.connect_and_run().await;
+
+        if let Err(e) = connect_result {
+            let _ = response_tx.send(ServerClientMessage::ConnectionError {
+                message: e.to_string(),
+            });
+            return;
+        }
+    }
+
+    /// The inner event loop with frame-rate limiting and server client support.
+    fn run_loop_with_client(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> AppResult<()> {
+        // Memory update interval (every 60 frames = ~1 second at 60fps)
+        let mut memory_update_counter: u32 = 0;
+        const MEMORY_UPDATE_INTERVAL: u32 = 60;
+
+        while !self.should_quit {
+            let frame_start = Instant::now();
+
+            // Advance spinner animation when chat is pending
+            if self.chat_pending {
+                self.chat_spinner_frame = (self.chat_spinner_frame + 1) % 4;
+                self.mark_dirty(); // Ensure UI updates for spinner animation
+            }
+
+            // Poll for server client messages FIRST - in client mode, this is critical
+            self.poll_server_client_messages();
+
+            // Poll for chat responses - this is non-blocking and must happen
+            // frequently to ensure responsive chat UX
+            self.poll_chat_responses();
+
+            // Update streaming display if active
+            self.update_streaming();
+
+            // Poll for config hot-reload changes
+            self.poll_config_changes();
+
+            // Optimized data polling - only poll if interval elapsed
+            let needs_poll = self.last_poll_time.elapsed() >= self.data_poll_interval;
+            if needs_poll {
+                let data_changed = self.data_manager.poll_updates();
+                self.last_poll_time = Instant::now();
+
+                // Mark dirty if data actually changed
+                if data_changed {
+                    self.mark_dirty();
+                }
+
+                // Check for pending bell notifications and ring if needed
+                if self.data_manager.take_pending_bell() {
+                    crate::alert::AlertNotifier::ring_bell();
+                }
+            }
+
+            // Poll for chat responses again after data polling
+            self.poll_chat_responses();
+
+            // Update streaming display if active
+            self.update_streaming();
+
+            // Poll for update completion
+            self.poll_update_result();
+
+            // Check for updates periodically
+            self.check_for_update();
+
+            // Only draw if dirty or at minimum rate (timestamp updates every second)
+            let needs_redraw = self.take_dirty()
+                || self.last_timestamp_update.elapsed() >= TIMESTAMP_CACHE_DURATION;
+
+            // Measure render time
+            let render_start = Instant::now();
+            if needs_redraw {
+                terminal.draw(|frame| self.draw(frame))?;
+            }
+            let render_us = render_start.elapsed().as_micros() as u64;
+
+            // Calculate remaining time in frame for event handling
+            let elapsed = frame_start.elapsed();
+            let timeout_for_events = if elapsed < FRAME_DURATION {
+                FRAME_DURATION - elapsed
+            } else {
+                Duration::ZERO
+            };
+
+            // Handle events with adaptive timeout
+            let event_timeout = if timeout_for_events > Duration::ZERO {
+                timeout_for_events
+            } else {
+                // If frame took too long, use shorter timeout
+                Duration::from_millis(10)
+            };
+
+            if event::poll(event_timeout)? {
+                if let Event::Key(key) = event::read()? {
+                    self.data_manager.record_event();
+                    self.handle_key_event(key);
+                }
+            }
+
+            // Calculate event loop time (everything except render)
+            let frame_elapsed = frame_start.elapsed();
+            let event_loop_us = frame_elapsed.as_micros() as u64 - render_us;
+
+            // Record frame performance metrics
+            self.data_manager.record_frame_perf(event_loop_us, render_us);
+
+            // Periodically update memory usage
+            memory_update_counter += 1;
+            if memory_update_counter >= MEMORY_UPDATE_INTERVAL {
+                self.data_manager.update_memory();
+                self.data_manager.prune_perf_alerts();
+                memory_update_counter = 0;
+            }
+
+            // Frame-rate limiting: sleep if frame was too fast
+            if frame_elapsed < FRAME_DURATION {
+                let sleep_time = FRAME_DURATION - frame_elapsed;
+                std::thread::sleep(sleep_time);
+            }
+        }
+        Ok(())
+    }
+
+    /// Poll for messages from the server client.
+    fn poll_server_client_messages(&mut self) {
+        if let Some(ref rx) = self.server_client_rx {
+            loop {
+                match rx.try_recv() {
+                    Ok(msg) => {
+                        self.handle_server_client_message(msg);
+                        self.mark_dirty();
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        self.is_server_connected = false;
+                        self.status_message = Some("Disconnected from server".to_string());
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Handle a message from the server client.
+    fn handle_server_client_message(&mut self, msg: ServerClientMessage) {
+        match msg {
+            ServerClientMessage::Connected { session, server_url } => {
+                self.is_server_connected = true;
+                self.user_session = Some(session.clone());
+                self.server_url = Some(server_url.clone());
+                self.status_message = Some(format!(
+                    "Connected to {} as {} ({})",
+                    server_url, session.display_name, session.role
+                ));
+            }
+            ServerClientMessage::StateUpdate { workers, beads } => {
+                // Update data manager with server state
+                self.data_manager.update_from_server_state(workers, beads);
+            }
+            ServerClientMessage::UserJoined { user, display_name, role } => {
+                self.sessions_panel.add_user(user, display_name, role);
+                self.status_message = Some(format!("{} ({}) joined", display_name, role));
+            }
+            ServerClientMessage::UserLeft { user } => {
+                self.sessions_panel.remove_user(&user);
+                self.status_message = Some(format!("{} left", user));
+            }
+            ServerClientMessage::BeadAssigned { bead_id, assigned_to, assigned_by } => {
+                self.status_message = Some(format!(
+                    "Bead {} assigned to {} by {}",
+                    bead_id, assigned_to, assigned_by
+                ));
+            }
+            ServerClientMessage::ChatMessage { from, message, timestamp: _ } => {
+                // Add chat message from another user
+                self.chat_history.push(ChatExchange {
+                    user_query: format!("[{}] {}", from, message),
+                    assistant_response: String::new(),
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                    is_error: false,
+                    tool_calls: Vec::new(),
+                    side_effects: Vec::new(),
+                    confirmation: None,
+                    metadata: forge_chat::ResponseMetadata::default(),
+                    error_guidance: None,
+                });
+
+                // Keep only last 10 exchanges
+                if self.chat_history.len() > 10 {
+                    self.chat_history.remove(0);
+                }
+            }
+            ServerClientMessage::ConnectionError { message } => {
+                self.is_server_connected = false;
+                self.status_message = Some(format!("Connection error: {}", message));
+            }
+            ServerClientMessage::Disconnected => {
+                self.is_server_connected = false;
+                self.status_message = Some("Disconnected from server".to_string());
+            }
+        }
+    }
+
+    /// Send a request to the server client.
+    fn send_server_client_request(&self, request: ServerClientRequest) {
+        if let Some(ref tx) = self.server_client_tx {
+            let _ = tx.send(request);
+        }
+    }
+
     /// The inner event loop with frame-rate limiting and optimized polling.
-    fn run_loop(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> AppResult<()> {
+    fn run_inner(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> AppResult<()> {
         // Memory update interval (every 60 frames = ~1 second at 60fps)
         let mut memory_update_counter: u32 = 0;
         const MEMORY_UPDATE_INTERVAL: u32 = 60;
