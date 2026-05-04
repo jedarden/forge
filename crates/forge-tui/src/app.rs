@@ -210,6 +210,8 @@ pub struct App {
     selected_task_index: usize,
     /// Currently selected alert index in the alerts list
     selected_alert_index: usize,
+    /// Whether to show the alert detail overlay
+    show_alert_detail: bool,
     /// Configuration watcher for hot-reload (stored to keep file watcher alive)
     _config_watcher: Option<ConfigWatcher>,
     /// Receiver for config change events
@@ -595,6 +597,7 @@ impl App {
             show_task_detail: false,
             selected_task_index: 0,
             selected_alert_index: 0,
+            show_alert_detail: false,
             _config_watcher: config_watcher,
             config_rx,
             forge_config,
@@ -674,6 +677,7 @@ impl App {
             show_task_detail: false,
             selected_task_index: 0,
             selected_alert_index: 0,
+            show_alert_detail: false,
             _config_watcher: None, // Don't initialize in test mode
             config_rx: None,
             forge_config: ForgeConfig::default(),
@@ -2299,6 +2303,12 @@ impl App {
             return;
         }
 
+        // Handle alert detail overlay if active
+        if self.show_alert_detail {
+            self.handle_alert_detail_key(key);
+            return;
+        }
+
         // Handle config menu if active
         if self.show_config_menu {
             self.handle_config_menu_key(key);
@@ -2422,6 +2432,12 @@ impl App {
             AppEvent::Cancel => {
                 if self.show_help {
                     self.show_help = false;
+                } else if self.show_alert_detail {
+                    // Close alert detail overlay
+                    self.show_alert_detail = false;
+                } else if self.show_task_detail {
+                    // Close task detail overlay
+                    self.show_task_detail = false;
                 } else if self.current_view == View::Chat {
                     // Cancel streaming if active
                     if self.streaming_active {
@@ -2651,8 +2667,21 @@ impl App {
                     self.show_task_detail = true;
                     self.mark_dirty();
                 } else if self.current_view == View::Alerts {
-                    // Acknowledge the selected alert
-                    self.acknowledge_selected_alert();
+                    if self.show_alert_detail {
+                        // Overlay is already shown - acknowledge the selected alert
+                        let alerts = self.data_manager.alert_manager.alerts_by_severity();
+                        if !alerts.is_empty() {
+                            let idx = self.selected_alert_index.min(alerts.len() - 1);
+                            let alert_id = alerts[idx].id;
+                            let alert_title = alerts[idx].title.clone();
+                            self.data_manager.alert_manager.acknowledge(alert_id);
+                            self.status_message = Some(format!("Alert acknowledged: {}", alert_title));
+                        }
+                    } else {
+                        // Show alert detail overlay
+                        self.show_alert_detail = true;
+                    }
+                    self.mark_dirty();
                 }
             }
             AppEvent::Toggle | AppEvent::FocusNext | AppEvent::FocusPrev => {
@@ -3414,6 +3443,60 @@ impl App {
         }
     }
 
+    /// Handle alert detail overlay key navigation.
+    fn handle_alert_detail_key(&mut self, key: KeyEvent) {
+        use crossterm::event::KeyCode;
+
+        // Get alert count for bounds checking
+        let alerts = self.data_manager.alert_manager.alerts_by_severity();
+        let alert_count = alerts.len();
+
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                // Close detail overlay
+                self.show_alert_detail = false;
+                self.mark_dirty();
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                // Move selection up in alert list
+                if self.selected_alert_index > 0 {
+                    self.selected_alert_index -= 1;
+                    self.mark_dirty();
+                }
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                // Move selection down in alert list
+                if self.selected_alert_index < alert_count.saturating_sub(1) {
+                    self.selected_alert_index += 1;
+                    self.mark_dirty();
+                }
+            }
+            KeyCode::Char('a') => {
+                // Acknowledge the selected alert
+                if !alerts.is_empty() {
+                    let idx = self.selected_alert_index.min(alerts.len() - 1);
+                    let alert_id = alerts[idx].id;
+                    let alert_title = alerts[idx].title.clone();
+                    self.data_manager.alert_manager.acknowledge(alert_id);
+                    self.status_message = Some(format!("Alert acknowledged: {}", alert_title));
+                    self.mark_dirty();
+                }
+            }
+            KeyCode::Enter => {
+                // Enter in overlay mode also acknowledges the alert
+                if !alerts.is_empty() {
+                    let idx = self.selected_alert_index.min(alerts.len() - 1);
+                    let alert_id = alerts[idx].id;
+                    let alert_title = alerts[idx].title.clone();
+                    self.data_manager.alert_manager.acknowledge(alert_id);
+                    self.status_message = Some(format!("Alert acknowledged: {}", alert_title));
+                    self.mark_dirty();
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Handle config menu overlay key navigation.
     fn handle_config_menu_key(&mut self, key: KeyEvent) {
         use crossterm::event::KeyCode;
@@ -4091,6 +4174,11 @@ impl App {
         // Draw task detail overlay if active
         if self.show_task_detail {
             self.draw_task_detail_overlay(frame, area);
+        }
+
+        // Draw alert detail overlay if active
+        if self.show_alert_detail {
+            self.draw_alert_detail_overlay(frame, area);
         }
 
         // Draw update notification banner if update available
@@ -6010,6 +6098,239 @@ Press any key to close this help.";
         frame.render_widget(banner, banner_area);
     }
 
+    /// Draw the alert detail overlay.
+    fn draw_alert_detail_overlay(&self, frame: &mut Frame, area: Rect) {
+        use crate::alert::{AlertSeverity, AlertType};
+
+        let theme = self.theme_manager.current();
+
+        // Get alerts sorted by severity
+        let alerts = self.data_manager.alert_manager.alerts_by_severity();
+
+        // Calculate dialog dimensions
+        let overlay_width = 80.min(area.width.saturating_sub(4));
+        let overlay_height = 20.min(area.height.saturating_sub(4));
+        let overlay_x = (area.width.saturating_sub(overlay_width)) / 2;
+        let overlay_y = (area.height.saturating_sub(overlay_height)) / 2;
+
+        let overlay_area = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
+
+        // Clear background
+        frame.render_widget(Clear, overlay_area);
+
+        let mut lines = Vec::new();
+
+        // Default severity color for when no alerts exist
+        let mut severity_color = theme.colors.text_dim;
+
+        // Check if we have alerts to show
+        if alerts.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "No alerts available",
+                Style::default().fg(theme.colors.text_dim),
+            )));
+            lines.push(Line::raw(""));
+            lines.push(Line::from(Span::styled(
+                "Alerts will appear here when worker health issues are detected.",
+                Style::default().fg(theme.colors.text_dim),
+            )));
+        } else {
+            // Clamp selected index to valid range
+            let idx = self.selected_alert_index.min(alerts.len() - 1);
+            let alert = alerts[idx];
+
+            // Determine severity color
+            severity_color = match alert.severity {
+                AlertSeverity::Critical => theme.colors.status_error,
+                AlertSeverity::Warning => theme.colors.status_warning,
+                AlertSeverity::Info => theme.colors.text_dim,
+            };
+
+            // Header with severity icon and title
+            let header = format!(
+                "{} {} - {}",
+                alert.severity.icon(),
+                alert.alert_type.title(),
+                alert.worker_id
+            );
+            lines.push(Line::from(Span::styled(
+                header,
+                Style::default()
+                    .fg(severity_color)
+                    .add_modifier(Modifier::BOLD),
+            )));
+
+            lines.push(Line::from(Span::styled(
+                "─".repeat(overlay_width as usize - 2),
+                Style::default().fg(theme.colors.border_dim),
+            )));
+
+            // Severity and acknowledgment status
+            lines.push(Line::from(vec![
+                Span::styled("Severity: ", Style::default().fg(theme.colors.text_dim)),
+                Span::styled(
+                    format!("{:?}", alert.severity),
+                    Style::default().fg(severity_color),
+                ),
+                Span::raw("    "),
+                Span::styled("Status: ", Style::default().fg(theme.colors.text_dim)),
+                Span::styled(
+                    if alert.acknowledged { "Acknowledged" } else { "Active" },
+                    Style::default().fg(if alert.acknowledged {
+                        Color::DarkGray
+                    } else {
+                        Color::Yellow
+                    }),
+                ),
+            ]));
+
+            // Alert type
+            lines.push(Line::from(vec![
+                Span::styled("Type: ", Style::default().fg(theme.colors.text_dim)),
+                Span::styled(alert.alert_type.title(), Style::default().fg(theme.colors.text)),
+            ]));
+
+            // Worker ID
+            lines.push(Line::from(vec![
+                Span::styled("Worker: ", Style::default().fg(theme.colors.text_dim)),
+                Span::styled(&alert.worker_id, Style::default().fg(theme.colors.text)),
+            ]));
+
+            // Timestamps
+            let created_str = alert.created_at.format("%Y-%m-%d %H:%M:%S UTC").to_string();
+            let updated_str = alert.updated_at.format("%Y-%m-%d %H:%M:%S UTC").to_string();
+            lines.push(Line::from(vec![
+                Span::styled("Created: ", Style::default().fg(theme.colors.text_dim)),
+                Span::styled(created_str, Style::default().fg(theme.colors.text)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("Updated: ", Style::default().fg(theme.colors.text_dim)),
+                Span::styled(updated_str, Style::default().fg(theme.colors.text)),
+            ]));
+
+            // Occurrence count
+            if alert.occurrence_count > 1 {
+                lines.push(Line::from(vec![
+                    Span::styled("Occurrences: ", Style::default().fg(theme.colors.text_dim)),
+                    Span::styled(
+                        format!("{} times", alert.occurrence_count),
+                        Style::default().fg(severity_color),
+                    ),
+                ]));
+            }
+
+            lines.push(Line::raw("")); // Empty line
+
+            // Message
+            lines.push(Line::from(Span::styled(
+                "Message:",
+                Style::default().fg(theme.colors.text_dim),
+            )));
+
+            // Simple truncation for message (take first few lines)
+            let msg_lines: Vec<&str> = alert.message.lines().take(3).collect();
+            for line in msg_lines {
+                let truncated = if line.len() > (overlay_width as usize - 4) {
+                    format!("{}...", &line[..(overlay_width as usize - 7)])
+                } else {
+                    line.to_string()
+                };
+                lines.push(Line::from(Span::styled(
+                    truncated,
+                    Style::default().fg(theme.colors.text),
+                )));
+            }
+
+            lines.push(Line::raw("")); // Empty line
+
+            // Suggested action based on alert type
+            let suggested_action = match alert.alert_type {
+                AlertType::WorkerCrashed => "Check worker logs, verify process health, consider restarting worker",
+                AlertType::WorkerZombie => "Kill zombie process, investigate parent process, restart worker",
+                AlertType::WorkerStale => "Check if worker is stuck, verify network connectivity, restart if needed",
+                AlertType::TaskStuck => "Review current task, check for deadlocks, consider timeout/kill",
+                AlertType::MemoryHigh => "Check for memory leaks, restart worker, monitor resource usage",
+                AlertType::WorkerUnresponsive => "Verify network, check process health, restart if unresponsive",
+                AlertType::AutoRestartTriggered => "Monitor restart progress, check logs for failure patterns",
+                AlertType::RecoveryExhausted => "Manual intervention required - check system logs and worker health",
+                AlertType::WorkerRecovered => "No action needed - worker has recovered",
+                AlertType::WorkerSpawned => "Monitor new worker - verify it starts correctly",
+            };
+
+            lines.push(Line::from(Span::styled(
+                "Suggested Action:",
+                Style::default().fg(theme.colors.text_dim),
+            )));
+            // Simple truncation for suggested action
+            let action_lines: Vec<&str> = suggested_action.lines().take(2).collect();
+            for line in action_lines {
+                let truncated = if line.len() > (overlay_width as usize - 4) {
+                    format!("{}...", &line[..(overlay_width as usize - 7)])
+                } else {
+                    line.to_string()
+                };
+                lines.push(Line::from(Span::styled(
+                    truncated,
+                    Style::default().fg(Color::Cyan),
+                )));
+            }
+
+            lines.push(Line::raw("")); // Empty line
+
+            // Recovery status
+            let recovery_status = if alert.is_active {
+                if alert.acknowledged {
+                    "Acknowledged (still active)"
+                } else {
+                    "Active - awaiting acknowledgment"
+                }
+            } else {
+                "Resolved - worker has recovered"
+            };
+            lines.push(Line::from(vec![
+                Span::styled("Recovery Status: ", Style::default().fg(theme.colors.text_dim)),
+                Span::styled(
+                    recovery_status,
+                    Style::default().fg(if alert.is_active {
+                        Color::Yellow
+                    } else {
+                        Color::Green
+                    }),
+                ),
+            ]));
+
+            lines.push(Line::raw("")); // Empty line
+
+            // Navigation info
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "Alert {} of {}  |  ↑/k: prev  ↓/j: next  Enter: acknowledge  Esc: close",
+                    idx + 1,
+                    alerts.len()
+                ),
+                Style::default().fg(theme.colors.text_dim),
+            )));
+        }
+
+        let dialog = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(severity_color))
+                    .title(Span::styled(
+                        " Alert Details ",
+                        Style::default()
+                            .fg(severity_color)
+                            .add_modifier(Modifier::BOLD),
+                    ))
+                    .style(Style::default().bg(Color::Black)),
+            )
+            .alignment(ratatui::layout::Alignment::Left)
+            .wrap(ratatui::widgets::Wrap { trim: true });
+
+        frame.render_widget(dialog, overlay_area);
+    }
+
     /// Draw a status message as a toast/notification at the bottom of the screen.
     fn draw_status_message(&self, frame: &mut Frame, area: Rect, message: &str) {
         let theme = self.theme_manager.current();
@@ -7287,5 +7608,153 @@ mod tests {
         let key = KeyEvent::new(KeyCode::Up, KeyModifiers::NONE);
         app.handle_key_event(key);
         assert_eq!(app.selected_task_index, 0);
+    }
+
+    // ============================================================
+    // Alert Detail Overlay Tests
+    // ============================================================
+
+    #[test]
+    fn test_alert_detail_opens_on_select_in_alerts_view() {
+        let mut app = App::new();
+
+        // Start in Overview, no alert detail overlay
+        assert!(!app.show_alert_detail);
+
+        // Switch to Alerts view
+        app.switch_view(View::Alerts);
+
+        // Trigger Select event (Enter key)
+        app.handle_app_event(AppEvent::Select);
+
+        // Alert detail overlay should be shown
+        assert!(app.show_alert_detail);
+    }
+
+    #[test]
+    fn test_alert_detail_closes_on_escape() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let mut app = App::new();
+        app.switch_view(View::Alerts);
+        app.show_alert_detail = true;
+
+        // Press Escape to close
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        app.handle_key_event(key);
+
+        // Alert detail overlay should be closed
+        assert!(!app.show_alert_detail);
+    }
+
+    #[test]
+    fn test_alert_detail_navigation_keys() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let mut app = App::new();
+        app.switch_view(View::Alerts);
+        app.show_alert_detail = true;
+
+        // Add some alerts to allow navigation
+        for i in 0..10 {
+            app.data_manager.alert_manager.raise(
+                crate::alert::AlertType::WorkerCrashed,
+                format!("worker-{}", i),
+                Some(format!("Test alert {}", i)),
+            );
+        }
+
+        app.selected_alert_index = 5;
+
+        // Press 'k' or Up to move up
+        let key = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE);
+        app.handle_key_event(key);
+        assert_eq!(app.selected_alert_index, 4);
+
+        // Press Up to move up again
+        let key = KeyEvent::new(KeyCode::Up, KeyModifiers::NONE);
+        app.handle_key_event(key);
+        assert_eq!(app.selected_alert_index, 3);
+
+        // Press Down to move down
+        let key = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
+        app.handle_key_event(key);
+        assert_eq!(app.selected_alert_index, 4);
+
+        // Press 'j' to move down again
+        let key = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        app.handle_key_event(key);
+        assert_eq!(app.selected_alert_index, 5);
+    }
+
+    #[test]
+    fn test_alert_detail_navigation_bounds() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let mut app = App::new();
+        app.switch_view(View::Alerts);
+        app.show_alert_detail = true;
+
+        // Add an alert to allow bounds checking
+        app.data_manager.alert_manager.raise(
+            crate::alert::AlertType::WorkerCrashed,
+            "worker-1",
+            Some("Test alert".to_string()),
+        );
+
+        app.selected_alert_index = 0;
+
+        // Try to move up when already at 0 - should stay at 0
+        let key = KeyEvent::new(KeyCode::Up, KeyModifiers::NONE);
+        app.handle_key_event(key);
+        assert_eq!(app.selected_alert_index, 0);
+    }
+
+    #[test]
+    fn test_alert_detail_acknowledge_with_a_key() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let mut app = App::new();
+        app.switch_view(View::Alerts);
+        app.show_alert_detail = true;
+
+        // Create an alert to acknowledge
+        app.data_manager.alert_manager.raise(
+            crate::alert::AlertType::WorkerCrashed,
+            "test-worker",
+            Some("Test alert message".to_string()),
+        );
+
+        // Press 'a' to acknowledge
+        let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
+        app.handle_key_event(key);
+
+        // Alert should be acknowledged
+        let alerts = app.data_manager.alert_manager.active_alerts();
+        assert!(alerts[0].acknowledged);
+    }
+
+    #[test]
+    fn test_alert_detail_acknowledge_with_enter() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let mut app = App::new();
+        app.switch_view(View::Alerts);
+        app.show_alert_detail = true;
+
+        // Create an alert to acknowledge
+        app.data_manager.alert_manager.raise(
+            crate::alert::AlertType::WorkerCrashed,
+            "test-worker",
+            Some("Test alert message".to_string()),
+        );
+
+        // Press Enter to acknowledge
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        app.handle_key_event(key);
+
+        // Alert should be acknowledged
+        let alerts = app.data_manager.alert_manager.active_alerts();
+        assert!(alerts[0].acknowledged);
     }
 }
