@@ -492,11 +492,15 @@ fn test_date_range_queries() {
 /// Test monthly cost aggregation.
 #[test]
 fn test_monthly_costs() {
-    use chrono::Duration;
+    use chrono::{Datelike, Duration};
 
     let db = CostDatabase::open_in_memory().unwrap();
 
-    let now = Utc::now();
+    // Use midday on the 15th to ensure subtracting hours stays within same day/month
+    let today = Utc::now().date_naive();
+    let safe_date = today.with_day(15).unwrap_or(today);
+    let now = safe_date.and_hms_opt(12, 0, 0).unwrap().and_utc();
+
     let calls = vec![
         ApiCall::new(now, "worker-1", "claude-opus", 100, 50, 100.0),
         ApiCall::new(
