@@ -4368,7 +4368,9 @@ impl App {
 
     /// Poll for messages from the server client.
     fn poll_server_client_messages(&mut self) {
-        if let Some(ref rx) = self.server_client_rx {
+        // Take the receiver temporarily to avoid borrow checker issues
+        let rx = self.server_client_rx.take();
+        if let Some(rx) = rx {
             loop {
                 match rx.try_recv() {
                     Ok(msg) => {
@@ -4383,6 +4385,8 @@ impl App {
                     }
                 }
             }
+            // Put the receiver back
+            self.server_client_rx = Some(rx);
         }
     }
 
@@ -4403,7 +4407,7 @@ impl App {
                 self.data_manager.update_from_server_state(workers, beads);
             }
             ServerClientMessage::UserJoined { user, display_name, role } => {
-                self.sessions_panel.add_user(user, display_name, role);
+                self.sessions_panel.add_user(user, display_name.clone(), role);
                 self.status_message = Some(format!("{} ({}) joined", display_name, role));
             }
             ServerClientMessage::UserLeft { user } => {
@@ -4426,7 +4430,7 @@ impl App {
                     tool_calls: Vec::new(),
                     side_effects: Vec::new(),
                     confirmation: None,
-                    metadata: forge_chat::ResponseMetadata::default(),
+                    metadata: ResponseMetadata::default(),
                     error_guidance: None,
                 });
 
