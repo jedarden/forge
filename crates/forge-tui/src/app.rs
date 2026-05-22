@@ -4147,7 +4147,6 @@ impl App {
     ///
     /// * `config` - Client configuration with server URL and credentials
     pub fn run_with_client(config: ClientConfig) -> AppResult<()> {
-        use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
         use tokio::runtime::Runtime;
 
         info!("Starting FORGE in client mode, connecting to {}", config.server_url);
