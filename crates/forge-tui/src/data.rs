@@ -2122,6 +2122,24 @@ impl DataManager {
 
         self.last_routing_poll = Some(std::time::Instant::now());
     }
+
+    /// Update from server state (server-client synchronization).
+    ///
+    /// This method is called when the TUI is connected to a FORGE server
+    /// and receives state updates. The server provides authoritative
+    /// worker and bead state that should be reflected in the UI.
+    ///
+    /// Currently a stub - full server-client sync implementation pending.
+    pub fn update_from_server_state(
+        &mut self,
+        _workers: Vec<forge_server::protocol::WorkerState>,
+        _beads: Vec<forge_server::protocol::BeadState>,
+    ) {
+        // TODO: Implement server state synchronization
+        // This should update worker_data and bead_manager with server state
+        // For now, we mark dirty to trigger a UI update
+        self.dirty = true;
+    }
 }
 
 impl Default for DataManager {
