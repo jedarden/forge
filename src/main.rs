@@ -1141,21 +1141,12 @@ fn print_validation_results(results: &validator::ComprehensiveValidationResults,
 
 /// Run FORGE in server mode for multi-user collaboration.
 fn run_server_mode(bind_address: String, port: u16) -> ExitCode {
-    use tokio::runtime::Runtime;
+    use forge_tui::{ClientConfig, App};
 
     info!("Starting FORGE in server mode on {}:{}", bind_address, port);
     eprintln!("🚀 FORGE Server Mode");
     eprintln!("   Listening on {}:{}", bind_address, port);
     eprintln!();
-
-    let rt = match Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => {
-            error!("Failed to create async runtime: {}", e);
-            eprintln!("Error: Failed to create async runtime: {}", e);
-            return ExitCode::from(1);
-        }
-    };
 
     // Clone values before moving config
     let server_bind_address = bind_address.clone();
@@ -1166,32 +1157,71 @@ fn run_server_mode(bind_address: String, port: u16) -> ExitCode {
         port,
     };
 
-    let result = rt.block_on(async {
+    // Clone for client URL (after move into thread)
+    let client_bind_address = server_bind_address.clone();
+    let client_port = server_port;
 
-        let server = create_server(config).await;
-        eprintln!("✅ Server initialized with default auth");
-        eprintln!("   Default users:");
-        eprintln!("     - admin/admin123 (Admin)");
-        eprintln!("     - operator/operator123 (Operator)");
-        eprintln!("     - viewer/viewer123 (Viewer)");
-        eprintln!();
-        eprintln!("   Connect clients to: ws://{}:{}/ws", server_bind_address, server_port);
-        eprintln!();
+    // Start the server in a separate thread with its own Tokio runtime
+    // This avoids nested runtime issues with the TUI client's runtime
+    std::thread::spawn(move || {
+        use tokio::runtime::Runtime;
 
-        server.run().await
+        let rt = match Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                eprintln!("Error: Failed to create server runtime: {}", e);
+                return;
+            }
+        };
+
+        let _ = rt.block_on(async move {
+            let server = create_server(config).await;
+            eprintln!("✅ Server initialized with default auth");
+            eprintln!("   Default users:");
+            eprintln!("     - admin/admin123 (Admin)");
+            eprintln!("     - operator/operator123 (Operator)");
+            eprintln!("     - viewer/viewer123 (Viewer)");
+            eprintln!();
+            eprintln!("   Connect clients to: ws://{}:{}/ws", server_bind_address, server_port);
+            eprintln!();
+            eprintln!("🔗 Starting local TUI client...");
+            eprintln!();
+
+            match server.run().await {
+                Ok(()) => info!("FORGE server exited normally"),
+                Err(e) => error!("FORGE server error: {}", e),
+            }
+        });
     });
 
-    match result {
+    // Give the server a moment to start up
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    // Create client config pointing to localhost
+    let client_config = ClientConfig {
+        server_url: format!("ws://{}:{}/ws", client_bind_address, client_port),
+        user_id: "admin".to_string(),
+        password: "admin123".to_string(),
+    };
+
+    // Run the TUI in client mode, connected to the local server
+    let result = match App::run_with_client(client_config) {
         Ok(()) => {
-            info!("FORGE server exited normally");
+            info!("FORGE server TUI exited normally");
             ExitCode::SUCCESS
         }
         Err(e) => {
-            error!("FORGE server error: {}", e);
-            eprintln!("Server error: {}", e);
+            error!("FORGE server TUI error: {}", e);
+            eprintln!("TUI error: {}", e);
             ExitCode::from(1)
         }
-    }
+    };
+
+    // Note: The server thread will be terminated when the main process exits
+    eprintln!();
+    eprintln!("🛑 Server shutting down...");
+
+    result
 }
 
 /// Run FORGE in client mode, connecting to a remote FORGE server.
