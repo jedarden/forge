@@ -4213,6 +4213,7 @@ impl App {
         response_tx: Sender<ServerClientMessage>,
     ) {
         use forge_server::client::ForgeClient;
+        use forge_server::protocol::{ClientMessage, ServerMessage};
         use tokio::sync::mpsc;
 
         info!("Client background task: connecting to {}", server_url);
@@ -4230,6 +4231,9 @@ impl App {
             }
         });
 
+        // Clone server_url for later use (since it's moved into ClientConfig)
+        let server_url_clone = server_url.clone();
+
         // Create client
         let client = ForgeClient::new(forge_server::client::ClientConfig {
             server_url,
@@ -4237,17 +4241,96 @@ impl App {
             password,
         });
 
-        // Subscribe to state updates
+        // Subscribe to state updates BEFORE connecting
         let mut state_rx = client.subscribe();
 
-        // Connect and run the client
-        let connect_result = client.connect_and_run().await;
+        // Spawn connection task (client.connect_and_run no longer consumes self)
+        let client_clone = client.clone();
+        let response_tx_clone = response_tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = client_clone.connect_and_run().await {
+                let _ = response_tx_clone.send(ServerClientMessage::ConnectionError {
+                    message: e.to_string(),
+                });
+            } else {
+                let _ = response_tx_clone.send(ServerClientMessage::Disconnected);
+            }
+        });
 
-        if let Err(e) = connect_result {
-            let _ = response_tx.send(ServerClientMessage::ConnectionError {
-                message: e.to_string(),
-            });
-            return;
+        // Task to forward state updates from server to TUI
+        let response_tx_state = response_tx.clone();
+        tokio::spawn(async move {
+            while let Ok(server_msg) = state_rx.recv().await {
+                let tui_msg = match server_msg {
+                    ServerMessage::Welcome { session, server_info: _ } => {
+                        ServerClientMessage::Connected {
+                            session,
+                            server_url: server_url_clone.clone(),
+                        }
+                    }
+                    ServerMessage::StateUpdate(update) => {
+                        ServerClientMessage::StateUpdate {
+                            workers: update.workers,
+                            beads: update.beads,
+                        }
+                    }
+                    ServerMessage::UserJoined { user, display_name, role } => {
+                        ServerClientMessage::UserJoined { user, display_name, role }
+                    }
+                    ServerMessage::UserLeft { user } => {
+                        ServerClientMessage::UserLeft { user }
+                    }
+                    ServerMessage::BeadAssigned { bead_id, assigned_to, assigned_by } => {
+                        ServerClientMessage::BeadAssigned { bead_id, assigned_to, assigned_by }
+                    }
+                    ServerMessage::ChatMessage { from, message, timestamp } => {
+                        ServerClientMessage::ChatMessage { from, message, timestamp }
+                    }
+                    ServerMessage::Error { message } => {
+                        ServerClientMessage::ConnectionError { message }
+                    }
+                    ServerMessage::Ping | ServerMessage::WorkerChanged { .. } | ServerMessage::BeadChanged { .. } => {
+                        // These are handled internally or don't need TUI notification
+                        continue;
+                    }
+                };
+
+                if response_tx_state.send(tui_msg).is_err() {
+                    warn!("Failed to send message to TUI");
+                    break;
+                }
+            }
+        });
+
+        // Handle incoming requests from TUI
+        while let Some(req) = async_req_rx.recv().await {
+            let client_msg = match req {
+                ServerClientRequest::AssignBead { bead_id, to } => {
+                    Some(ClientMessage::AssignBead { bead_id, to })
+                }
+                ServerClientRequest::UnassignBead { bead_id } => {
+                    Some(ClientMessage::UnassignBead { bead_id })
+                }
+                ServerClientRequest::SendChat { message } => {
+                    Some(ClientMessage::ChatMessage { message })
+                }
+                ServerClientRequest::UpdateView { view } => {
+                    Some(ClientMessage::UpdateView { view })
+                }
+                ServerClientRequest::SpawnWorker { model, count } => {
+                    Some(ClientMessage::SpawnWorker { model, count })
+                }
+                ServerClientRequest::KillWorker { worker_id } => {
+                    Some(ClientMessage::KillWorker { worker_id })
+                }
+            };
+
+            if let Some(msg) = client_msg {
+                // Use send_direct to send the message (works because connect_and_run no longer consumes self)
+                if let Err(e) = client.send_direct(msg).await {
+                    warn!("Failed to send message to server: {}", e);
+                }
+            }
         }
     }
 
