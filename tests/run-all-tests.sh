@@ -14,11 +14,11 @@
 
 set -euo pipefail
 
-# Get script directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get script directory (use different var to avoid conflict with test-helpers.sh)
+TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Source helpers for colors
-source "$SCRIPT_DIR/lib/test-helpers.sh"
+source "$TESTS_DIR/lib/test-helpers.sh"
 
 # ==============================================================================
 # Configuration
@@ -29,6 +29,7 @@ TEST_SCRIPTS=(
     "test-forge-views.sh"
     "test-forge-theme.sh"
     "test-forge-workers.sh"
+    "test-forge-sessions.sh"
     "test-forge-chat.sh"
     "test-forge-e2e.sh"
 )
@@ -38,6 +39,7 @@ QUICK_TESTS=(
     "test-forge-views.sh"
     "test-forge-theme.sh"
     "test-forge-workers.sh"
+    "test-forge-sessions.sh"
 )
 
 # Results tracking
@@ -95,7 +97,7 @@ parse_args() {
 
 run_single_test() {
     local test_script="$1"
-    local test_path="$SCRIPT_DIR/$test_script"
+    local test_path="$TESTS_DIR/$test_script"
 
     if [ ! -f "$test_path" ]; then
         log_fail "Test script not found: $test_script"
