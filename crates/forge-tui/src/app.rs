@@ -4555,6 +4555,12 @@ impl App {
                 self.mark_dirty(); // Ensure UI updates for spinner animation
             }
 
+            // Poll for server client messages FIRST when in server/client mode
+            // This is critical for multi-user collaboration and state synchronization
+            if self.server_client_rx.is_some() {
+                self.poll_server_client_messages();
+            }
+
             // Poll for chat responses FIRST - this is non-blocking and must happen
             // frequently to ensure responsive chat UX. Don't let data polling block it.
             self.poll_chat_responses();

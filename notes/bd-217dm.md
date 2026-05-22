@@ -1,54 +1,37 @@
-# Bead bd-217dm: Wire forge-server integration
+# bd-217dm: Forge-Server Integration Verification
 
-## Task
-Wire forge-server integration: server/client CLI modes not connected to TUI app loop
+## Summary
 
-## Implementation Summary
+Verified that the forge-server integration is complete and wired correctly.
 
-The forge-server integration wiring was completed in two commits:
+## Implementation
 
-### 1. Server Mode (commit ca88007)
-- `run_server_mode()` spawns server in separate thread with own Tokio runtime
-- TUI connects as client to local server via `App::run_with_client()`
-- Server runs in background while TUI polls for messages via `poll_server_client_messages()`
+### Server Mode (`--server`)
+- Located in: `src/main.rs::run_server_mode()`
+- Spawns WebSocket server in background thread with separate Tokio runtime
+- TUI runs as client connected to local server
+- Avoids nested runtime issues between server and TUI
 
-### 2. Client Mode (commit 10b803d)
-- `run_client_mode()` connects to remote server via `App::run_with_client()`
-- WebSocket client runs in background task
-- TUI main loop polls for incoming messages via mpsc channels
-- State updates forwarded to DataManager for UI synchronization
+### Client Mode (`--connect URL`)
+- Located in: `src/main.rs::run_client_mode()`
+- TUI connects to remote FORGE server
+- Uses same `App::run_with_client()` as server mode
 
-## Wiring Path
+### TUI Integration
+- `App::run_with_client()` (app.rs:4144)
+  - Creates Tokio runtime for WebSocket client
+  - Spawns background task `run_client_background_task()`
+  - Runs `run_loop_with_client()` main loop
 
-**Server Mode:**
-```
---server flag → run_server_mode() → App::run_with_client() → run_loop_with_client() → poll_server_client_messages()
-```
+- `run_loop_with_client()` (app.rs:4338)
+  - Calls `poll_server_client_messages()` each frame
+  - Handles server state updates in real-time
 
-**Client Mode:**
-```
---connect flag → run_client_mode() → App::run_with_client() → run_loop_with_client() → poll_server_client_messages()
-```
-
-## Key Integration Points
-
-1. **main.rs (lines 310-321)**: CLI mode detection and routing
-2. **main.rs (lines 1143-1225)**: `run_server_mode()` implementation
-3. **main.rs (lines 1228-1254)**: `run_client_mode()` implementation
-4. **app.rs (line 4144)**: `run_with_client()` entry point
-5. **app.rs (line 4338)**: `run_loop_with_client()` event loop
-6. **app.rs (line 4353)**: `poll_server_client_messages()` call
-7. **app.rs (line 4453)**: `poll_server_client_messages()` implementation
-8. **app.rs (line 4477)**: `handle_server_client_message()` implementation
-
-## Verification
-
-- Build succeeds: `cargo build --release`
-- CLI flags available: `--server`, `--connect`, `--user`, `--password`
-- TUI app loop properly polls server messages in both modes
-- Background WebSocket client task communicates via mpsc channels
-- Server state updates flow to DataManager for UI sync
+- Message handling:
+  - `poll_server_client_messages()` (app.rs:4453)
+  - `handle_server_client_message()` (app.rs:4477)
+  - Handles: Connected, StateUpdate, UserJoined, UserLeft, BeadAssigned, ChatMessage, Error
 
 ## Status
 
-✅ Complete - Server and client CLI modes are fully wired to TUI app loop with message polling and state synchronization.
+Integration is complete and functional. No additional wiring required.
