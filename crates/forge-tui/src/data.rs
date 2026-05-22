@@ -108,6 +108,32 @@ impl WorkerData {
         self.activity_last_update = Some(std::time::Instant::now());
     }
 
+    /// Update from server worker states (team collaboration sync).
+    ///
+    /// This method is called when the TUI is connected to a FORGE server
+    /// and receives authoritative worker state updates.
+    pub fn update_from_server(&mut self, server_workers: HashMap<String, crate::status::WorkerStatusFile>) {
+        // Replace workers with server state (server is authoritative)
+        self.workers = server_workers;
+
+        // Recalculate counts
+        let mut counts = WorkerCounts::default();
+        for worker in self.workers.values() {
+            match worker.status {
+                WorkerStatus::Active => counts.active += 1,
+                WorkerStatus::Idle => counts.idle += 1,
+                WorkerStatus::Starting => counts.starting += 1,
+                WorkerStatus::Failed => counts.failed += 1,
+                WorkerStatus::Stopped => counts.stopped += 1,
+                WorkerStatus::Error => counts.error += 1,
+                WorkerStatus::Paused => counts.paused += 1,
+            }
+            counts.total += 1;
+        }
+        self.counts = counts;
+        self.last_update = Some(std::time::Instant::now());
+    }
+
     /// Get activity status for a specific worker.
     pub fn get_activity(&self, worker_id: &str) -> Option<&WorkerActivity> {
         self.activity_status.get(worker_id)
@@ -2128,16 +2154,43 @@ impl DataManager {
     /// This method is called when the TUI is connected to a FORGE server
     /// and receives state updates. The server provides authoritative
     /// worker and bead state that should be reflected in the UI.
-    ///
-    /// Currently a stub - full server-client sync implementation pending.
     pub fn update_from_server_state(
         &mut self,
-        _workers: Vec<forge_server::protocol::WorkerState>,
-        _beads: Vec<forge_server::protocol::BeadState>,
+        workers: Vec<forge_server::protocol::WorkerState>,
+        beads: Vec<forge_server::protocol::BeadState>,
     ) {
-        // TODO: Implement server state synchronization
-        // This should update worker_data and bead_manager with server state
-        // For now, we mark dirty to trigger a UI update
+        use crate::status::WorkerStatusFile;
+
+        // Convert server WorkerState to local WorkerStatusFile format
+        let mut worker_map: HashMap<String, WorkerStatusFile> = HashMap::new();
+        for server_worker in workers {
+            let worker_file = WorkerStatusFile {
+                worker_id: server_worker.worker_id.clone(),
+                status: server_worker.status,
+                model: server_worker.model,
+                workspace: String::new(), // Server doesn't provide workspace
+                pid: None,                // Server doesn't provide PID
+                started_at: server_worker.started_at,
+                last_activity: None, // Could be derived from server state in future
+                current_task: server_worker.current_task,
+                tasks_completed: 0,    // Server doesn't track this
+                container_id: None,     // Server doesn't provide container ID
+            };
+            worker_map.insert(server_worker.worker_id, worker_file);
+        }
+
+        // Update worker data with server state
+        self.worker_data.update_from_server(worker_map);
+
+        // TODO: Implement bead state synchronization
+        // BeadManager is workspace-based, but server state doesn't include workspace info.
+        // Options for future implementation:
+        // 1. Add a "server-synced" virtual workspace to BeadManager
+        // 2. Store server beads in a separate cache and merge with local beads during display
+        // 3. Extend BeadState protocol to include workspace path
+        let _beads = beads; // Suppress unused warning until implemented
+
+        // Mark dirty to trigger UI update
         self.dirty = true;
     }
 }
