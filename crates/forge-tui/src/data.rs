@@ -657,6 +657,8 @@ pub struct DataManager {
     log_rx: Option<std::sync::mpsc::Receiver<LogWatcherEvent>>,
     /// Previous worker statuses for change detection
     prev_worker_statuses: HashMap<String, WorkerStatus>,
+    /// Server bead state for team collaboration sync
+    server_beads: Vec<forge_server::protocol::BeadState>,
 }
 
 impl DataManager {
@@ -813,6 +815,7 @@ impl DataManager {
             log_watcher,
             log_rx,
             prev_worker_statuses: HashMap::new(),
+            server_beads: Vec::new(),
         };
 
         // Skip initial poll_updates during initialization - it blocks for too long
@@ -937,6 +940,7 @@ impl DataManager {
             log_watcher,
             log_rx,
             prev_worker_statuses: HashMap::new(),
+            server_beads: Vec::new(),
         }
     }
 
@@ -2182,16 +2186,27 @@ impl DataManager {
         // Update worker data with server state
         self.worker_data.update_from_server(worker_map);
 
-        // TODO: Implement bead state synchronization
-        // BeadManager is workspace-based, but server state doesn't include workspace info.
-        // Options for future implementation:
-        // 1. Add a "server-synced" virtual workspace to BeadManager
-        // 2. Store server beads in a separate cache and merge with local beads during display
-        // 3. Extend BeadState protocol to include workspace path
-        let _beads = beads; // Suppress unused warning until implemented
+        // Update server bead state
+        // Store server beads in a separate cache (option 2 from TODO)
+        self.server_beads = beads;
 
         // Mark dirty to trigger UI update
         self.dirty = true;
+    }
+
+    /// Get server bead state for team collaboration.
+    pub fn get_server_beads(&self) -> &[forge_server::protocol::BeadState] {
+        &self.server_beads
+    }
+
+    /// Check if server bead data is available.
+    pub fn has_server_beads(&self) -> bool {
+        !self.server_beads.is_empty()
+    }
+
+    /// Get server bead by ID.
+    pub fn get_server_bead(&self, bead_id: &str) -> Option<&forge_server::protocol::BeadState> {
+        self.server_beads.iter().find(|b| b.bead_id == bead_id)
     }
 }
 
