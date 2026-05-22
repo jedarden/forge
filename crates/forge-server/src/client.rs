@@ -25,6 +25,7 @@ pub struct ClientConfig {
 }
 
 /// FORGE WebSocket client.
+#[derive(Clone)]
 pub struct ForgeClient {
     config: ClientConfig,
     /// Channel for broadcasting state updates to local subscribers
@@ -74,7 +75,10 @@ impl ForgeClient {
     }
 
     /// Connect to the server and run the client loop.
-    pub async fn connect_and_run(mut self) -> Result<(), ServerError> {
+    ///
+    /// This method runs the WebSocket connection loop and will block until
+    /// the connection is closed. It should be spawned as a background task.
+    pub async fn connect_and_run(&self) -> Result<(), ServerError> {
         let url = self.config.server_url.clone();
         info!("Connecting to FORGE server: {}", url);
 
@@ -134,7 +138,7 @@ impl ForgeClient {
     }
 
     /// Handle a message from the server.
-    async fn handle_message(&mut self, msg: Message) -> Result<(), ServerError> {
+    async fn handle_message(&self, msg: Message) -> Result<(), ServerError> {
         match msg {
             Message::Text(text) => {
                 if let Ok(server_msg) = serde_json::from_str::<ServerMessage>(&text) {
@@ -155,7 +159,7 @@ impl ForgeClient {
     }
 
     /// Handle a server message.
-    async fn handle_server_message(&mut self, msg: ServerMessage) -> Result<(), ServerError> {
+    async fn handle_server_message(&self, msg: ServerMessage) -> Result<(), ServerError> {
         match msg {
             ServerMessage::Welcome { session, server_info } => {
                 let mut state = self.current_state.write().await;
@@ -238,6 +242,20 @@ impl ForgeClient {
     /// Subscribe to state updates.
     pub fn subscribe(&self) -> broadcast::Receiver<ServerMessage> {
         self.state_tx.subscribe()
+    }
+
+    /// Send a message directly from outside the client connection loop.
+    ///
+    /// This method can be called from external tasks to send messages to the server.
+    /// It will return an error if the connection is not yet established.
+    pub async fn send_direct(&self, msg: ClientMessage) -> Result<(), ServerError> {
+        let write_tx = self.write_tx.lock().await;
+        if let Some(tx) = write_tx.as_ref() {
+            let _ = tx.send(msg);
+            Ok(())
+        } else {
+            Err(ServerError::ServerError("Connection not established".to_string()))
+        }
     }
 
     /// Get the current state.
