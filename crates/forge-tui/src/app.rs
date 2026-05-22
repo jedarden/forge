@@ -1584,6 +1584,11 @@ impl App {
                 view.title(),
                 view.hotkey()
             ));
+
+            // Notify server of view change when connected
+            self.send_server_client_request(ServerClientRequest::UpdateView {
+                view: view.to_string(),
+            });
         }
     }
 
