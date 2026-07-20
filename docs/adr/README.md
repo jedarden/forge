@@ -28,6 +28,8 @@ Architecture Decision Records document significant architectural decisions made 
 | [0015](0015-bead-aware-launcher-protocol.md) | Bead-Aware Launcher Protocol | Accepted | 2026-02-08 |
 | [0016](0016-onboarding-and-cli-detection.md) | Onboarding Flow and CLI Worker Detection | Accepted | 2026-02-08 |
 | [0017](0017-tmux-based-testing-with-cleanup.md) | Tmux-Based Testing with Agent Control and Cleanup | Accepted | 2026-02-13 |
+| [0018](0018-worker-crash-recovery.md) | Worker Crash Recovery | Accepted | 2026-02-13 |
+| [0019](0019-closed-loop-complexity-calibration.md) | Closed-Loop Complexity Calibration from Cost/Outcome Data | Proposed | 2026-07-20 |
 
 ## ADR Statuses
 
