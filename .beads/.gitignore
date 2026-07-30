@@ -9,3 +9,6 @@
 # Temporary
 last-touched
 *.tmp
+
+# Bead execution traces (stdout/stderr logs) — local artifacts, not source
+traces/
