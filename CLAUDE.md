@@ -10,7 +10,7 @@ FORGE is a terminal-based Agent Orchestration Dashboard written in Rust using ra
 - **TUI Framework**: ratatui 0.29 with crossterm 0.28
 - **Async Runtime**: tokio 1.43
 - **Database**: SQLite via rusqlite (bundled)
-- **Version**: 0.1.9 (workspace.version)
+- **Version**: 0.3.0 (workspace.version)
 
 ## Development Workflow
 
