@@ -191,10 +191,12 @@ launchers:
     executable: "~/.forge/launchers/claude-code-launcher"
     models: [sonnet, opus, haiku]
 
-# Cost thresholds
-costs:
-  daily_budget_usd: 50
-  alert_threshold_pct: 80
+# Cost tracking
+cost_tracking:
+  enabled: true
+  monthly_budget_usd: 100.0
+  budget_warning_threshold: 70
+  budget_critical_threshold: 90
 
 # Dashboard refresh
 dashboard:
