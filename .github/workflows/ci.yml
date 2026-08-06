@@ -192,10 +192,7 @@ jobs:
 
       - name: Run team collaboration integration tests
         run: |
-          export CI=true
-          export GITHUB_ACTIONS=true
-          chmod +x tests/*.sh tests/lib/*.sh test-*.sh
-          ./test-forge-server.sh
+          cargo test --package forge-server --all-features
         timeout-minutes: 10
 
   # Build release artifacts (only on main branch)
