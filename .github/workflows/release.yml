@@ -49,10 +49,18 @@ jobs:
       - name: Rename binary
         run: cp target/${{ matrix.target }}/release/forge ${{ matrix.artifact }}
 
+      - name: Generate checksum
+        run: sha256sum ${{ matrix.artifact }} > ${{ matrix.artifact }}.sha256
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}.sha256
+          path: ${{ matrix.artifact }}.sha256
 
   release:
     needs: build
@@ -87,6 +95,9 @@ jobs:
           # Flatten artifacts
           mkdir -p release
           find artifacts -type f -exec cp {} release/ \;
+
+          # Create combined SHA256SUMS file
+          cat release/*.sha256 > release/SHA256SUMS
 
           # Create release
           gh release create ${{ steps.version.outputs.tag }} \

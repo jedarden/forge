@@ -35,6 +35,7 @@ use std::time::Duration;
 #[allow(unused_imports)] // Used implicitly by reqwest Response::chunk()
 use futures_util::StreamExt;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use tracing::{debug, error, info, warn};
 
 use crate::ForgeError;
@@ -66,6 +67,8 @@ pub enum UpdateStatus {
         download_url: String,
         /// Size of the asset in bytes
         asset_size: u64,
+        /// Expected SHA256 checksum of the binary
+        expected_checksum: String,
     },
 }
 
@@ -178,6 +181,20 @@ pub async fn check_for_update(current_version: &str) -> crate::Result<UpdateStat
             platform: asset_name.to_string(),
         })?;
 
+    // Find the SHA256SUMS asset
+    let checksums_asset = release
+        .assets
+        .iter()
+        .find(|a| a.name == "SHA256SUMS" && a.state == "uploaded");
+
+    let expected_checksum = if let Some(checksums) = checksums_asset {
+        info!("Fetching SHA256SUMS from {}", checksums.download_url);
+        fetch_checksum_from_url(&checksums.download_url, &asset_name).await?
+    } else {
+        warn!("No SHA256SUMS asset found in release - proceeding without checksum verification (INSECURE)");
+        String::new()
+    };
+
     info!(
         "Update available: {} -> {} ({} bytes)",
         current_version, latest_version, asset.size
@@ -188,6 +205,59 @@ pub async fn check_for_update(current_version: &str) -> crate::Result<UpdateStat
         latest: latest_version.to_string(),
         download_url: asset.download_url.clone(),
         asset_size: asset.size,
+        expected_checksum,
+    })
+}
+
+/// Fetch and parse the expected checksum for an asset from the SHA256SUMS file.
+async fn fetch_checksum_from_url(checksums_url: &str, asset_name: &str) -> crate::Result<String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(API_TIMEOUT_SECS))
+        .user_agent(USER_AGENT)
+        .build()
+        .map_err(|e| ForgeError::UpdateCheck {
+            message: format!("Failed to create HTTP client for checksums: {}", e),
+        })?;
+
+    let response = client
+        .get(checksums_url)
+        .send()
+        .await
+        .map_err(|e| ForgeError::UpdateCheck {
+            message: format!("Failed to fetch SHA256SUMS: {}", e),
+        })?;
+
+    if !response.status().is_success() {
+        return Err(ForgeError::UpdateCheck {
+            message: format!("SHA256SUMS fetch returned status {}", response.status()),
+        });
+    }
+
+    let checksums_text = response
+        .text()
+        .await
+        .map_err(|e| ForgeError::UpdateCheck {
+            message: format!("Failed to read SHA256SUMS response: {}", e),
+        })?;
+
+    // Parse the SHA256SUMS file (format: "<checksum>  <filename>")
+    for line in checksums_text.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 {
+            let checksum = parts[0];
+            let filename = parts[1];
+            if filename == asset_name {
+                info!("Found checksum for {}: {}", asset_name, checksum);
+                return Ok(checksum.to_string());
+            }
+        }
+    }
+
+    Err(ForgeError::UpdateCheck {
+        message: format!(
+            "Checksum not found for {} in SHA256SUMS file",
+            asset_name
+        ),
     })
 }
 
@@ -197,6 +267,7 @@ pub async fn check_for_update(current_version: &str) -> crate::Result<UpdateStat
 ///
 /// * `download_url` - URL to download the binary from
 /// * `expected_size` - Expected size of the download in bytes
+/// * `expected_checksum` - Expected SHA256 checksum of the binary (empty if unavailable)
 /// * `progress_tx` - Optional channel to send progress updates
 ///
 /// # Returns
@@ -206,6 +277,7 @@ pub async fn check_for_update(current_version: &str) -> crate::Result<UpdateStat
 pub async fn perform_update(
     download_url: &str,
     expected_size: u64,
+    expected_checksum: &str,
     progress_tx: Option<Sender<DownloadProgress>>,
 ) -> crate::Result<UpdateResult> {
     info!("Starting update download from {}", download_url);
@@ -223,8 +295,8 @@ pub async fn perform_update(
     // Download the new binary
     download_file(download_url, &staging_file, expected_size, progress_tx).await?;
 
-    // Verify the downloaded file is a valid executable
-    verify_binary(&staging_file)?;
+    // Verify the downloaded file is a valid executable and check the checksum
+    verify_binary(&staging_file, expected_checksum)?;
 
     info!("Update download complete! Binary staged at {:?}", staging_file);
 
@@ -264,7 +336,7 @@ pub fn restart_with_new_binary() -> crate::Result<()> {
     info!("Staging file found at {:?}", staging_file);
 
     // Verify the staging file is executable
-    verify_binary(&staging_file)?;
+    verify_binary(&staging_file, "")?;
 
     // Get the final install path (e.g., ~/.cargo/bin/forge)
     let install_path = get_install_path(&current_exe)?;
@@ -347,7 +419,7 @@ pub fn check_and_perform_self_install() -> crate::Result<Option<PathBuf>> {
         return Ok(None);
     }
 
-    if let Err(e) = verify_binary(&staging_path) {
+    if let Err(e) = verify_binary(&staging_path, "") {
         warn!("Staged binary failed verification, removing: {}", e);
         let _ = fs::remove_file(&staging_path);
         return Ok(None);
@@ -603,7 +675,18 @@ async fn download_file(
 }
 
 /// Verify the downloaded binary is a valid executable.
-fn verify_binary(path: &Path) -> crate::Result<()> {
+///
+/// # Arguments
+///
+/// * `path` - Path to the downloaded binary
+/// * `expected_checksum` - Expected SHA256 checksum (empty string if no checksum available)
+///
+/// # Verification steps
+///
+/// 1. File is non-empty
+/// 2. File starts with ELF magic bytes (0x7f 'E' 'L' 'F')
+/// 3. SHA256 checksum matches expected value (if provided)
+fn verify_binary(path: &Path, expected_checksum: &str) -> crate::Result<()> {
     // Check file exists and has content
     let metadata = fs::metadata(path).map_err(|e| ForgeError::UpdateVerification {
         message: format!("Failed to read downloaded file: {}", e),
@@ -615,24 +698,47 @@ fn verify_binary(path: &Path) -> crate::Result<()> {
         });
     }
 
+    // Read the entire file for checksum verification
+    let file_contents = fs::read(path).map_err(|e| ForgeError::UpdateVerification {
+        message: format!("Failed to read downloaded file: {}", e),
+    })?;
+
     // Check ELF magic bytes (Linux executable)
-    let mut file = fs::File::open(path).map_err(|e| ForgeError::UpdateVerification {
-        message: format!("Failed to open downloaded file: {}", e),
-    })?;
+    if file_contents.len() < 4 {
+        return Err(ForgeError::UpdateVerification {
+            message: "Downloaded file is too small to be a valid binary".to_string(),
+        });
+    }
 
-    let mut magic = [0u8; 4];
-    Read::read_exact(&mut file, &mut magic).map_err(|e| ForgeError::UpdateVerification {
-        message: format!("Failed to read file header: {}", e),
-    })?;
-
+    let magic = &file_contents[0..4];
     // ELF magic: 0x7f 'E' 'L' 'F'
-    if magic != [0x7f, 0x45, 0x4c, 0x46] {
+    if magic != &[0x7f, 0x45, 0x4c, 0x46] {
         return Err(ForgeError::UpdateVerification {
             message: "Downloaded file is not a valid ELF binary".to_string(),
         });
     }
 
-    info!("Binary verification passed (valid ELF)");
+    // Verify SHA256 checksum if provided
+    if !expected_checksum.is_empty() {
+        let mut hasher = Sha256::new();
+        hasher.update(&file_contents);
+        let computed_hash = format!("{:x}", hasher.finalize());
+
+        if computed_hash != expected_checksum {
+            return Err(ForgeError::UpdateVerification {
+                message: format!(
+                    "Checksum mismatch: expected {}, got {}",
+                    expected_checksum, computed_hash
+                ),
+            });
+        }
+
+        info!("Binary checksum verified: {}", computed_hash);
+    } else {
+        warn!("No checksum provided - skipping cryptographic verification (INSECURE)");
+    }
+
+    info!("Binary verification passed (valid ELF{})", if expected_checksum.is_empty() { "" } else { ", checksum verified" });
     Ok(())
 }
 
