@@ -188,7 +188,110 @@ This release marks FORGE as production-ready with all core features fully implem
 - Rate limiting enforcement across all providers
 - Concurrent provider usage support
 
-[Unreleased]: https://github.com/jedarden/forge/compare/v0.2.0...HEAD
+## [Unreleased]
+
+### Added - Phase 4: Team Collaboration & Enterprise Features
+
+#### Team Collaboration (forge-server)
+- **Server Mode** (`forge --server`): Multi-user collaborative sessions with real-time state synchronization
+  - WebSocket server using Axum framework
+  - Real-time broadcast of state changes to all connected clients
+  - Session management with activity tracking and cleanup
+  - Audit logging for compliance and security
+  
+- **Client Mode** (`forge --connect ws://host:port`): Connect to remote FORGE server
+  - Real-time state synchronization from server
+  - Command submission with user attribution
+  - Connection status indicator in TUI header
+  - Full TUI functionality in client mode
+
+- **Role-Based Access Control (RBAC)**:
+  - Three roles: Viewer (read-only), Operator (workers/tasks), Admin (full access)
+  - Pluggable `AuthProvider` trait for custom authentication
+  - SimpleAuth provider with default users (admin/admin123, operator/operator123, viewer/viewer123)
+  - Permission checking system for all actions
+  - User attribution for all mutating operations
+
+- **Bead Assignment System**:
+  - Shared task queue with assignment tracking
+  - Assign/unassign/reassign operations with attribution
+  - User assignment counts and queries
+  - Real-time broadcast of assignment changes
+  - Assignment history and statistics
+
+- **Sessions View** (hotkey `s`):
+  - View all connected users
+  - User roles color-coded (Admin=red, Operator=yellow, Viewer=blue)
+  - Current view being observed by each user
+  - Connection status and last activity time
+  - Session metadata display
+
+#### Audit Logging System
+- **Comprehensive Audit Trail**:
+  - SQLite backend at `~/.forge/audit.db`
+  - Append-only immutable log for compliance
+  - 14 event types (WorkerSpawn, WorkerKill, BeadStatusChange, ConfigChange, etc.)
+  - Severity levels (Info, Warning, Error, Critical)
+  - Actor attribution for all events
+
+- **Audit Log View** (hotkey `Z`):
+  - TUI panel for viewing audit events
+  - Time range filtering (last hour, day, week, custom)
+  - Filter by event type, actor, entity
+  - Statistics dashboard with event counts
+  - Export functionality
+
+- **Export & Query**:
+  - Export to JSON (hotkey `E`)
+  - Export to CSV (hotkey `C`)
+  - Configurable retention policy (default 90 days)
+  - Query by time range, entity, actor, event type
+  - Maximum 10,000 records per query
+
+#### Architecture & Infrastructure
+- **forge-server Crate**:
+  - `auth.rs` - Authentication and authorization with RBAC
+  - `session.rs` - Session management and tracking
+  - `assignment.rs` - Bead assignment tracking
+  - `protocol.rs` - WebSocket protocol messages
+  - `websocket.rs` - WebSocket server/client implementation
+  - `client.rs` - Client mode TUI integration
+
+- **Protocol Design**:
+  - Server messages: Welcome, StateUpdate, UserJoined, UserLeft, BeadAssigned, WorkerChanged, BeadChanged, ChatMessage, Ping
+  - Client messages: Authenticate, SyncState, AssignBead, SpawnWorker, KillWorker, ChangeBeadStatus, ChatMessage, UpdateView, Pong
+  - JSON-based message format
+  - Bidirectional real-time communication
+
+- **Integration Tests**:
+  - Team collaboration integration tests
+  - Multi-user session tests
+  - Authentication and authorization tests
+  - Bead assignment workflow tests
+  - CI coverage for all forge-server features
+
+### Changed
+- **CLI Arguments**: Added `--server` and `--connect` flags
+- **Configuration**: New `server` section in config.yaml for server/client settings
+- **Main Loop**: TUI app loop supports both standalone and server/client modes
+- **State Management**: Real-time state updates from server in client mode
+
+### Security Considerations
+- SimpleAuth uses plaintext password comparison (development only)
+- Default users with hardcoded credentials (must be replaced for production)
+- WebSocket connections use `ws://` protocol (upgrade to `wss://` for production)
+- Audit logging provides compliance trail for all actions
+- Network security recommendations in TEAM_COLLABORATION.md
+
+### Documentation
+- **TEAM_COLLABORATION.md**: Complete guide for team collaboration features
+- **Architecture Documentation**: Updated with server/client architecture
+- **API Reference**: Server/client protocol message documentation
+- **Troubleshooting Guide**: Common issues and solutions
+- **Security Guidelines**: Production deployment recommendations
+
+[Unreleased]: https://github.com/jedarden/forge/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/jedarden/forge/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jedarden/forge/compare/v0.1.9...v0.2.0
 [0.1.9]: https://github.com/jedarden/forge/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/jedarden/forge/compare/v0.1.7...v0.1.8
