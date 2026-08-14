@@ -2157,11 +2157,12 @@ impl DataManager {
     ///
     /// This method is called when the TUI is connected to a FORGE server
     /// and receives state updates. The server provides authoritative
-    /// worker and bead state that should be reflected in the UI.
+    /// worker, bead, and cost state that should be reflected in the UI.
     pub fn update_from_server_state(
         &mut self,
         workers: Vec<forge_server::protocol::WorkerState>,
         beads: Vec<forge_server::protocol::BeadState>,
+        costs: forge_server::protocol::CostState,
     ) {
         use crate::status::WorkerStatusFile;
 
@@ -2189,6 +2190,34 @@ impl DataManager {
         // Update server bead state
         // Store server beads in a separate cache (option 2 from TODO)
         self.server_beads = beads;
+
+        // Update cost data from server state
+        // Server provides authoritative cost data when connected
+        use chrono::{Datelike, Utc};
+        use forge_cost::DailyCost;
+
+        let today = Utc::now().date_naive();
+        // Calculate week start (most recent Monday)
+        // chrono uses 0=Monday, 6=Sunday for weekday()
+        let days_from_monday = today.weekday().num_days_from_monday() as i64;
+        let week_start = today - chrono::Duration::days(days_from_monday);
+
+        self.cost_data.set_today(DailyCost {
+            date: today,
+            total_cost_usd: costs.today_cost,
+            call_count: 0,
+            total_tokens: 0,
+            by_model: Vec::new(),
+        });
+        self.cost_data.set_week(DailyCost {
+            date: week_start,
+            total_cost_usd: costs.week_cost,
+            call_count: 0,
+            total_tokens: 0,
+            by_model: Vec::new(),
+        });
+        self.cost_data.set_monthly(costs.month_cost, Vec::new());
+        self.cost_data.last_update = Some(Utc::now());
 
         // Mark dirty to trigger UI update
         self.dirty = true;

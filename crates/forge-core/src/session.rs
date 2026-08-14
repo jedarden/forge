@@ -9,8 +9,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
-use tracing::{debug, info, warn};
+use tracing::info;
 
 /// User role determining permissions in team collaboration mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
