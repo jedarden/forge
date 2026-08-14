@@ -1,4 +1,4 @@
-# Database
+# SQLite database files
 *.db
 *.db-shm
 *.db-wal
@@ -6,9 +6,9 @@
 # Lock files
 *.lock
 
-# Temporary
-last-touched
+# Temporary files
 *.tmp
+*.temp
 
-# Bead execution traces (stdout/stderr logs) — local artifacts, not source
-traces/
+# Journals
+*.journal
