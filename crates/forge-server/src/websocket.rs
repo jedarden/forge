@@ -11,6 +11,8 @@ use crate::ServerError;
 use forge_core::{WorkerStatus, BeadStatus, Priority, audit::{AuditLogger, AuditEvent, EventType}};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::fs::File;
+use std::io::BufReader;
 use tokio::sync::{broadcast, RwLock};
 use axum::{
     extract::{
@@ -30,6 +32,17 @@ use chrono::Utc;
 pub struct ServerConfig {
     pub bind_address: String,
     pub port: u16,
+    /// TLS configuration (optional). If present, server will use WSS (WebSocket Secure).
+    pub tls: Option<TlsConfig>,
+}
+
+/// TLS configuration for secure WebSocket connections.
+#[derive(Debug, Clone)]
+pub struct TlsConfig {
+    /// Path to the TLS certificate file (PEM format)
+    pub cert_path: String,
+    /// Path to the TLS private key file (PEM format)
+    pub key_path: String,
 }
 
 impl Default for ServerConfig {
@@ -37,6 +50,7 @@ impl Default for ServerConfig {
         Self {
             bind_address: "127.0.0.1".to_string(),
             port: 8080,
+            tls: None,
         }
     }
 }
@@ -309,15 +323,62 @@ impl ForgeServer {
             .with_state(self.clone());
 
         let addr = format!("{}:{}", self.config.bind_address, self.config.port);
-        info!("FORGE server listening on {}", addr);
+        let addr_parsed = addr.parse::<std::net::SocketAddr>()
+            .map_err(|e| ServerError::ServerError(format!("Invalid address: {}", e)))?;
 
-        let listener = tokio::net::TcpListener::bind(&addr)
-            .await
-            .map_err(|e| ServerError::Io(e))?;
+        // Check if TLS is configured
+        if let Some(ref tls_config) = self.config.tls {
+            // Load certificate and key
+            let cert_file = File::open(&tls_config.cert_path)
+                .map_err(|e| ServerError::Io(e))?;
+            let key_file = File::open(&tls_config.key_path);
 
-        axum::serve(listener, app)
-            .await
-            .map_err(|e| ServerError::ServerError(e.to_string()))?;
+            if let Err(e) = key_file {
+                let mut running = self.running.write().await;
+                *running = false;
+                return Err(ServerError::Io(e));
+            }
+
+            let mut cert_reader = BufReader::new(cert_file);
+            let mut key_reader = BufReader::new(key_file.unwrap());
+
+            // Parse certificate and key
+            let certs = rustls_pemfile::certs(&mut cert_reader)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| ServerError::ServerError(format!("Failed to load certificate: {}", e)))?;
+
+            let key = rustls_pemfile::private_key(&mut key_reader)
+                .map_err(|e| ServerError::ServerError(format!("Failed to load private key: {}", e)))?
+                .ok_or_else(|| ServerError::ServerError("No private key found".to_string()))?;
+
+            // Create TLS config
+            let config = rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(certs, key)
+                .map_err(|e| ServerError::ServerError(format!("TLS config error: {}", e)))?;
+
+            // Wrap in Arc for axum-server
+            let config = std::sync::Arc::new(config);
+
+            info!("FORGE server listening with TLS on {}", addr_parsed);
+
+            // Run with TLS
+            let rustls_config = axum_server::tls_rustls::RustlsConfig::from_config(config);
+            axum_server::bind_rustls(addr_parsed, rustls_config)
+                .serve(app.into_make_service())
+                .await
+                .map_err(|e| ServerError::ServerError(e.to_string()))?;
+        } else {
+            info!("FORGE server listening on {}", addr);
+
+            let listener = tokio::net::TcpListener::bind(&addr)
+                .await
+                .map_err(|e| ServerError::Io(e))?;
+
+            axum::serve(listener, app)
+                .await
+                .map_err(|e| ServerError::ServerError(e.to_string()))?;
+        }
 
         // Clear running flag on shutdown
         {
@@ -537,11 +598,28 @@ async fn handle_socket(socket: WebSocket, server: ForgeServer) {
     }
 }
 
-/// Create a server with default auth provider.
+/// Create a server with OAuth auth provider.
 pub async fn create_server(config: ServerConfig) -> ForgeServer {
-    use super::auth::SimpleAuth;
+    use super::oauth_auth::OAuthAuthProvider;
 
-    let auth = Arc::new(SimpleAuth::default().with_defaults().await);
+    // Try to load OAuth configuration from standard location
+    let oauth_config_path = forge_config::config_path()
+        .unwrap_or_else(|| std::path::PathBuf::from("~/.forge/config.yaml"))
+        .parent()
+        .unwrap_or(&std::path::PathBuf::from("~/.forge"))
+        .join("oauth.yaml");
+
+    let auth = if oauth_config_path.exists() {
+        tracing::info!("Loading OAuth configuration from {:?}", oauth_config_path);
+        Arc::new(OAuthAuthProvider::from_config_file(&oauth_config_path)
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to load OAuth config: {}, using defaults", e);
+                OAuthAuthProvider::with_defaults()
+            }))
+    } else {
+        tracing::warn!("OAuth config not found at {:?}, using defaults", oauth_config_path);
+        Arc::new(OAuthAuthProvider::with_defaults())
+    };
 
     // Try to initialize audit logger
     let audit_db_path = forge_config::config_path()
