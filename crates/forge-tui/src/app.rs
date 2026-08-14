@@ -134,7 +134,11 @@ pub enum ServerClientMessage {
     /// Connected and authenticated successfully
     Connected { session: forge_core::UserSession, server_url: String },
     /// State update received from server
-    StateUpdate { workers: Vec<forge_server::protocol::WorkerState>, beads: Vec<forge_server::protocol::BeadState> },
+    StateUpdate {
+        workers: Vec<forge_server::protocol::WorkerState>,
+        beads: Vec<forge_server::protocol::BeadState>,
+        costs: forge_server::protocol::CostState,
+    },
     /// User joined the session
     UserJoined { user: String, display_name: String, role: forge_core::UserRole },
     /// User left the session
@@ -4015,9 +4019,10 @@ impl App {
                         latest: _,
                         download_url,
                         asset_size,
+                        expected_checksum,
                     } => {
                         // Perform the update without progress callback (download is typically fast)
-                        let result = perform_update(&download_url, asset_size, None).await;
+                        let result = perform_update(&download_url, asset_size, &expected_checksum, None).await;
 
                         match result {
                             Ok(forge_core::self_update::UpdateResult::Success { old_version, new_version }) => {
@@ -4276,6 +4281,7 @@ impl App {
                         ServerClientMessage::StateUpdate {
                             workers: update.workers,
                             beads: update.beads,
+                            costs: update.costs,
                         }
                     }
                     ServerMessage::UserJoined { user, display_name, role } => {
@@ -4489,9 +4495,9 @@ impl App {
                     server_url, session.display_name, session.role
                 ));
             }
-            ServerClientMessage::StateUpdate { workers, beads } => {
+            ServerClientMessage::StateUpdate { workers, beads, costs } => {
                 // Update data manager with server state
-                self.data_manager.update_from_server_state(workers, beads);
+                self.data_manager.update_from_server_state(workers, beads, costs);
             }
             ServerClientMessage::UserJoined { user, display_name, role } => {
                 self.sessions_panel.add_user(user, display_name.clone(), role);

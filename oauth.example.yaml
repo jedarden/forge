@@ -1,0 +1,54 @@
+# FORGE Server OAuth2 Configuration Example
+# Copy this file to ~/.forge/oauth.yaml and customize for your environment
+
+# OAuth Provider: GitHub, Google, or GitLab
+provider: GitHub
+
+# OAuth Client ID from your provider
+# Get this from your OAuth app settings
+client_id: "your_client_id_here"
+
+# OAuth Client Secret (optional, for enhanced token validation)
+# Recommended for production deployments
+client_secret: "your_client_secret_here"
+
+# User role mappings
+# Map OAuth provider usernames to FORGE roles
+# Valid roles: Admin, Operator, Viewer
+user_roles:
+  "jedarden": "Admin"
+  "team_member_1": "Operator"
+  "team_member_2": "Viewer"
+  "contractor": "Viewer"
+
+# Display name mappings (optional)
+# Provide friendly display names for users
+display_names:
+  "jedarden": "Jedarden Admin"
+  "team_member_1": "Team Member One"
+  "team_member_2": "Team Member Two"
+
+# Role Permissions:
+# - Admin: Full access including user management, config modification
+# - Operator: Can spawn/kill workers, assign beads, but cannot modify config
+# - Viewer: Read-only access to view workers, beads, and costs
+
+# Getting OAuth Credentials:
+#
+# GitHub:
+#   1. Go to Settings → Developer settings → OAuth Apps
+#   2. Create a new OAuth App
+#   3. Set Authorization callback URL: http://localhost:8080/callback
+#   4. Copy the Client ID and generate a Client Secret
+#
+# Google:
+#   1. Go to Google Cloud Console → APIs & Services → Credentials
+#   2. Create OAuth 2.0 credentials
+#   3. Add http://localhost:8080/callback to authorized redirect URIs
+#   4. Copy the Client ID and Client Secret
+#
+# GitLab:
+#   1. Go to User Settings → Applications
+#   2. Create a new application
+#   3. Set Redirect URI: http://localhost:8080/callback
+#   4. Copy the Application ID and Secret

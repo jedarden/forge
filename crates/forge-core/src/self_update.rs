@@ -26,7 +26,7 @@
 
 use std::env;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
@@ -189,7 +189,7 @@ pub async fn check_for_update(current_version: &str) -> crate::Result<UpdateStat
 
     let expected_checksum = if let Some(checksums) = checksums_asset {
         info!("Fetching SHA256SUMS from {}", checksums.download_url);
-        fetch_checksum_from_url(&checksums.download_url, &asset_name).await?
+        fetch_checksum_from_url(&checksums.download_url, asset_name).await?
     } else {
         warn!("No SHA256SUMS asset found in release - proceeding without checksum verification (INSECURE)");
         String::new()
@@ -712,7 +712,7 @@ fn verify_binary(path: &Path, expected_checksum: &str) -> crate::Result<()> {
 
     let magic = &file_contents[0..4];
     // ELF magic: 0x7f 'E' 'L' 'F'
-    if magic != &[0x7f, 0x45, 0x4c, 0x46] {
+    if magic != [0x7f, 0x45, 0x4c, 0x46] {
         return Err(ForgeError::UpdateVerification {
             message: "Downloaded file is not a valid ELF binary".to_string(),
         });

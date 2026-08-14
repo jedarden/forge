@@ -64,6 +64,18 @@ struct Cli {
     #[arg(long, default_value = "8080")]
     server_port: u16,
 
+    /// Enable TLS/WSS (WebSocket Secure) for production deployments
+    #[arg(long)]
+    server_tls: bool,
+
+    /// Path to TLS certificate file (PEM format) for WSS
+    #[arg(long)]
+    server_tls_cert: Option<std::path::PathBuf>,
+
+    /// Path to TLS private key file (PEM format) for WSS
+    #[arg(long)]
+    server_tls_key: Option<std::path::PathBuf>,
+
     /// Enable client mode and connect to a FORGE server
     #[arg(long, value_name = "URL")]
     connect: Option<String>,
@@ -308,7 +320,7 @@ fn main() -> ExitCode {
 
     // Check if server mode is enabled
     if cli.server {
-        return run_server_mode(cli.server_bind, cli.server_port);
+        return run_server_mode(cli.server_bind, cli.server_port, cli.server_tls, cli.server_tls_cert, cli.server_tls_key);
     }
 
     // Check if client mode is enabled
@@ -1140,21 +1152,51 @@ fn print_validation_results(results: &validator::ComprehensiveValidationResults,
 }
 
 /// Run FORGE in server mode for multi-user collaboration.
-fn run_server_mode(bind_address: String, port: u16) -> ExitCode {
+fn run_server_mode(bind_address: String, port: u16, tls: bool, tls_cert: Option<std::path::PathBuf>, tls_key: Option<std::path::PathBuf>) -> ExitCode {
     use forge_tui::{ClientConfig, App};
+    use forge_server::TlsConfig;
 
     info!("Starting FORGE in server mode on {}:{}", bind_address, port);
     eprintln!("🚀 FORGE Server Mode");
     eprintln!("   Listening on {}:{}", bind_address, port);
+
+    // Validate TLS configuration
+    let tls_config = if tls {
+        match (&tls_cert, &tls_key) {
+            (Some(cert_path), Some(key_path)) => {
+                eprintln!("   🔒 TLS enabled with certificate: {}", cert_path.display());
+                eprintln!("   🔒 TLS private key: {}", key_path.display());
+                Some(TlsConfig {
+                    cert_path: cert_path.to_string_lossy().to_string(),
+                    key_path: key_path.to_string_lossy().to_string(),
+                })
+            }
+            (None, None) => {
+                eprintln!("❌ Error: TLS enabled but --server-tls-cert and --server-tls-key not provided");
+                eprintln!("   Usage: forge --server --server-tls --server-tls-cert <cert.pem> --server-tls-key <key.pem>");
+                return ExitCode::from(1);
+            }
+            (Some(_), None) | (None, Some(_)) => {
+                eprintln!("❌ Error: Both --server-tls-cert and --server-tls-key must be provided together");
+                return ExitCode::from(1);
+            }
+        }
+    } else {
+        eprintln!("   ⚠️  TLS disabled (use --server-tls for production deployments)");
+        None
+    };
+
     eprintln!();
 
     // Clone values before moving config
     let server_bind_address = bind_address.clone();
     let server_port = port;
+    let tls_enabled = tls_config.is_some();
 
     let config = ServerConfig {
         bind_address,
         port,
+        tls: tls_config,
     };
 
     // Clone for client URL (after move into thread)
@@ -1182,7 +1224,9 @@ fn run_server_mode(bind_address: String, port: u16) -> ExitCode {
             eprintln!("     - operator/operator123 (Operator)");
             eprintln!("     - viewer/viewer123 (Viewer)");
             eprintln!();
-            eprintln!("   Connect clients to: ws://{}:{}/ws", server_bind_address, server_port);
+
+            let protocol = if tls_enabled { "wss" } else { "ws" };
+            eprintln!("   Connect clients to: {}://{}:{}/ws", protocol, server_bind_address, server_port);
             eprintln!();
             eprintln!("🔗 Starting local TUI client...");
             eprintln!();
@@ -1198,8 +1242,9 @@ fn run_server_mode(bind_address: String, port: u16) -> ExitCode {
     std::thread::sleep(std::time::Duration::from_secs(1));
 
     // Create client config pointing to localhost
+    let protocol = if tls_enabled { "wss" } else { "ws" };
     let client_config = ClientConfig {
-        server_url: format!("ws://{}:{}/ws", client_bind_address, client_port),
+        server_url: format!("{}://{}:{}/ws", protocol, client_bind_address, client_port),
         user_id: "admin".to_string(),
         password: "admin123".to_string(),
     };

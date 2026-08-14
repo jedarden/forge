@@ -71,15 +71,72 @@ server:
   auth_password: "password"
 ```
 
-## Default Users
+## Authentication
 
-The server comes with three default users for development:
+### Production OAuth2 Authentication
+
+**FORGE uses OAuth2 by default for production deployments.** The server supports multiple OAuth providers:
+
+- **GitHub OAuth** (recommended for development)
+- **Google OAuth**
+- **GitLab OAuth**
+
+#### OAuth Configuration
+
+Create `~/.forge/oauth.yaml`:
+
+```yaml
+# OAuth Provider: GitHub, Google, or GitLab
+provider: GitHub
+
+# OAuth Client ID from your provider
+client_id: "your_oauth_client_id"
+
+# OAuth Client Secret (optional, for enhanced token validation)
+client_secret: "your_oauth_client_secret"
+
+# User role mappings
+user_roles:
+  "github_username": "Admin"  # Admin, Operator, or Viewer
+  "team_member": "Operator"
+  "viewer_user": "Viewer"
+
+# Display name mappings (optional)
+display_names:
+  "github_username": "Full Name"
+```
+
+#### Getting OAuth Credentials
+
+**GitHub:**
+1. Go to Settings → Developer settings → OAuth Apps
+2. Create a new OAuth App
+3. Set Authorization callback URL: `http://localhost:8080/callback`
+4. Copy the Client ID and generate a Client Secret
+
+**Google:**
+1. Go to Google Cloud Console → APIs & Services → Credentials
+2. Create OAuth 2.0 credentials
+3. Add `http://localhost:8080/callback` to authorized redirect URIs
+4. Copy the Client ID and Client Secret
+
+**GitLab:**
+1. Go to User Settings → Applications
+2. Create a new application
+3. Set Redirect URI: `http://localhost:8080/callback`
+4. Copy the Application ID and Secret
+
+### Development SimpleAuth (Deprecated)
+
+For development and testing only, the server supports a simple in-memory auth provider with default users:
 
 | Username | Password | Role    | Permissions                         |
 |----------|----------|---------|-------------------------------------|
 | admin    | admin123 | Admin   | Full access including user management |
 | operator | operator123 | Operator | Spawn/kill workers, assign tasks  |
 | viewer   | viewer123 | Viewer  | Read-only observation               |
+
+**⚠️ SimpleAuth is deprecated and should NOT be used in production.**
 
 ## Roles and Permissions
 

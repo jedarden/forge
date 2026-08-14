@@ -32,6 +32,11 @@ axum = { version = "0.8", features = ["ws", "macros"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 
+# TLS support
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+rustls-pemfile = "2.2"
+rustls = { version = "0.23", features = ["std"] }
+
 # UUID generation
 uuid = { version = "1.11", features = ["v4", "serde"] }
 
@@ -41,6 +46,15 @@ chrono = { workspace = true }
 # Async utilities
 futures-util = { workspace = true }
 async-trait = { workspace = true }
+
+# HTTP client for OAuth token validation
+reqwest = { version = "0.12", features = ["json"] }
+
+# Serialization for OAuth config
+serde_yaml = "0.9"
+
+# Random for cache cleanup
+rand = "0.8"
 
 [dev-dependencies]
 tokio-test = "0.4"
