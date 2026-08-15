@@ -229,6 +229,14 @@ forge --connect http://...  # Connect as a client
 
 ---
 
+## Documentation
+
+- **[TLS/WSS Setup Guide](docs/TLS_SETUP.md)** — Complete guide for configuring TLS and secure WebSocket (WSS) connections in production, including Let's Encrypt setup, reverse proxy configuration, and troubleshooting
+- **[Team Collaboration](docs/TEAM_COLLABORATION.md)** — Multi-user server mode setup and usage
+- **[Development Guide](CLAUDE.md)** — For AI assistants working on FORGE
+
+---
+
 ## Development
 
 ```bash
