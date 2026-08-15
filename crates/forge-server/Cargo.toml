@@ -36,6 +36,8 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 axum-server = { version = "0.7", features = ["tls-rustls"] }
 rustls-pemfile = "2.2"
 rustls = { version = "0.23", features = ["std"] }
+x509-parser = "0.16"
+base64 = "0.22"
 
 # UUID generation
 uuid = { version = "1.11", features = ["v4", "serde"] }
@@ -56,6 +58,13 @@ serde_yaml = "0.9"
 # Random for cache cleanup
 rand = "0.8"
 
+# Password hashing
+argon2 = "0.5"
+
+# Certificate generation
+rcgen = "0.13"
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = { workspace = true }
+time = "0.3"

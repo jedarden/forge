@@ -8,6 +8,10 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use argon2::{
+    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    Argon2,
+};
 
 /// Result of an authentication attempt.
 #[derive(Debug, Clone)]
@@ -33,7 +37,7 @@ pub struct SimpleAuth {
 
 #[derive(Clone)]
 struct UserCredentials {
-    password: String,
+    password_hash: String,  // Argon2 hashed password
     display_name: String,
     role: UserRole,
 }
@@ -47,10 +51,19 @@ impl SimpleAuth {
     }
 
     /// Add a user to the auth provider.
+    ///
+    /// Passwords are hashed using Argon2 before storage.
     pub async fn add_user(&self, user_id: impl Into<String>, password: impl Into<String>, display_name: impl Into<String>, role: UserRole) {
+        let password = password.into();
+        let salt = SaltString::generate(&mut OsRng);
+        let argon2 = Argon2::default();
+        let password_hash = argon2.hash_password(password.as_bytes(), &salt)
+            .expect("failed to hash password")
+            .to_string();
+
         let mut users = self.users.write().await;
         users.insert(user_id.into(), UserCredentials {
-            password: password.into(),
+            password_hash,
             display_name: display_name.into(),
             role,
         });
@@ -82,9 +95,13 @@ impl AuthProvider for SimpleAuth {
         let user = users.get(user_id)
             .ok_or_else(|| ServerError::AuthenticationFailed(format!("user not found: {}", user_id)))?;
 
-        if user.password != credentials {
-            return Err(ServerError::AuthenticationFailed("invalid credentials".to_string()));
-        }
+        // Parse and verify the password hash using constant-time comparison
+        let parsed_hash = PasswordHash::new(&user.password_hash)
+            .map_err(|_| ServerError::AuthenticationFailed("invalid password hash format".to_string()))?;
+
+        let argon2 = Argon2::default();
+        argon2.verify_password(credentials.as_bytes(), &parsed_hash)
+            .map_err(|_| ServerError::AuthenticationFailed("invalid credentials".to_string()))?;
 
         Ok(AuthResult {
             user_id: user_id.to_string(),
