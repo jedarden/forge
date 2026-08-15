@@ -160,6 +160,17 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Generate self-signed TLS certificate for development/testing
+    GenerateCert {
+        /// Domain name for the certificate (default: localhost)
+        #[arg(default_value = "localhost")]
+        domain: String,
+
+        /// Certificate validity period in days (default: 365)
+        #[arg(short, long, default_value = "365")]
+        days: u32,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -278,6 +289,9 @@ fn main() -> ExitCode {
                 json,
             } => {
                 return handle_validate_command(*verbose, *fix, *skip_backend_test, *json);
+            }
+            Commands::GenerateCert { domain, days } => {
+                return handle_generate_cert_command(domain, *days);
             }
             _ => {
                 // Other commands fall through to TUI startup
@@ -1148,6 +1162,57 @@ fn print_validation_results(results: &validator::ComprehensiveValidationResults,
         println!("✅ Validation passed");
     } else {
         println!("❌ Validation failed");
+    }
+}
+
+/// Handle the `forge generate-cert` command.
+fn handle_generate_cert_command(domain: String, days: u32) -> ExitCode {
+    use forge_server::cert_gen;
+
+    info!("Generating self-signed certificate for domain: {} (days: {})", domain, days);
+
+    eprintln!("🔐 Generating self-signed TLS certificate");
+    eprintln!("   Domain: {}", domain);
+    eprintln!("   Valid for: {} days", days);
+    eprintln!();
+
+    // Generate the certificate
+    let (cert_pem, key_pem) = match cert_gen::generate_self_signed_cert(&domain, days) {
+        Ok(result) => result,
+        Err(e) => {
+            eprintln!("❌ Failed to generate certificate: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    // Determine output paths
+    let forge_dir = get_forge_dir();
+    let cert_path = forge_dir.join("server-cert.pem");
+    let key_path = forge_dir.join("server-key.pem");
+
+    // Write to files
+    match cert_gen::write_cert_files(&cert_path, &key_path, &cert_pem, &key_pem) {
+        Ok(()) => {
+            eprintln!("✅ Certificate generated successfully!");
+            eprintln!();
+            eprintln!("   Certificate: {}", cert_path.display());
+            eprintln!("   Private Key: {}", key_path.display());
+            eprintln!();
+            eprintln!("📝 Usage:");
+            eprintln!("   forge --server --server-tls \\");
+            eprintln!("         --server-tls-cert {} \\", cert_path.display());
+            eprintln!("         --server-tls-key {}", key_path.display());
+            eprintln!();
+            eprintln!("⚠️  Security Notice:");
+            eprintln!("   This is a self-signed certificate for development/testing.");
+            eprintln!("   Clients will need to trust this certificate manually.");
+            eprintln!();
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to write certificate files: {}", e);
+            ExitCode::from(1)
+        }
     }
 }
 
