@@ -1029,6 +1029,19 @@ impl App {
         self.show_kill_dialog
     }
 
+    /// Returns whether FORGE is running in client/server mode (vs standalone).
+    ///
+    /// Server mode is active when connected to a FORGE server for multi-user
+    /// collaboration. This is detected by checking if the server client channel
+    /// sender exists (has active server connection).
+    ///
+    /// # Returns
+    /// * `true` if connected to a FORGE server (client mode)
+    /// * `false` if running standalone (local mode)
+    pub fn is_server_mode(&self) -> bool {
+        self.server_client_tx.is_some()
+    }
+
     /// Mark the UI as dirty (needs redraw).
     fn mark_dirty(&mut self) {
         self.dirty = true;
@@ -2920,6 +2933,16 @@ impl App {
             WorkerExecutor::Haiku => ("haiku", WorkerTier::Budget),
         };
 
+        // Check if connected to server - send request instead of spawning directly
+        if self.server_client_tx.is_some() {
+            self.send_server_client_request(ServerClientRequest::SpawnWorker {
+                model: model.to_string(),
+                count: 1,
+            });
+            self.status_message = Some(format!("Requested to spawn {} worker", model));
+            return;
+        }
+
         // Find the launcher script
         let home = std::env::var("HOME").unwrap_or_else(|_| "/home/coder".to_string());
         let forge_src = std::env::var("FORGE_SRC").unwrap_or_else(|_| format!("{}/forge", home));
@@ -3443,6 +3466,14 @@ impl App {
     /// Check if a worker is paused.
     pub fn is_worker_paused(&self, worker_id: &str) -> bool {
         self.paused_workers.contains(worker_id)
+    }
+
+    /// Check if FORGE is connected to a server.
+    ///
+    /// Returns true when running in client/server mode (server_client_tx exists),
+    /// false when running in standalone mode.
+    pub fn is_connected_to_server(&self) -> bool {
+        self.server_client_tx.is_some()
     }
 
     /// Acknowledge the currently selected alert in the alerts list.
@@ -8330,5 +8361,41 @@ mod tests {
         // Alert should be acknowledged
         let alerts = app.data_manager.alert_manager.active_alerts();
         assert!(alerts[0].acknowledged);
+    }
+
+    // ============================================================
+    // Server Mode Detection Tests
+    // ============================================================
+
+    #[test]
+    fn test_is_connected_to_server_returns_false_in_standalone_mode() {
+        let app = App::new();
+
+        // In standalone mode, server_client_tx should be None
+        assert!(
+            app.server_client_tx.is_none(),
+            "server_client_tx should be None in standalone mode"
+        );
+
+        // Therefore, is_connected_to_server should return false
+        assert!(
+            !app.is_connected_to_server(),
+            "is_connected_to_server should return false in standalone mode"
+        );
+    }
+
+    #[test]
+    fn test_is_connected_to_server_returns_true_when_channel_exists() {
+        let mut app = App::new();
+
+        // Simulate server mode by creating a channel
+        let (tx, _rx) = std::sync::mpsc::channel();
+        app.server_client_tx = Some(tx);
+
+        // Now is_connected_to_server should return true
+        assert!(
+            app.is_connected_to_server(),
+            "is_connected_to_server should return true when server_client_tx is Some"
+        );
     }
 }
