@@ -53,6 +53,12 @@ server:
   port: 8080
 ```
 
+> **⚠️ SECURITY WARNING:** Binding to `0.0.0.0` exposes the server on all network interfaces, allowing any host that can reach the port to attempt authentication. For production deployments:
+> 1. **Bind to localhost only:** Use `bind_address: "127.0.0.1"` to restrict access to the local machine
+> 2. **Use secure network access:** Reach the server through Tailscale, SSH tunnel, or a reverse proxy with TLS termination
+> 3. **Enable TLS/WSS:** Encrypt WebSocket connections in production environments
+> 4. **Use OAuth authentication:** Replace SimpleAuth with OAuth2 for production deployments (see below)
+
 ### Connecting as a Client
 
 Connect to a running FORGE server:
