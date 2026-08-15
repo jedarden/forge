@@ -47,6 +47,8 @@ pub mod assignment;
 pub mod protocol;
 pub mod client;
 pub mod oauth_auth;
+pub mod tls_validation;
+pub mod cert_gen;
 
 pub use session::{SessionManager, SessionRegistry};
 pub use assignment::BeadAssignmentTracker;
@@ -86,6 +88,34 @@ pub enum ServerError {
 
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+
+    // TLS-specific errors with detailed context
+    #[error("certificate load error: failed to load certificate from '{0}': {1}")]
+    CertificateLoadError(String, String),
+
+    #[error("private key load error: failed to load private key from '{0}': {1}")]
+    PrivateKeyLoadError(String, String),
+
+    #[error("invalid PEM format: {0}")]
+    InvalidPemFormat(String),
+
+    #[error("expired certificate: certificate expires on {0} ({1} days ago)")]
+    ExpiredCertificate(String, i64),
+
+    #[error("certificate expiring soon: certificate expires on {0} ({1} days remaining)")]
+    CertificateExpiringSoon(String, i64),
+
+    #[error("domain mismatch: certificate is for '{cert_domain}' but server is configured for '{server_domain}'")]
+    DomainMismatch { cert_domain: String, server_domain: String },
+
+    #[error("certificate chain error: {0}")]
+    CertificateChainError(String),
+
+    #[error("key mismatch: private key does not match certificate")]
+    KeyMismatch,
+
+    #[error("TLS validation failed: {0}")]
+    TlsValidationFailed(String),
 }
 
 impl From<ServerError> for ForgeError {
