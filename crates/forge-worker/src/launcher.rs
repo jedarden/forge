@@ -7,8 +7,9 @@ use crate::tmux;
 use crate::types::{LaunchConfig, LauncherOutput, SpawnRequest, WorkerHandle};
 use forge_core::types::WorkerStatus;
 use forge_core::{ForgeError, Result};
+use forge_cost::CostDatabase;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
@@ -26,6 +27,8 @@ pub struct WorkerLauncher {
     workers: Arc<RwLock<HashMap<String, WorkerHandle>>>,
     /// Session name prefix for all workers
     session_prefix: String,
+    /// Cost database used to persist task predictions before launch.
+    cost_db: Option<CostDatabase>,
 }
 
 impl Default for WorkerLauncher {
@@ -40,6 +43,7 @@ impl WorkerLauncher {
         Self {
             workers: Arc::new(RwLock::new(HashMap::new())),
             session_prefix: "forge-".into(),
+            cost_db: Self::default_cost_database(),
         }
     }
 
@@ -48,7 +52,22 @@ impl WorkerLauncher {
         Self {
             workers: Arc::new(RwLock::new(HashMap::new())),
             session_prefix: prefix.into(),
+            cost_db: Self::default_cost_database(),
         }
+    }
+
+    /// Use an explicit cost database, primarily for isolated callers/tests.
+    pub fn with_cost_database(mut self, db: CostDatabase) -> Self {
+        self.cost_db = Some(db);
+        self
+    }
+
+    /// Open the standard FORGE cost database when available.
+    fn default_cost_database() -> Option<CostDatabase> {
+        let home = std::env::var_os("HOME")?;
+        let forge_dir = PathBuf::from(home).join(".forge");
+        std::fs::create_dir_all(&forge_dir).ok()?;
+        CostDatabase::open(forge_dir.join("costs.db")).ok()
     }
 
     /// Spawn a new worker using the provided configuration.
@@ -60,6 +79,19 @@ impl WorkerLauncher {
     /// 4. Create a WorkerHandle and track it
     #[instrument(level = "info", skip(self), fields(worker_id = %request.worker_id, model = %request.config.model))]
     pub async fn spawn(&self, request: SpawnRequest) -> Result<WorkerHandle> {
+        // Persist the prediction before any launcher work. A failed launch still
+        // represents an assignment attempt, and successful launches will have
+        // their later API-call rows correlated by bead_id.
+        if let (Some(db), Some(assignment)) = (&self.cost_db, request.task_assignment.as_ref()) {
+            if let Err(error) = db.insert_task_assignment(assignment) {
+                warn!(
+                    bead_id = %assignment.bead_id,
+                    error = %error,
+                    "Failed to persist task assignment prediction"
+                );
+            }
+        }
+
         let config = &request.config;
         let worker_id = &request.worker_id;
 
@@ -421,6 +453,7 @@ mod tests {
     use super::*;
     use crate::types::LaunchConfig;
     use forge_core::types::WorkerTier;
+    use forge_cost::{CostDatabase, TaskAssignment};
     use std::path::PathBuf;
 
     #[test]
@@ -469,6 +502,36 @@ mod tests {
         assert_eq!(config.model, "sonnet");
         assert_eq!(config.tier, WorkerTier::Standard);
         assert_eq!(config.timeout_secs, 30);
+    }
+
+    #[tokio::test]
+    async fn test_task_assignment_is_persisted_before_launch() {
+        let db = CostDatabase::open_in_memory().unwrap();
+        let launcher = WorkerLauncher::new().with_cost_database(db.clone());
+        let config = LaunchConfig::new(
+            "/path/to/missing-launcher.sh",
+            "test-session",
+            "/workspace",
+            "claude-opus",
+        )
+        .with_bead("bd-123");
+        let request = SpawnRequest::new("worker-1", config)
+            .with_task_assignment(TaskAssignment::new("bd-123", 72, "premium", "claude-opus"));
+
+        // The launch fails after the assignment persistence step, proving the
+        // prediction is recorded before launcher validation/execution.
+        assert!(launcher.spawn(request).await.is_err());
+
+        let conn = db.connection();
+        let conn = conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_assignments WHERE bead_id = 'bd-123'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
     }
 
     #[tokio::test]
