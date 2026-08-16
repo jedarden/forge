@@ -3,9 +3,9 @@
 //! This crate handles loading, validating, and managing FORGE configuration
 //! from `~/.forge/config.yaml`.
 
+use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Default config file path (~/.forge/config.yaml).
@@ -68,9 +68,7 @@ impl ConfigLoadError {
     /// Get the line number where the error occurred (if available).
     pub fn line_number(&self) -> Option<usize> {
         match self {
-            ConfigLoadError::ParseError { error, .. } => {
-                error.location().map(|loc| loc.line())
-            }
+            ConfigLoadError::ParseError { error, .. } => error.location().map(|loc| loc.line()),
             _ => None,
         }
     }
@@ -78,9 +76,7 @@ impl ConfigLoadError {
     /// Get the column number where the error occurred (if available).
     pub fn column_number(&self) -> Option<usize> {
         match self {
-            ConfigLoadError::ParseError { error, .. } => {
-                error.location().map(|loc| loc.column())
-            }
+            ConfigLoadError::ParseError { error, .. } => error.location().map(|loc| loc.column()),
             _ => None,
         }
     }
@@ -100,8 +96,20 @@ impl ConfigLoadError {
 ///
 /// This represents the subset of config.yaml that can be hot-reloaded.
 /// Changes to these fields will take effect immediately.
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ForgeConfig {
+    /// Enable the periodic complexity-threshold calibration job.
+    #[serde(default = "default_auto_calibrate")]
+    pub auto_calibrate: bool,
+
+    /// Thresholds produced by the automatic calibration job.
+    ///
+    /// This is intentionally separate from user-authored settings. The
+    /// calibration job updates this overlay instead of replacing any of the
+    /// other configuration sections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calibrated_thresholds: Option<CalibratedThresholds>,
+
     /// Dashboard configuration
     #[serde(default)]
     pub dashboard: DashboardConfig,
@@ -125,6 +133,21 @@ pub struct ForgeConfig {
     /// Notification configuration
     #[serde(default)]
     pub notifications: NotificationsConfig,
+}
+
+impl Default for ForgeConfig {
+    fn default() -> Self {
+        Self {
+            auto_calibrate: default_auto_calibrate(),
+            calibrated_thresholds: None,
+            dashboard: DashboardConfig::default(),
+            theme: ThemeConfig::default(),
+            cost_tracking: CostTrackingConfig::default(),
+            auto_recovery: AutoRecoveryConfig::default(),
+            workers: WorkerConfig::default(),
+            notifications: NotificationsConfig::default(),
+        }
+    }
 }
 
 impl ForgeConfig {
@@ -184,11 +207,10 @@ impl ForgeConfig {
         }
 
         // Try to read the file
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| ConfigLoadError::ReadError {
-                path: path.clone(),
-                error: e,
-            })?;
+        let content = std::fs::read_to_string(path).map_err(|e| ConfigLoadError::ReadError {
+            path: path.clone(),
+            error: e,
+        })?;
 
         // Try to parse as full YAML
         match serde_yaml::from_str::<ForgeConfig>(&content) {
@@ -267,6 +289,15 @@ impl ForgeConfig {
             .and_then(|v| serde_yaml::from_value(v.clone()).ok())
             .unwrap_or_default();
 
+        let auto_calibrate = yaml
+            .get("auto_calibrate")
+            .and_then(|v| serde_yaml::from_value(v.clone()).ok())
+            .unwrap_or_else(default_auto_calibrate);
+
+        let calibrated_thresholds = yaml
+            .get("calibrated_thresholds")
+            .and_then(|v| serde_yaml::from_value(v.clone()).ok());
+
         let theme = yaml
             .get("theme")
             .and_then(|v| serde_yaml::from_value(v.clone()).ok())
@@ -295,6 +326,8 @@ impl ForgeConfig {
         tracing::info!("Loaded partial config - some sections may use defaults");
 
         Some(Self {
+            auto_calibrate,
+            calibrated_thresholds,
             dashboard,
             theme,
             cost_tracking,
@@ -340,6 +373,18 @@ impl ForgeConfig {
                 "budget_critical_threshold {} exceeds 100%",
                 self.cost_tracking.budget_critical_threshold
             ));
+        }
+
+        if let Some(thresholds) = self.calibrated_thresholds {
+            if thresholds.budget == 0
+                || thresholds.budget >= thresholds.standard
+                || thresholds.standard >= 100
+            {
+                warnings.push(format!(
+                    "calibrated_thresholds must satisfy 0 < budget < standard < 100, got {} and {}",
+                    thresholds.budget, thresholds.standard
+                ));
+            }
         }
 
         // Validate theme name if specified
@@ -473,23 +518,25 @@ impl ForgeConfig {
     pub fn save_to(&self, path: &PathBuf) -> Result<(), ConfigLoadError> {
         // Create parent directory if needed
         if let Some(parent) = path.parent()
-            && !parent.exists() {
-                std::fs::create_dir_all(parent).map_err(|e| ConfigLoadError::ValidationError(
-                    format!("Failed to create config directory: {}", e)
-                ))?;
+            && !parent.exists()
+        {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                ConfigLoadError::ValidationError(format!(
+                    "Failed to create config directory: {}",
+                    e
+                ))
+            })?;
         }
 
         // Serialize to YAML
-        let yaml = serde_yaml::to_string(self)
-            .map_err(|e| ConfigLoadError::ValidationError(
-                format!("Failed to serialize config: {}", e)
-            ))?;
+        let yaml = serde_yaml::to_string(self).map_err(|e| {
+            ConfigLoadError::ValidationError(format!("Failed to serialize config: {}", e))
+        })?;
 
         // Write to file
-        std::fs::write(path, yaml)
-            .map_err(|e| ConfigLoadError::ValidationError(
-                format!("Failed to write config file: {}", e)
-            ))?;
+        std::fs::write(path, yaml).map_err(|e| {
+            ConfigLoadError::ValidationError(format!("Failed to write config file: {}", e))
+        })?;
 
         tracing::info!("Saved configuration to {:?}", path);
         Ok(())
@@ -499,6 +546,31 @@ impl ForgeConfig {
     pub fn save(&self) -> Result<(), ConfigLoadError> {
         let path = config_path().ok_or(ConfigLoadError::NoHomePath)?;
         self.save_to(&path)
+    }
+}
+
+/// Complexity cutoffs generated from empirical task outcomes.
+///
+/// `budget` and `standard` are inclusive upper bounds. Premium tasks have a
+/// score above `standard`. These values are an overlay and do not replace any
+/// user-authored complexity settings.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+pub struct CalibratedThresholds {
+    /// Inclusive maximum score routed to the budget tier.
+    #[serde(alias = "budget_threshold", alias = "budget_max_score")]
+    pub budget: u32,
+
+    /// Inclusive maximum score routed to the standard tier.
+    #[serde(alias = "standard_threshold", alias = "standard_max_score")]
+    pub standard: u32,
+}
+
+impl CalibratedThresholds {
+    /// Create valid, ordered thresholds.
+    pub fn new(budget: u32, standard: u32) -> Self {
+        let budget = budget.clamp(1, 98);
+        let standard = standard.clamp(budget.saturating_add(1), 99);
+        Self { budget, standard }
     }
 }
 
@@ -763,6 +835,10 @@ fn default_cost_enabled() -> bool {
     true
 }
 
+fn default_auto_calibrate() -> bool {
+    true
+}
+
 fn default_warning_threshold() -> u8 {
     70
 }
@@ -786,6 +862,8 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = ForgeConfig::default();
+        assert!(config.auto_calibrate);
+        assert!(config.calibrated_thresholds.is_none());
         assert_eq!(config.dashboard.refresh_interval_ms, 1000);
         assert_eq!(config.dashboard.max_fps, 60);
         assert!(config.cost_tracking.enabled);
@@ -814,6 +892,20 @@ cost_tracking:
         assert_eq!(config.theme.name, Some("cyberpunk".to_string()));
         assert_eq!(config.cost_tracking.budget_warning_threshold, 80);
         assert_eq!(config.cost_tracking.monthly_budget_usd, Some(100.0));
+    }
+
+    #[test]
+    fn test_calibration_config_defaults_and_round_trip() {
+        let defaults = ForgeConfig::parse("auto_calibrate: false\n").unwrap();
+        assert!(!defaults.auto_calibrate);
+        assert!(defaults.calibrated_thresholds.is_none());
+
+        let config =
+            ForgeConfig::parse("calibrated_thresholds:\n  budget: 24\n  standard: 55\n").unwrap();
+        assert_eq!(
+            config.calibrated_thresholds,
+            Some(CalibratedThresholds::new(24, 55))
+        );
     }
 
     #[test]
@@ -857,10 +949,21 @@ dashboard:
 
     #[test]
     fn test_validate_valid_themes() {
-        for theme in &["default", "dark", "light", "cyberpunk", "DEFAULT", "CyberPunk"] {
+        for theme in &[
+            "default",
+            "dark",
+            "light",
+            "cyberpunk",
+            "DEFAULT",
+            "CyberPunk",
+        ] {
             let mut config = ForgeConfig::default();
             config.theme.name = Some(theme.to_string());
-            assert!(config.validate().is_ok(), "Theme '{}' should be valid", theme);
+            assert!(
+                config.validate().is_ok(),
+                "Theme '{}' should be valid",
+                theme
+            );
         }
     }
 

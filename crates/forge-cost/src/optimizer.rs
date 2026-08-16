@@ -30,10 +30,11 @@
 //! ```
 
 use crate::db::CostDatabase;
-use crate::error::Result;
+use crate::error::{CostError, Result};
 use crate::models::{QuotaStatus, Subscription};
 use crate::query::{CostQuery, SubscriptionOptimizationReport};
 use chrono::{DateTime, Utc};
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -62,7 +63,7 @@ impl TaskPriority {
             TaskPriority::Critical => 0.1, // Cost doesn't matter much
             TaskPriority::High => 0.3,
             TaskPriority::Normal => 0.5,
-            TaskPriority::Low => 0.8, // Cost matters a lot
+            TaskPriority::Low => 0.8,        // Cost matters a lot
             TaskPriority::Background => 1.0, // Only use cheapest
         }
     }
@@ -308,6 +309,48 @@ pub struct ModelEfficiency {
     pub recommendation: String,
 }
 
+/// Empirical outcome and cost metrics for one predicted complexity tier.
+///
+/// A sample is an assignment with a terminal task event. API-call costs are
+/// joined by bead ID; task-event costs are used when no API-call rows exist.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TierEfficiency {
+    /// Predicted complexity tier (budget, standard, or premium).
+    pub predicted_tier: String,
+
+    /// Number of assignments with a terminal outcome.
+    pub sample_count: u64,
+
+    /// Number of successful assignments.
+    pub success_count: u64,
+
+    /// Number of failed assignments.
+    pub failure_count: u64,
+
+    /// Total observed cost for the assignments in this tier.
+    pub total_cost: f64,
+
+    /// Empirical cost per successful assignment.
+    pub cost_per_success: f64,
+
+    /// Successful assignments divided by terminal assignments.
+    pub success_rate: f64,
+
+    /// Average score predicted for assignments in this tier.
+    pub average_predicted_score: f64,
+}
+
+/// Convert an average observed task cost and success rate into cost per
+/// successful task. This is shared by model and predicted-tier efficiency
+/// calculations so calibration uses the optimizer's established metric.
+fn cost_per_success(avg_cost_per_task: f64, success_rate: f64) -> f64 {
+    if success_rate > 0.0 {
+        avg_cost_per_task / success_rate
+    } else {
+        avg_cost_per_task
+    }
+}
+
 /// The cost optimizer engine.
 pub struct CostOptimizer<'a> {
     /// Database reference
@@ -518,7 +561,8 @@ impl<'a> CostOptimizer<'a> {
         // Try partial match (e.g., "claude-opus" matches "claude-opus-4")
         let model_lower = model_id.to_lowercase();
         for (key, pricing) in &self.pricing {
-            if model_lower.contains(&key.to_lowercase()) || key.to_lowercase().contains(&model_lower)
+            if model_lower.contains(&key.to_lowercase())
+                || key.to_lowercase().contains(&model_lower)
             {
                 return Some(pricing);
             }
@@ -528,12 +572,7 @@ impl<'a> CostOptimizer<'a> {
     }
 
     /// Estimate cost for a task on a specific model.
-    pub fn estimate_task_cost(
-        &self,
-        model_id: &str,
-        input_tokens: u64,
-        output_tokens: u64,
-    ) -> f64 {
+    pub fn estimate_task_cost(&self, model_id: &str, input_tokens: u64, output_tokens: u64) -> f64 {
         if let Some(pricing) = self.get_model_pricing(model_id) {
             // If model has subscription and quota available, cost is 0
             if pricing.has_subscription && self.has_subscription_quota(model_id) {
@@ -597,7 +636,8 @@ impl<'a> CostOptimizer<'a> {
 
         // First check for urgent subscriptions (use-or-lose)
         for sub in &self.subscriptions {
-            if (sub.quota_status() == QuotaStatus::MaxOut || sub.quota_status() == QuotaStatus::Accelerate)
+            if (sub.quota_status() == QuotaStatus::MaxOut
+                || sub.quota_status() == QuotaStatus::Accelerate)
                 && let Some(ref model_id) = sub.model
                 && let Some(pricing) = self.get_model_pricing(model_id)
                 && let Some(remaining) = sub.remaining_quota()
@@ -740,7 +780,8 @@ impl<'a> CostOptimizer<'a> {
                             summary.reset_time
                         ),
                         estimated_savings: summary.monthly_cost,
-                        action: "Route all non-critical tasks to this model immediately".to_string(),
+                        action: "Route all non-critical tasks to this model immediately"
+                            .to_string(),
                     });
                 }
                 QuotaStatus::Depleted => {
@@ -805,7 +846,8 @@ impl<'a> CostOptimizer<'a> {
 
         // Calculate totals
         let current_monthly_spend = self.query.get_current_month_costs()?.total_cost_usd;
-        let total_potential_savings: f64 = recommendations.iter().map(|r| r.estimated_savings).sum();
+        let total_potential_savings: f64 =
+            recommendations.iter().map(|r| r.estimated_savings).sum();
         let optimized_monthly_spend = (current_monthly_spend - total_potential_savings).max(0.0);
 
         // Calculate savings achieved from previous optimizations
@@ -825,15 +867,17 @@ impl<'a> CostOptimizer<'a> {
     }
 
     /// Calculate model efficiency metrics.
-    fn calculate_model_efficiency(&self) -> Result<Vec<ModelEfficiency>> {
+    pub fn calculate_model_efficiency(&self) -> Result<Vec<ModelEfficiency>> {
         let today = Utc::now().date_naive();
         let models = self.db.get_model_performance(today)?;
 
         let efficiency: Vec<ModelEfficiency> = models
             .into_iter()
             .map(|perf| {
+                let cost_per_success_value =
+                    cost_per_success(perf.avg_cost_per_task, perf.success_rate);
                 let efficiency_score = if perf.success_rate > 0.0 {
-                    perf.avg_cost_per_task / perf.success_rate
+                    cost_per_success_value
                 } else {
                     f64::MAX
                 };
@@ -851,11 +895,7 @@ impl<'a> CostOptimizer<'a> {
                 ModelEfficiency {
                     model_id: perf.model.clone(),
                     total_cost: perf.total_cost_usd,
-                    cost_per_success: if perf.success_rate > 0.0 {
-                        perf.avg_cost_per_task / perf.success_rate
-                    } else {
-                        perf.avg_cost_per_task
-                    },
+                    cost_per_success: cost_per_success_value,
                     success_rate: perf.success_rate,
                     efficiency_score,
                     task_count: perf.tasks_completed as u64 + perf.tasks_failed as u64,
@@ -865,6 +905,131 @@ impl<'a> CostOptimizer<'a> {
             .collect();
 
         Ok(efficiency)
+    }
+
+    /// Calculate empirical cost-per-success metrics grouped by predicted tier.
+    ///
+    /// The latest assignment for each bead is used so retries do not multiply
+    /// the cost and outcome of a single task. A task contributes only after a
+    /// terminal `task_events` row is present, or an API-call row exists when a
+    /// caller does not persist task events. API calls supply the observed cost,
+    /// with task-event cost as a fallback for outcome-only callers.
+    pub fn calculate_tier_efficiency(&self) -> Result<Vec<TierEfficiency>> {
+        let connection = self.db.connection();
+        let conn = connection
+            .lock()
+            .map_err(|e| CostError::Query(format!("failed to acquire lock: {}", e)))?;
+
+        let mut stmt = conn.prepare(
+            "WITH latest_assignments AS (
+                 SELECT ta.bead_id, ta.predicted_tier, ta.predicted_score
+                 FROM task_assignments ta
+                 INNER JOIN (
+                     SELECT bead_id, MAX(id) AS id
+                     FROM task_assignments
+                     GROUP BY bead_id
+                 ) latest ON latest.id = ta.id
+             ),
+             api_costs AS (
+                 SELECT bead_id,
+                        SUM(cost_usd) AS total_cost,
+                        MAX(CASE WHEN LOWER(event_type) IN
+                            ('failed', 'failure', 'error', 'errored')
+                            THEN 1 ELSE 0 END) AS failed,
+                        MAX(CASE WHEN LOWER(event_type) NOT IN
+                            ('failed', 'failure', 'error', 'errored')
+                            THEN 1 ELSE 0 END) AS succeeded
+                 FROM api_calls
+                 WHERE bead_id IS NOT NULL
+                 GROUP BY bead_id
+             ),
+             task_outcomes AS (
+                 SELECT bead_id,
+                        MAX(CASE WHEN LOWER(event_type) IN
+                            ('completed', 'complete', 'success', 'succeeded')
+                            THEN 1 ELSE 0 END) AS succeeded,
+                        MAX(CASE WHEN LOWER(event_type) IN
+                            ('failed', 'failure', 'error', 'errored')
+                            THEN 1 ELSE 0 END) AS failed,
+                        MAX(CASE WHEN LOWER(event_type) IN
+                            ('completed', 'complete', 'success', 'succeeded',
+                             'failed', 'failure', 'error', 'errored')
+                            THEN 1 ELSE 0 END) AS terminal,
+                        COALESCE(SUM(cost_usd), 0) AS event_cost
+                 FROM task_events
+                 GROUP BY bead_id
+             ),
+             assignment_outcomes AS (
+                 SELECT la.predicted_tier,
+                        la.predicted_score,
+                        CASE WHEN COALESCE(task.terminal, 0) = 1
+                             THEN COALESCE(task.succeeded, 0)
+                             ELSE COALESCE(api.succeeded, 0)
+                        END AS succeeded,
+                        CASE WHEN COALESCE(task.terminal, 0) = 1
+                             THEN COALESCE(task.failed, 0)
+                             ELSE COALESCE(api.failed, 0)
+                        END AS failed,
+                        COALESCE(api.total_cost, task.event_cost, 0) AS total_cost
+                 FROM latest_assignments la
+                 LEFT JOIN api_costs api ON api.bead_id = la.bead_id
+                 LEFT JOIN task_outcomes task ON task.bead_id = la.bead_id
+             )
+             SELECT predicted_tier,
+                    COUNT(*) AS sample_count,
+                    SUM(CASE WHEN succeeded = 1
+                             THEN 1 ELSE 0 END) AS success_count,
+                    SUM(CASE WHEN succeeded = 0 AND failed = 1
+                             THEN 1 ELSE 0 END) AS failure_count,
+                    SUM(total_cost) AS total_cost,
+                    AVG(predicted_score) AS average_predicted_score
+             FROM assignment_outcomes
+             WHERE succeeded = 1 OR failed = 1
+             GROUP BY predicted_tier
+             ORDER BY CASE predicted_tier
+                 WHEN 'budget' THEN 0
+                 WHEN 'standard' THEN 1
+                 WHEN 'premium' THEN 2
+                 ELSE 3
+             END",
+        )?;
+
+        stmt.query_map(params![], |row| {
+            let predicted_tier: String = row.get(0)?;
+            let sample_count: i64 = row.get(1)?;
+            let success_count: i64 = row.get(2)?;
+            let failure_count: i64 = row.get(3)?;
+            let total_cost: f64 = row.get(4)?;
+            let average_predicted_score: f64 = row.get(5)?;
+            let success_rate = if sample_count > 0 {
+                success_count as f64 / sample_count as f64
+            } else {
+                0.0
+            };
+            let average_cost_per_task = if sample_count > 0 {
+                total_cost / sample_count as f64
+            } else {
+                0.0
+            };
+            let tier_cost_per_success = if success_count > 0 {
+                cost_per_success(average_cost_per_task, success_rate)
+            } else {
+                f64::INFINITY
+            };
+
+            Ok(TierEfficiency {
+                predicted_tier,
+                sample_count: sample_count.max(0) as u64,
+                success_count: success_count.max(0) as u64,
+                failure_count: failure_count.max(0) as u64,
+                total_cost,
+                cost_per_success: tier_cost_per_success,
+                success_rate,
+                average_predicted_score,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(CostError::from)
     }
 
     /// Calculate savings achieved from optimization.
@@ -908,8 +1073,7 @@ impl<'a> CostOptimizer<'a> {
         let report = self.generate_report()?;
 
         if report.current_monthly_spend > 0.0 {
-            let reduction =
-                report.total_potential_savings / report.current_monthly_spend * 100.0;
+            let reduction = report.total_potential_savings / report.current_monthly_spend * 100.0;
             Ok(reduction.min(100.0))
         } else {
             Ok(0.0)
@@ -944,7 +1108,7 @@ impl<'a> CostOptimizer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Subscription, SubscriptionType};
+    use crate::models::{ApiCall, Subscription, SubscriptionType, TaskAssignment};
     use chrono::Duration as ChronoDuration;
 
     fn create_test_db() -> CostDatabase {
@@ -968,7 +1132,9 @@ mod tests {
 
     #[test]
     fn test_task_priority_cost_sensitivity() {
-        assert!(TaskPriority::Critical.cost_sensitivity() < TaskPriority::Normal.cost_sensitivity());
+        assert!(
+            TaskPriority::Critical.cost_sensitivity() < TaskPriority::Normal.cost_sensitivity()
+        );
         assert!(TaskPriority::Normal.cost_sensitivity() < TaskPriority::Low.cost_sensitivity());
         assert!(TaskPriority::Low.cost_sensitivity() < TaskPriority::Background.cost_sensitivity());
     }
@@ -1004,7 +1170,9 @@ mod tests {
         let db = create_test_db();
         let optimizer = CostOptimizer::new(&db, OptimizerConfig::default());
 
-        let rec = optimizer.recommend_model(10000, TaskPriority::Critical).unwrap();
+        let rec = optimizer
+            .recommend_model(10000, TaskPriority::Critical)
+            .unwrap();
 
         // Critical tasks should still optimize but prefer quality
         assert!(rec.quality_score >= 50.0);
@@ -1017,9 +1185,10 @@ mod tests {
         // Add a subscription
         let start = Utc::now() - ChronoDuration::days(15);
         let end = Utc::now() + ChronoDuration::days(15);
-        let mut sub = Subscription::new("Claude Pro", SubscriptionType::FixedQuota, 20.0, start, end)
-            .with_quota(500)
-            .with_model("claude-sonnet-4");
+        let mut sub =
+            Subscription::new("Claude Pro", SubscriptionType::FixedQuota, 20.0, start, end)
+                .with_quota(500)
+                .with_model("claude-sonnet-4");
         sub.quota_used = 250;
 
         db.upsert_subscription(&sub).unwrap();
@@ -1037,9 +1206,10 @@ mod tests {
         // Add a subscription that needs acceleration
         let start = Utc::now() - ChronoDuration::days(24);
         let end = Utc::now() + ChronoDuration::days(6);
-        let mut sub = Subscription::new("Claude Pro", SubscriptionType::FixedQuota, 20.0, start, end)
-            .with_quota(500)
-            .with_model("claude-sonnet-4");
+        let mut sub =
+            Subscription::new("Claude Pro", SubscriptionType::FixedQuota, 20.0, start, end)
+                .with_quota(500)
+                .with_model("claude-sonnet-4");
         sub.quota_used = 150; // 30% used, 80% of time elapsed
 
         db.upsert_subscription(&sub).unwrap();
@@ -1094,6 +1264,58 @@ mod tests {
             quality_tier: 1,
         };
         assert_eq!(budget.quality_score(), 50.0);
+    }
+
+    #[test]
+    fn test_calculate_tier_efficiency_joins_assignments_and_outcomes() {
+        let db = create_test_db();
+        let now = Utc::now();
+
+        for (bead_id, tier, cost, event_type) in [
+            ("budget-1", "budget", 0.10, "completed"),
+            ("budget-2", "budget", 0.20, "failed"),
+            ("premium-1", "premium", 0.80, "completed"),
+        ] {
+            db.insert_task_assignment(
+                &TaskAssignment::new(bead_id, 25, tier, "model").with_created_at(now),
+            )
+            .unwrap();
+            db.record_task_event(
+                bead_id,
+                event_type,
+                Some("worker"),
+                Some("model"),
+                0.0,
+                10,
+                None,
+            )
+            .unwrap();
+            db.insert_api_calls(&[
+                ApiCall::new(now, "worker", "model", 10, 10, cost).with_bead(bead_id)
+            ])
+            .unwrap();
+        }
+
+        let optimizer = CostOptimizer::new(&db, OptimizerConfig::default());
+        let metrics = optimizer.calculate_tier_efficiency().unwrap();
+
+        let budget = metrics
+            .iter()
+            .find(|metric| metric.predicted_tier == "budget")
+            .unwrap();
+        assert_eq!(budget.sample_count, 2);
+        assert_eq!(budget.success_count, 1);
+        assert_eq!(budget.failure_count, 1);
+        assert!((budget.total_cost - 0.30).abs() < f64::EPSILON);
+        assert!((budget.cost_per_success - 0.30).abs() < f64::EPSILON);
+
+        let premium = metrics
+            .iter()
+            .find(|metric| metric.predicted_tier == "premium")
+            .unwrap();
+        assert_eq!(premium.sample_count, 1);
+        assert_eq!(premium.success_count, 1);
+        assert!((premium.cost_per_success - 0.80).abs() < f64::EPSILON);
     }
 
     #[test]
