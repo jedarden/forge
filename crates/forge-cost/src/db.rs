@@ -13,7 +13,7 @@ use std::time::Duration;
 use tracing::{debug, info, warn};
 
 /// Current schema version for migrations.
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 
 /// Maximum retries for database lock errors.
 const DB_LOCK_MAX_RETRIES: u32 = 5;
@@ -25,6 +25,7 @@ const DB_LOCK_INITIAL_DELAY_MS: u64 = 100;
 const DB_LOCK_MAX_DELAY: Duration = Duration::from_secs(5);
 
 /// SQLite database for cost tracking.
+#[derive(Debug, Clone)]
 pub struct CostDatabase {
     conn: Arc<Mutex<Connection>>,
 }
@@ -150,6 +151,9 @@ impl CostDatabase {
         }
         if from_version < 3 {
             self.migration_v3(conn)?;
+        }
+        if from_version < 4 {
+            self.migration_v4(conn)?;
         }
 
         Ok(())
@@ -488,6 +492,40 @@ impl CostDatabase {
         conn.execute("INSERT INTO schema_version (version) VALUES (3)", [])?;
 
         info!("Migration v3 completed: performance metrics");
+        Ok(())
+    }
+
+    /// Migration to version 4: persist complexity predictions at assignment time.
+    fn migration_v4(&self, conn: &Connection) -> Result<()> {
+        debug!("Running migration v4: task assignments");
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS task_assignments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bead_id TEXT NOT NULL,
+                predicted_score INTEGER NOT NULL,
+                predicted_tier TEXT NOT NULL,
+                assigned_model TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_task_assignments_bead
+             ON task_assignments(bead_id)",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_task_assignments_created_at
+             ON task_assignments(created_at)",
+            [],
+        )?;
+
+        conn.execute("INSERT INTO schema_version (version) VALUES (4)", [])?;
+
+        info!("Migration v4 completed: task assignments");
         Ok(())
     }
 
@@ -1132,6 +1170,59 @@ impl CostDatabase {
             debug!(id, bead_id, event_type, "Recorded task event");
             Ok(id)
         })
+    }
+
+    /// Persist the complexity prediction that drove a task assignment.
+    pub fn insert_task_assignment(
+        &self,
+        assignment: &crate::models::TaskAssignment,
+    ) -> Result<i64> {
+        self.with_retry("insert_task_assignment", || {
+            let conn = self.conn.lock().map_err(|e| {
+                CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
+            })?;
+
+            conn.execute(
+                "INSERT INTO task_assignments
+                 (bead_id, predicted_score, predicted_tier, assigned_model, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    assignment.bead_id,
+                    assignment.predicted_score,
+                    assignment.predicted_tier,
+                    assignment.assigned_model,
+                    assignment.created_at.to_rfc3339(),
+                ],
+            )?;
+
+            let id = conn.last_insert_rowid();
+            debug!(
+                id,
+                bead_id = %assignment.bead_id,
+                predicted_score = assignment.predicted_score,
+                predicted_tier = %assignment.predicted_tier,
+                assigned_model = %assignment.assigned_model,
+                "Persisted task assignment prediction"
+            );
+            Ok(id)
+        })
+    }
+
+    /// Persist a complexity prediction using the current timestamp.
+    pub fn record_task_assignment(
+        &self,
+        bead_id: &str,
+        predicted_score: u32,
+        predicted_tier: &str,
+        assigned_model: &str,
+    ) -> Result<i64> {
+        let assignment = crate::models::TaskAssignment::new(
+            bead_id,
+            predicted_score,
+            predicted_tier,
+            assigned_model,
+        );
+        self.insert_task_assignment(&assignment)
     }
 
     /// Aggregate hourly statistics from api_calls table.
@@ -2344,6 +2435,42 @@ mod tests {
         assert!(tables.contains(&"api_calls".to_string()));
         assert!(tables.contains(&"daily_costs".to_string()));
         assert!(tables.contains(&"model_costs".to_string()));
+        assert!(tables.contains(&"task_assignments".to_string()));
+    }
+
+    #[test]
+    fn test_record_task_assignment() {
+        let db = CostDatabase::open_in_memory().unwrap();
+
+        let created_at = Utc::now();
+        let assignment = crate::models::TaskAssignment::new("bd-123", 72, "premium", "claude-opus")
+            .with_created_at(created_at);
+        let id = db.insert_task_assignment(&assignment).unwrap();
+        assert!(id > 0);
+
+        let conn = db.conn.lock().unwrap();
+        let row: (String, i64, String, String, String) = conn
+            .query_row(
+                "SELECT bead_id, predicted_score, predicted_tier, assigned_model, created_at
+                 FROM task_assignments WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+
+        assert_eq!(row.0, "bd-123");
+        assert_eq!(row.1, 72);
+        assert_eq!(row.2, "premium");
+        assert_eq!(row.3, "claude-opus");
+        assert_eq!(row.4, created_at.to_rfc3339());
     }
 
     #[test]

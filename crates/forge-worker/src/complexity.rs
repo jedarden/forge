@@ -248,6 +248,35 @@ impl ComplexityScore {
     pub fn is_complex(&self) -> bool {
         self.score >= 61
     }
+
+    /// Build the assignment record for this prediction and selected model.
+    pub fn task_assignment(
+        &self,
+        bead_id: &str,
+        assigned_model: &str,
+    ) -> forge_cost::TaskAssignment {
+        forge_cost::TaskAssignment::new(
+            bead_id,
+            self.score,
+            self.tier().to_string(),
+            assigned_model,
+        )
+    }
+
+    /// Persist this prediction alongside the model selected for the task.
+    ///
+    /// The scorer remains side-effect free during normal scoring. Callers invoke
+    /// this only after the routing tier/model decision has been made and just
+    /// before spawning the worker.
+    pub fn record_assignment(
+        &self,
+        db: &forge_cost::CostDatabase,
+        bead_id: &str,
+        assigned_model: &str,
+    ) -> forge_cost::Result<i64> {
+        let assignment = self.task_assignment(bead_id, assigned_model);
+        db.insert_task_assignment(&assignment)
+    }
 }
 
 /// Model tier recommendation based on complexity.
@@ -680,6 +709,34 @@ mod tests {
         assert_eq!(ComplexityTier::Budget.to_string(), "budget");
         assert_eq!(ComplexityTier::Standard.to_string(), "standard");
         assert_eq!(ComplexityTier::Premium.to_string(), "premium");
+    }
+
+    #[test]
+    fn test_record_assignment() {
+        let db = forge_cost::CostDatabase::open_in_memory().unwrap();
+        let score = ComplexityScorer::new().score(
+            &TaskContext::new("Refactor the authentication architecture")
+                .with_labels(vec!["architecture".to_string()]),
+        );
+
+        let id = score
+            .record_assignment(&db, "bd-123", "claude-opus")
+            .unwrap();
+        assert!(id > 0);
+
+        let conn = db.connection();
+        let conn = conn.lock().unwrap();
+        let row: (i64, String, String) = conn
+            .query_row(
+                "SELECT predicted_score, predicted_tier, assigned_model
+                 FROM task_assignments WHERE id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row.0, score.score as i64);
+        assert_eq!(row.1, score.tier().to_string());
+        assert_eq!(row.2, "claude-opus");
     }
 
     #[test]
