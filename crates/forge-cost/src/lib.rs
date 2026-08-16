@@ -65,6 +65,7 @@ pub use models::{
 pub use optimizer::{
     CostOptimizer, ModelEfficiency, ModelRecommendation, OptimizationRecommendation,
     OptimizationReport, OptimizerConfig, RecommendationReason, RecommendationType, TaskPriority,
+    TierEfficiency,
 };
 pub use parser::LogParser;
 pub use query::{CostQuery, SubscriptionOptimizationReport};

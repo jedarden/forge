@@ -85,14 +85,12 @@ impl QueuedBead {
     /// - Age (20% weight): 1 point per hour, max 20
     /// - Labels (10% weight): critical=10, urgent=7, important=4
     pub fn calculate_score(&self, scorer: &TaskScorer) -> ScoredBead {
-        let age_hours = self.created_at.as_ref().and_then(|s| TaskScorer::parse_age_hours(s));
+        let age_hours = self
+            .created_at
+            .as_ref()
+            .and_then(|s| TaskScorer::parse_age_hours(s));
 
-        scorer.score_with_components(
-            self.priority,
-            self.dependent_count,
-            age_hours,
-            &self.labels,
-        )
+        scorer.score_with_components(self.priority, self.dependent_count, age_hours, &self.labels)
     }
 
     /// Calculate score using default scorer.
@@ -109,7 +107,10 @@ impl QueuedBead {
     /// Get the display string with score.
     pub fn display_with_score(&self) -> String {
         let score = self.score();
-        format!("{} [P{}] [Score:{}] {}", self.id, self.priority, score, self.title)
+        format!(
+            "{} [P{}] [Score:{}] {}",
+            self.id, self.priority, score, self.title
+        )
     }
 }
 
@@ -221,12 +222,14 @@ impl BeadQueueReader {
         };
 
         // Check dependents (tasks that depend on this bead)
-        let dependent_count = value.get("dependent_count")
+        let dependent_count = value
+            .get("dependent_count")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as usize;
 
         // Creation timestamp
-        let created_at = value.get("created_at")
+        let created_at = value
+            .get("created_at")
             .and_then(|v| v.as_str())
             .map(String::from);
 
@@ -329,8 +332,12 @@ impl BeadQueueReader {
         } else if bead.issue_type.eq_ignore_ascii_case("feature") {
             context = context.as_feature();
         }
-        let complexity = ComplexityScorer::new().score(&context);
-        let assignment = complexity.task_assignment(&bead.id, &config.model);
+        let scorer = forge_config::ForgeConfig::load()
+            .map(|config| ComplexityScorer::from_forge_config(&config))
+            .unwrap_or_default();
+        let complexity = scorer.score(&context);
+        let assignment =
+            complexity.task_assignment_with_config(&bead.id, &config.model, scorer.config());
 
         let config = config.with_bead(bead.id.clone());
 

@@ -39,7 +39,18 @@
 //! println!("Complexity: {} → {:?}", score.score, score.tier());
 //! ```
 
+use chrono::Utc;
+use forge_config::{CalibratedThresholds, ForgeConfig};
+use forge_cost::{CostDatabase, CostOptimizer, OptimizerConfig, TierEfficiency};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+use thiserror::Error;
+use tokio::sync::broadcast;
+use tokio::task::JoinHandle;
+use tracing::{debug, info, warn};
 
 /// Default weight for title analysis.
 const TITLE_WEIGHT: f64 = 0.30;
@@ -55,6 +66,19 @@ const BLOCKS_WEIGHT: f64 = 0.15;
 
 /// Default weight for task type.
 const TYPE_WEIGHT: f64 = 0.10;
+
+/// Default inclusive upper bound for the budget tier.
+pub const DEFAULT_BUDGET_THRESHOLD: u32 = 30;
+
+/// Default inclusive upper bound for the standard tier.
+pub const DEFAULT_STANDARD_THRESHOLD: u32 = 60;
+
+/// Minimum number of completed assignments required for each tier before a
+/// calibration pass can change any threshold.
+pub const DEFAULT_CALIBRATION_MIN_SAMPLES: u64 = 20;
+
+/// Default cadence for the calibration pass (one daily/hourly-rollup window).
+pub const DEFAULT_CALIBRATION_INTERVAL_SECS: u64 = 24 * 60 * 60;
 
 /// Configuration for the complexity scorer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +103,14 @@ pub struct ComplexityConfig {
 
     /// Maximum blocking dependencies to consider
     pub max_blocks: usize,
+
+    /// Inclusive upper bound for the budget tier.
+    #[serde(default = "default_budget_threshold")]
+    pub budget_threshold: u32,
+
+    /// Inclusive upper bound for the standard tier.
+    #[serde(default = "default_standard_threshold")]
+    pub standard_threshold: u32,
 }
 
 impl Default for ComplexityConfig {
@@ -91,6 +123,8 @@ impl Default for ComplexityConfig {
             type_weight: TYPE_WEIGHT,
             max_file_count: 20,
             max_blocks: 5,
+            budget_threshold: DEFAULT_BUDGET_THRESHOLD,
+            standard_threshold: DEFAULT_STANDARD_THRESHOLD,
         }
     }
 }
@@ -99,6 +133,38 @@ impl ComplexityConfig {
     /// Create a new config with default values.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Build scorer settings from the persisted FORGE config.
+    pub fn from_forge_config(config: &ForgeConfig) -> Self {
+        let mut complexity = Self::default();
+        if let Some(thresholds) = config.calibrated_thresholds {
+            complexity.apply_calibrated_thresholds(thresholds);
+        }
+        complexity
+    }
+
+    /// Apply a calibrated threshold overlay while leaving all keyword weights
+    /// and feature caps untouched.
+    pub fn apply_calibrated_thresholds(&mut self, thresholds: CalibratedThresholds) {
+        self.budget_threshold = thresholds.budget.clamp(1, 98);
+        self.standard_threshold = thresholds
+            .standard
+            .clamp(self.budget_threshold.saturating_add(1), 99);
+    }
+
+    /// Return the current thresholds as a config-file overlay.
+    pub fn calibrated_thresholds(&self) -> CalibratedThresholds {
+        CalibratedThresholds::new(self.budget_threshold, self.standard_threshold)
+    }
+
+    /// Return the tier for a score using these thresholds.
+    pub fn tier_for_score(&self, score: u32) -> ComplexityTier {
+        match score {
+            score if score <= self.budget_threshold => ComplexityTier::Budget,
+            score if score <= self.standard_threshold => ComplexityTier::Standard,
+            _ => ComplexityTier::Premium,
+        }
     }
 
     /// Validate that weights sum to approximately 1.0.
@@ -117,8 +183,26 @@ impl ComplexityConfig {
             ));
         }
 
+        if self.budget_threshold == 0
+            || self.budget_threshold >= self.standard_threshold
+            || self.standard_threshold >= 100
+        {
+            return Err(format!(
+                "Complexity thresholds must satisfy 0 < budget < standard < 100, got {} and {}",
+                self.budget_threshold, self.standard_threshold
+            ));
+        }
+
         Ok(())
     }
+}
+
+fn default_budget_threshold() -> u32 {
+    DEFAULT_BUDGET_THRESHOLD
+}
+
+fn default_standard_threshold() -> u32 {
+    DEFAULT_STANDARD_THRESHOLD
 }
 
 /// Context about a task for complexity analysis.
@@ -226,17 +310,29 @@ pub struct ComplexityScore {
 
     /// Detected complexity indicators
     pub indicators: Vec<String>,
+
+    /// Threshold overlay used to classify this score.
+    #[serde(default = "default_budget_threshold")]
+    budget_threshold: u32,
+
+    /// Standard-tier threshold overlay used to classify this score.
+    #[serde(default = "default_standard_threshold")]
+    standard_threshold: u32,
 }
 
 impl ComplexityScore {
     /// Get the recommended model tier for this complexity.
     pub fn tier(&self) -> ComplexityTier {
         match self.score {
-            0..=30 => ComplexityTier::Budget,
-            31..=60 => ComplexityTier::Standard,
-            61..=100 => ComplexityTier::Premium,
-            _ => ComplexityTier::Standard,
+            score if score <= self.budget_threshold => ComplexityTier::Budget,
+            score if score <= self.standard_threshold => ComplexityTier::Standard,
+            _ => ComplexityTier::Premium,
         }
+    }
+
+    /// Get the recommended tier using a configurable threshold overlay.
+    pub fn tier_with_config(&self, config: &ComplexityConfig) -> ComplexityTier {
+        config.tier_for_score(self.score)
     }
 
     /// Check if this is a simple task.
@@ -255,10 +351,20 @@ impl ComplexityScore {
         bead_id: &str,
         assigned_model: &str,
     ) -> forge_cost::TaskAssignment {
+        self.task_assignment_with_config(bead_id, assigned_model, &ComplexityConfig::default())
+    }
+
+    /// Build an assignment record using the supplied threshold overlay.
+    pub fn task_assignment_with_config(
+        &self,
+        bead_id: &str,
+        assigned_model: &str,
+        config: &ComplexityConfig,
+    ) -> forge_cost::TaskAssignment {
         forge_cost::TaskAssignment::new(
             bead_id,
             self.score,
-            self.tier().to_string(),
+            self.tier_with_config(config).to_string(),
             assigned_model,
         )
     }
@@ -275,6 +381,18 @@ impl ComplexityScore {
         assigned_model: &str,
     ) -> forge_cost::Result<i64> {
         let assignment = self.task_assignment(bead_id, assigned_model);
+        db.insert_task_assignment(&assignment)
+    }
+
+    /// Persist this prediction using the supplied threshold overlay.
+    pub fn record_assignment_with_config(
+        &self,
+        db: &forge_cost::CostDatabase,
+        bead_id: &str,
+        assigned_model: &str,
+        config: &ComplexityConfig,
+    ) -> forge_cost::Result<i64> {
+        let assignment = self.task_assignment_with_config(bead_id, assigned_model, config);
         db.insert_task_assignment(&assignment)
     }
 }
@@ -410,6 +528,12 @@ impl ComplexityScorer {
         Self { config }
     }
 
+    /// Create a scorer using the calibrated threshold overlay from a loaded
+    /// FORGE config. Missing overlays retain the static defaults.
+    pub fn from_forge_config(config: &ForgeConfig) -> Self {
+        Self::with_config(ComplexityConfig::from_forge_config(config))
+    }
+
     /// Get the current configuration.
     pub fn config(&self) -> &ComplexityConfig {
         &self.config
@@ -451,6 +575,8 @@ impl ComplexityScorer {
             blocks_score,
             type_score,
             indicators,
+            budget_threshold: self.config.budget_threshold,
+            standard_threshold: self.config.standard_threshold,
         }
     }
 
@@ -592,6 +718,370 @@ impl ComplexityScorer {
     }
 }
 
+/// Errors returned by the periodic complexity calibration job.
+#[derive(Debug, Error)]
+pub enum CalibrationError {
+    /// Cost database query failed.
+    #[error("cost query failed: {0}")]
+    Cost(#[from] forge_cost::CostError),
+
+    /// Configuration could not be loaded or written.
+    #[error("configuration error: {0}")]
+    Config(String),
+}
+
+/// Result type used by complexity calibration APIs.
+pub type CalibrationResult<T> = std::result::Result<T, CalibrationError>;
+
+/// A real-time activity event emitted after thresholds are recalibrated.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ComplexityCalibrationEvent {
+    /// Event timestamp.
+    pub timestamp: chrono::DateTime<Utc>,
+
+    /// Human-readable activity-log message.
+    pub message: String,
+
+    /// Threshold changes included in this pass.
+    pub changes: Vec<ThresholdChange>,
+
+    /// Estimated savings for the observed calibration sample.
+    pub estimated_savings_usd: f64,
+}
+
+/// One changed tier cutoff.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ThresholdChange {
+    /// Name of the cutoff (budget or standard).
+    pub tier: String,
+
+    /// Previous inclusive upper bound.
+    pub old: u32,
+
+    /// New inclusive upper bound.
+    pub new: u32,
+}
+
+/// Outcome of one calibration pass.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CalibrationReport {
+    /// Whether a new overlay was written.
+    pub changed: bool,
+
+    /// Thresholds used before this pass.
+    pub old_thresholds: CalibratedThresholds,
+
+    /// Thresholds proposed by this pass.
+    pub new_thresholds: CalibratedThresholds,
+
+    /// Empirical tier statistics used by the pass.
+    pub tier_efficiency: Vec<TierEfficiency>,
+
+    /// Estimated savings represented by the proposed changes.
+    pub estimated_savings_usd: f64,
+
+    /// Why the pass did not change configuration, if applicable.
+    pub skipped_reason: Option<String>,
+
+    /// Human-readable summary suitable for logs and activity panels.
+    pub message: String,
+}
+
+/// Periodic closed-loop complexity calibration job.
+///
+/// The job is deliberately owned by `forge-worker`: it reads the public
+/// efficiency API from `forge-cost`, updates the worker-owned threshold
+/// overlay through `forge-config`, and never asks the cost crate to write
+/// configuration. Call [`ComplexityCalibrationJob::start`] to run it on the
+/// same daily cadence used by the cost rollups, or [`run_once`] for a manual
+/// or test-triggered pass.
+pub struct ComplexityCalibrationJob {
+    db: Arc<CostDatabase>,
+    complexity_config: ComplexityConfig,
+    config_path: PathBuf,
+    min_samples: u64,
+    interval: Duration,
+    activity_tx: broadcast::Sender<ComplexityCalibrationEvent>,
+}
+
+impl std::fmt::Debug for ComplexityCalibrationJob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ComplexityCalibrationJob")
+            .field("config_path", &self.config_path)
+            .field("min_samples", &self.min_samples)
+            .field("interval", &self.interval)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ComplexityCalibrationJob {
+    /// Create a calibration job with default cadence and sample floor.
+    pub fn new(db: Arc<CostDatabase>, complexity_config: ComplexityConfig) -> Self {
+        let config_path =
+            forge_config::config_path().unwrap_or_else(|| PathBuf::from(".forge/config.yaml"));
+        let (activity_tx, _) = broadcast::channel(32);
+        Self {
+            db,
+            complexity_config,
+            config_path,
+            min_samples: DEFAULT_CALIBRATION_MIN_SAMPLES,
+            interval: Duration::from_secs(DEFAULT_CALIBRATION_INTERVAL_SECS),
+            activity_tx,
+        }
+    }
+
+    /// Use a specific config path, primarily for isolated tests.
+    pub fn with_config_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.config_path = path.into();
+        self
+    }
+
+    /// Set the minimum terminal samples required in every tier.
+    pub fn with_min_samples(mut self, min_samples: u64) -> Self {
+        self.min_samples = min_samples.max(1);
+        self
+    }
+
+    /// Set the scheduler interval.
+    pub fn with_interval(mut self, interval: Duration) -> Self {
+        self.interval = interval;
+        self
+    }
+
+    /// Use an externally created activity channel.
+    pub fn with_activity_sender(
+        mut self,
+        activity_tx: broadcast::Sender<ComplexityCalibrationEvent>,
+    ) -> Self {
+        self.activity_tx = activity_tx;
+        self
+    }
+
+    /// Subscribe to calibration activity events.
+    pub fn subscribe(&self) -> broadcast::Receiver<ComplexityCalibrationEvent> {
+        self.activity_tx.subscribe()
+    }
+
+    /// Start the background calibration loop.
+    pub fn start(self) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            // The rollup scheduler also runs immediately on startup. Do the
+            // same here, then wait for the next full calibration window.
+            self.run_and_report();
+            let mut interval = tokio::time::interval(self.interval);
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                self.run_and_report();
+            }
+        })
+    }
+
+    /// Run one calibration pass synchronously.
+    pub fn run_once(&self) -> CalibrationResult<CalibrationReport> {
+        let mut config = self.load_config()?;
+        let old_thresholds = config
+            .calibrated_thresholds
+            .map(|thresholds| CalibratedThresholds::new(thresholds.budget, thresholds.standard))
+            .unwrap_or_else(|| self.complexity_config.calibrated_thresholds());
+
+        if !config.auto_calibrate {
+            return Ok(CalibrationReport {
+                changed: false,
+                old_thresholds,
+                new_thresholds: old_thresholds,
+                tier_efficiency: Vec::new(),
+                estimated_savings_usd: 0.0,
+                skipped_reason: Some("auto_calibrate is disabled".to_string()),
+                message: "Routing calibration skipped: auto_calibrate is disabled".to_string(),
+            });
+        }
+
+        let optimizer = CostOptimizer::new(&self.db, OptimizerConfig::default());
+        let efficiency = optimizer.calculate_tier_efficiency()?;
+        let by_tier: HashMap<String, TierEfficiency> = efficiency
+            .iter()
+            .cloned()
+            .map(|tier| (tier.predicted_tier.to_ascii_lowercase(), tier))
+            .collect();
+
+        let missing_or_small = ["budget", "standard", "premium"].iter().find(|tier| {
+            by_tier
+                .get(**tier)
+                .map(|stats| stats.sample_count < self.min_samples)
+                .unwrap_or(true)
+        });
+        if let Some(tier) = missing_or_small {
+            let message = format!(
+                "Routing calibration skipped: {} tier has fewer than {} completed samples",
+                tier, self.min_samples
+            );
+            debug!(tier = %tier, min_samples = self.min_samples, "Complexity calibration sample gate not met");
+            return Ok(CalibrationReport {
+                changed: false,
+                old_thresholds,
+                new_thresholds: old_thresholds,
+                tier_efficiency: efficiency,
+                estimated_savings_usd: 0.0,
+                skipped_reason: Some(message.clone()),
+                message,
+            });
+        }
+
+        let budget = by_tier.get("budget").expect("sample gate checked budget");
+        let standard = by_tier
+            .get("standard")
+            .expect("sample gate checked standard");
+        let premium = by_tier.get("premium").expect("sample gate checked premium");
+
+        let (budget_threshold, budget_savings) =
+            move_cutoff(old_thresholds.budget, budget, standard);
+        let (standard_threshold, standard_savings) =
+            move_cutoff(old_thresholds.standard, standard, premium);
+        let new_thresholds = CalibratedThresholds::new(
+            budget_threshold.min(standard_threshold.saturating_sub(1)),
+            standard_threshold.max(budget_threshold.saturating_add(1)),
+        );
+        let estimated_savings_usd = budget_savings + standard_savings;
+
+        if new_thresholds == old_thresholds {
+            return Ok(CalibrationReport {
+                changed: false,
+                old_thresholds,
+                new_thresholds,
+                tier_efficiency: efficiency,
+                estimated_savings_usd,
+                skipped_reason: Some(
+                    "empirical tier costs did not justify a threshold change".to_string(),
+                ),
+                message: "Routing calibration made no threshold change".to_string(),
+            });
+        }
+
+        config.calibrated_thresholds = Some(new_thresholds);
+        config
+            .save_to(&self.config_path)
+            .map_err(|error| CalibrationError::Config(error.to_string()))?;
+
+        let changes = threshold_changes(old_thresholds, new_thresholds);
+        let message = format_calibration_message(&changes, estimated_savings_usd);
+        let event = ComplexityCalibrationEvent {
+            timestamp: Utc::now(),
+            message: message.clone(),
+            changes,
+            estimated_savings_usd,
+        };
+        let _ = self.activity_tx.send(event);
+        info!(
+            target: "forge::activity",
+            event = "complexity_calibration",
+            estimated_savings_usd,
+            message = %message,
+            "Complexity thresholds recalibrated"
+        );
+
+        Ok(CalibrationReport {
+            changed: true,
+            old_thresholds,
+            new_thresholds,
+            tier_efficiency: efficiency,
+            estimated_savings_usd,
+            skipped_reason: None,
+            message,
+        })
+    }
+
+    /// Alias for callers that prefer calibration terminology.
+    pub fn calibrate(&self) -> CalibrationResult<CalibrationReport> {
+        self.run_once()
+    }
+
+    fn load_config(&self) -> CalibrationResult<ForgeConfig> {
+        if self.config_path.exists() {
+            ForgeConfig::load_from_with_error(&self.config_path)
+                .map_err(|error| CalibrationError::Config(error.to_string()))
+        } else {
+            Ok(ForgeConfig::default())
+        }
+    }
+
+    fn run_and_report(&self) {
+        match self.run_once() {
+            Ok(report) if report.changed => {
+                info!(message = %report.message, "Periodic complexity calibration completed")
+            }
+            Ok(_) => {}
+            Err(error) => warn!(error = %error, "Periodic complexity calibration failed"),
+        }
+    }
+}
+
+const CALIBRATION_STEP: u32 = 5;
+
+/// Move a cutoff toward the tier with the lower empirical cost per success.
+fn move_cutoff(
+    cutoff: u32,
+    lower_tier: &TierEfficiency,
+    higher_tier: &TierEfficiency,
+) -> (u32, f64) {
+    if !lower_tier.cost_per_success.is_finite()
+        || !higher_tier.cost_per_success.is_finite()
+        || (lower_tier.cost_per_success - higher_tier.cost_per_success).abs() < f64::EPSILON
+    {
+        return (cutoff, 0.0);
+    }
+
+    let cheaper_cost = lower_tier
+        .cost_per_success
+        .min(higher_tier.cost_per_success);
+    let expensive_cost = lower_tier
+        .cost_per_success
+        .max(higher_tier.cost_per_success);
+    let moved_tasks = lower_tier.sample_count.min(higher_tier.sample_count) as f64
+        * (CALIBRATION_STEP as f64 / 100.0);
+    let estimated_savings = (expensive_cost - cheaper_cost) * moved_tasks;
+    let threshold = if lower_tier.cost_per_success < higher_tier.cost_per_success {
+        cutoff.saturating_add(CALIBRATION_STEP)
+    } else {
+        cutoff.saturating_sub(CALIBRATION_STEP)
+    };
+    (threshold.clamp(1, 98), estimated_savings)
+}
+
+fn threshold_changes(
+    old_thresholds: CalibratedThresholds,
+    new_thresholds: CalibratedThresholds,
+) -> Vec<ThresholdChange> {
+    let mut changes = Vec::new();
+    if old_thresholds.budget != new_thresholds.budget {
+        changes.push(ThresholdChange {
+            tier: "Budget".to_string(),
+            old: old_thresholds.budget,
+            new: new_thresholds.budget,
+        });
+    }
+    if old_thresholds.standard != new_thresholds.standard {
+        changes.push(ThresholdChange {
+            tier: "Standard".to_string(),
+            old: old_thresholds.standard,
+            new: new_thresholds.standard,
+        });
+    }
+    changes
+}
+
+fn format_calibration_message(changes: &[ThresholdChange], estimated_savings_usd: f64) -> String {
+    let changes = changes
+        .iter()
+        .map(|change| format!("{} cutoff {} -> {}", change.tier, change.old, change.new))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "Routing: {}; estimated savings ${:.2} per calibration window",
+        changes, estimated_savings_usd
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -603,6 +1093,20 @@ mod tests {
     }
 
     #[test]
+    fn test_custom_thresholds_classify_scores() {
+        let config = ComplexityConfig {
+            budget_threshold: 20,
+            standard_threshold: 40,
+            ..ComplexityConfig::default()
+        };
+        let scorer = ComplexityScorer::with_config(config);
+
+        let score = scorer.score(&TaskContext::new("Task"));
+        assert_eq!(score.tier(), score.tier_with_config(scorer.config()));
+        assert_eq!(score.tier(), ComplexityTier::Premium);
+    }
+
+    #[test]
     fn test_simple_task() {
         let scorer = ComplexityScorer::new();
 
@@ -611,7 +1115,11 @@ mod tests {
             .with_file_count(1);
 
         let score = scorer.score(&context);
-        assert!(score.score <= 50, "Simple task should have low score, got {}", score.score);
+        assert!(
+            score.score <= 50,
+            "Simple task should have low score, got {}",
+            score.score
+        );
         // Score around 37 → Standard tier (31-60)
         assert_eq!(score.tier(), ComplexityTier::Standard);
     }
@@ -627,7 +1135,11 @@ mod tests {
             .as_feature();
 
         let score = scorer.score(&context);
-        assert!(score.score >= 60, "Complex task should have high score, got {}", score.score);
+        assert!(
+            score.score >= 60,
+            "Complex task should have high score, got {}",
+            score.score
+        );
         assert!(score.is_complex());
         assert_eq!(score.tier(), ComplexityTier::Premium);
     }
@@ -636,8 +1148,7 @@ mod tests {
     fn test_moderate_task() {
         let scorer = ComplexityScorer::new();
 
-        let context = TaskContext::new("Update user profile page styling")
-            .with_file_count(3);
+        let context = TaskContext::new("Update user profile page styling").with_file_count(3);
 
         let score = scorer.score(&context);
         // Should be moderate (not simple, not complex)
@@ -652,7 +1163,10 @@ mod tests {
         let simple = scorer.quick_score("Fix typo", &[]);
         assert!(simple <= 50);
 
-        let complex = scorer.quick_score("Refactor architecture for scalability", &["complex".to_string()]);
+        let complex = scorer.quick_score(
+            "Refactor architecture for scalability",
+            &["complex".to_string()],
+        );
         assert!(complex >= 50);
     }
 
@@ -660,11 +1174,13 @@ mod tests {
     fn test_reasoning_override() {
         let scorer = ComplexityScorer::new();
 
-        let context = TaskContext::new("Simple task")
-            .with_reasoning(true);
+        let context = TaskContext::new("Simple task").with_reasoning(true);
 
         let score = scorer.score(&context);
-        assert!(score.score >= 50, "Reasoning requirement should boost score");
+        assert!(
+            score.score >= 50,
+            "Reasoning requirement should boost score"
+        );
     }
 
     #[test]
@@ -683,7 +1199,10 @@ mod tests {
             assert!(
                 scores[i] >= scores[i - 1] || scores[i] == 100,
                 "File count {} score {} should be >= {} score {}",
-                i, scores[i], i - 1, scores[i - 1]
+                i,
+                scores[i],
+                i - 1,
+                scores[i - 1]
             );
         }
     }
@@ -779,5 +1298,127 @@ mod tests {
                 score.score
             );
         }
+    }
+
+    fn insert_calibration_sample(
+        db: &forge_cost::CostDatabase,
+        bead_id: &str,
+        score: u32,
+        tier: &str,
+        cost: f64,
+    ) {
+        db.insert_task_assignment(&forge_cost::TaskAssignment::new(
+            bead_id, score, tier, "model",
+        ))
+        .unwrap();
+        db.record_task_event(
+            bead_id,
+            "completed",
+            Some("worker"),
+            Some("model"),
+            0.0,
+            10,
+            None,
+        )
+        .unwrap();
+        db.insert_api_calls(&[forge_cost::ApiCall::new(
+            Utc::now(),
+            "worker",
+            "model",
+            10,
+            10,
+            cost,
+        )
+        .with_bead(bead_id)])
+            .unwrap();
+    }
+
+    #[test]
+    fn test_calibration_requires_minimum_samples_in_every_tier() {
+        let db = Arc::new(forge_cost::CostDatabase::open_in_memory().unwrap());
+        insert_calibration_sample(&db, "budget-1", 10, "budget", 0.10);
+        insert_calibration_sample(&db, "standard-1", 50, "standard", 0.20);
+        insert_calibration_sample(&db, "premium-1", 90, "premium", 0.30);
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.yaml");
+
+        let job = ComplexityCalibrationJob::new(Arc::clone(&db), ComplexityConfig::default())
+            .with_config_path(&config_path)
+            .with_min_samples(2);
+        let report = job.run_once().unwrap();
+
+        assert!(!report.changed);
+        assert!(
+            report
+                .skipped_reason
+                .as_deref()
+                .unwrap()
+                .contains("fewer than 2")
+        );
+        assert!(!config_path.exists());
+    }
+
+    #[test]
+    fn test_calibration_writes_overlay_and_emits_activity() {
+        let db = Arc::new(forge_cost::CostDatabase::open_in_memory().unwrap());
+        for index in 0..2 {
+            insert_calibration_sample(&db, &format!("budget-{index}"), 10, "budget", 0.10);
+            insert_calibration_sample(&db, &format!("standard-{index}"), 50, "standard", 0.20);
+            insert_calibration_sample(&db, &format!("premium-{index}"), 90, "premium", 0.30);
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.yaml");
+        let mut user_config = ForgeConfig::default();
+        user_config.theme.name = Some("cyberpunk".to_string());
+        user_config.workers.default_model = "opus".to_string();
+        user_config.save_to(&config_path).unwrap();
+        let job = ComplexityCalibrationJob::new(Arc::clone(&db), ComplexityConfig::default())
+            .with_config_path(&config_path)
+            .with_min_samples(2);
+        let mut events = job.subscribe();
+        let report = job.run_once().unwrap();
+
+        assert!(report.changed);
+        assert_eq!(report.old_thresholds, CalibratedThresholds::new(30, 60));
+        assert_eq!(report.new_thresholds, CalibratedThresholds::new(35, 65));
+        assert!(report.estimated_savings_usd > 0.0);
+        assert!(report.message.contains("estimated savings"));
+
+        let saved = ForgeConfig::load_from_with_error(&config_path).unwrap();
+        assert!(saved.auto_calibrate);
+        assert_eq!(saved.theme.name.as_deref(), Some("cyberpunk"));
+        assert_eq!(saved.workers.default_model, "opus");
+        assert_eq!(saved.calibrated_thresholds, Some(report.new_thresholds));
+        let event = events.try_recv().unwrap();
+        assert_eq!(event.changes.len(), 2);
+        assert!(event.message.contains("Budget cutoff 30 -> 35"));
+        assert!(event.message.contains("Standard cutoff 60 -> 65"));
+    }
+
+    #[test]
+    fn test_calibration_respects_disabled_flag() {
+        let db = Arc::new(forge_cost::CostDatabase::open_in_memory().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.yaml");
+        let mut config = ForgeConfig::default();
+        config.auto_calibrate = false;
+        config.save_to(&config_path).unwrap();
+
+        let job = ComplexityCalibrationJob::new(db, ComplexityConfig::default())
+            .with_config_path(&config_path);
+        let report = job.run_once().unwrap();
+
+        assert!(!report.changed);
+        assert_eq!(
+            report.skipped_reason.as_deref(),
+            Some("auto_calibrate is disabled")
+        );
+        assert!(
+            ForgeConfig::load_from_with_error(&config_path)
+                .unwrap()
+                .calibrated_thresholds
+                .is_none()
+        );
     }
 }

@@ -156,33 +156,35 @@ pub use auto_recovery::{
     AutoRecoveryManager, RecoveryAction, RecoveryActionType, RecoveryConfig, RecoveryPolicy,
 };
 pub use bead_queue::{BeadAllocation, BeadQueueManager, BeadQueueReader, QueuedBead};
+pub use complexity::{
+    CalibrationError, CalibrationReport, CalibrationResult, ComplexityCalibrationEvent,
+    ComplexityCalibrationJob, ComplexityConfig, ComplexityScore, ComplexityScorer, ComplexityTier,
+    DEFAULT_BUDGET_THRESHOLD, DEFAULT_CALIBRATION_INTERVAL_SECS, DEFAULT_CALIBRATION_MIN_SAMPLES,
+    DEFAULT_STANDARD_THRESHOLD, TaskContext, ThresholdChange,
+};
 pub use crash_recovery::{
-    CrashAction, CrashRecord, CrashRecoveryConfig, CrashRecoveryManager, CRASH_WINDOW_SECS,
+    CRASH_WINDOW_SECS, CrashAction, CrashRecord, CrashRecoveryConfig, CrashRecoveryManager,
     MAX_CRASHES_IN_WINDOW,
 };
 pub use discovery::{DiscoveredWorker, DiscoveryResult, WorkerType, discover_workers};
 pub use health::{
-    HealthCheckResult, HealthCheckType, HealthErrorType, HealthLevel, HealthMonitor,
-    HealthMonitorConfig, WorkerHealthStatus, DEFAULT_CHECK_INTERVAL_SECS,
-    DEFAULT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MEMORY_KILL_LIMIT_MB, DEFAULT_MEMORY_LIMIT_MB,
-    DEFAULT_STALE_THRESHOLD_SECS,
+    DEFAULT_CHECK_INTERVAL_SECS, DEFAULT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MEMORY_KILL_LIMIT_MB,
+    DEFAULT_MEMORY_LIMIT_MB, DEFAULT_STALE_THRESHOLD_SECS, HealthCheckResult, HealthCheckType,
+    HealthErrorType, HealthLevel, HealthMonitor, HealthMonitorConfig, WorkerHealthStatus,
 };
-pub use memory::{MemoryConfig, MemoryMonitor, MemorySeverity, WorkerMemoryStats};
 pub use launcher::WorkerLauncher;
+pub use memory::{MemoryConfig, MemoryMonitor, MemorySeverity, WorkerMemoryStats};
 pub use pause::{
-    Pausable, PauseConfig, PauseSignalHandler, DEFAULT_PAUSE_CHECK_INTERVAL_SECS,
-    is_any_paused, pause_all, resume_all,
+    DEFAULT_PAUSE_CHECK_INTERVAL_SECS, Pausable, PauseConfig, PauseSignalHandler, is_any_paused,
+    pause_all, resume_all,
 };
 pub use response_time::{
-    PingResult, ResponseTimeConfig, ResponseTimeTracker, WorkerResponseState,
-    DEFAULT_FAILURE_THRESHOLD, DEFAULT_PING_INTERVAL_SECS, DEFAULT_PING_TIMEOUT_MS,
+    DEFAULT_FAILURE_THRESHOLD, DEFAULT_PING_INTERVAL_SECS, DEFAULT_PING_TIMEOUT_MS, PingResult,
+    ResponseTimeConfig, ResponseTimeTracker, WorkerResponseState,
 };
 pub use router::{
-    FallbackOption, ModelAvailability, ModelConfig, ModelHealth, Router, RouterConfig,
-    RouterError, RouterStats, RoutingDecision, RoutingReason, SubscriptionQuota, TaskMetadata,
+    FallbackOption, ModelAvailability, ModelConfig, ModelHealth, Router, RouterConfig, RouterError,
+    RouterStats, RoutingDecision, RoutingReason, SubscriptionQuota, TaskMetadata,
 };
-pub use complexity::{
-    ComplexityConfig, ComplexityScore, ComplexityScorer, ComplexityTier, TaskContext,
-};
-pub use scorer::{ScoredBead, ScoreComponents, ScoringConfig, TaskScorer};
+pub use scorer::{ScoreComponents, ScoredBead, ScoringConfig, TaskScorer};
 pub use types::{LaunchConfig, LauncherOutput, SpawnRequest, WorkerHandle};
