@@ -5,6 +5,7 @@
 
 use chrono::{DateTime, Utc};
 use forge_core::types::{BeadId, WorkerId, WorkerStatus, WorkerTier};
+use forge_cost::TaskAssignment;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -197,6 +198,8 @@ pub struct SpawnRequest {
     pub worker_id: WorkerId,
     /// Launch configuration
     pub config: LaunchConfig,
+    /// Complexity prediction to persist before launching, if this is a bead task.
+    pub task_assignment: Option<TaskAssignment>,
 }
 
 impl SpawnRequest {
@@ -205,7 +208,14 @@ impl SpawnRequest {
         Self {
             worker_id: worker_id.into(),
             config,
+            task_assignment: None,
         }
+    }
+
+    /// Attach the complexity prediction that led to this spawn request.
+    pub fn with_task_assignment(mut self, assignment: TaskAssignment) -> Self {
+        self.task_assignment = Some(assignment);
+        self
     }
 }
 

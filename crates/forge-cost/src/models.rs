@@ -3,6 +3,49 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
+/// Complexity prediction and model assignment captured when a task is spawned.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TaskAssignment {
+    /// Bead/task identifier.
+    pub bead_id: String,
+
+    /// Complexity score predicted by the scorer (0-100).
+    pub predicted_score: u32,
+
+    /// Complexity tier predicted by the scorer.
+    pub predicted_tier: String,
+
+    /// Model selected for the assignment.
+    pub assigned_model: String,
+
+    /// Time at which the assignment was created.
+    pub created_at: DateTime<Utc>,
+}
+
+impl TaskAssignment {
+    /// Create a task assignment prediction with the current timestamp.
+    pub fn new(
+        bead_id: impl Into<String>,
+        predicted_score: u32,
+        predicted_tier: impl Into<String>,
+        assigned_model: impl Into<String>,
+    ) -> Self {
+        Self {
+            bead_id: bead_id.into(),
+            predicted_score: predicted_score.min(100),
+            predicted_tier: predicted_tier.into(),
+            assigned_model: assigned_model.into(),
+            created_at: Utc::now(),
+        }
+    }
+
+    /// Override the assignment timestamp, primarily for deterministic tests.
+    pub fn with_created_at(mut self, created_at: DateTime<Utc>) -> Self {
+        self.created_at = created_at;
+        self
+    }
+}
+
 /// Represents a single API call with token usage and cost.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiCall {

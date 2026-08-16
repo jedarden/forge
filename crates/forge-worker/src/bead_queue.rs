@@ -4,6 +4,7 @@
 //! and managing bead allocation to workers. It extends the existing bead module
 //! with queue-specific operations for launcher integration.
 
+use crate::complexity::{ComplexityScorer, TaskContext};
 use crate::scorer::{ScoredBead, TaskScorer};
 use crate::types::{LaunchConfig, SpawnRequest};
 use forge_core::types::BeadId;
@@ -316,7 +317,24 @@ impl BeadQueueReader {
     pub fn create_spawn_request(&self, bead: &QueuedBead, config: LaunchConfig) -> SpawnRequest {
         let worker_id = format!("forge-{}-{}", bead.id, config.model);
 
-        SpawnRequest { worker_id, config }
+        // Capture the scorer's prediction without changing the caller-selected
+        // launch tier or model. The launcher persists this record immediately
+        // before it validates and executes the launcher script.
+        let mut context = TaskContext::new(&bead.title)
+            .with_description(&bead.description)
+            .with_labels(bead.labels.clone())
+            .with_blocks(bead.dependent_count);
+        if bead.issue_type.eq_ignore_ascii_case("bug") {
+            context = context.as_bug();
+        } else if bead.issue_type.eq_ignore_ascii_case("feature") {
+            context = context.as_feature();
+        }
+        let complexity = ComplexityScorer::new().score(&context);
+        let assignment = complexity.task_assignment(&bead.id, &config.model);
+
+        let config = config.with_bead(bead.id.clone());
+
+        SpawnRequest::new(worker_id, config).with_task_assignment(assignment)
     }
 }
 
@@ -526,6 +544,37 @@ mod tests {
         let bead = manager.pop_next_ready();
         assert!(bead.is_some());
         assert_eq!(bead.unwrap().0, "test-1");
+    }
+
+    #[test]
+    fn test_spawn_request_includes_complexity_prediction() {
+        let dir = create_test_workspace();
+        let mut reader = BeadQueueReader::new(dir.path()).unwrap();
+        let bead = reader.get_ready_beads().unwrap().pop().unwrap();
+        let config = LaunchConfig::new(
+            "/path/to/launcher.sh",
+            "test-session",
+            dir.path().to_path_buf(),
+            "claude-opus",
+        );
+
+        let request = reader.create_spawn_request(&bead, config);
+        let assignment = request.task_assignment.unwrap();
+
+        assert_eq!(assignment.bead_id, "test-1");
+        assert_eq!(assignment.assigned_model, "claude-opus");
+        assert_eq!(request.config.bead_id.as_deref(), Some("test-1"));
+        assert_eq!(
+            assignment.predicted_score,
+            ComplexityScorer::new()
+                .score(
+                    &TaskContext::new("Test bead")
+                        .with_description("A test")
+                        .with_labels(Vec::new())
+                        .with_blocks(0),
+                )
+                .score
+        );
     }
 
     #[test]
