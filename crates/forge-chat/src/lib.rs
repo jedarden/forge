@@ -48,6 +48,7 @@ pub mod claude_api_types;
 pub mod config;
 pub mod context;
 pub mod error;
+pub mod fast_path;
 pub mod history;
 pub mod opencode_provider;
 pub mod provider;
@@ -67,6 +68,7 @@ pub use config::{
 };
 pub use context::{ContextProvider, DashboardContext, MockContextSource, RealContextSource};
 pub use error::{ChatError, Result};
+pub use fast_path::{FastPathAction, FastPathMatcher, FastPathResult, ViewTarget};
 pub use history::{HistoryEntry, HistoryManager, HistoryMetadata, HistoryStats, HistoryToolCall};
 pub use provider::{
     ChatProvider, ChatProviderFactory, ClaudeCliProvider, FinishReason, MockProvider,
