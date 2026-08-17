@@ -215,6 +215,8 @@ pub struct App {
     last_update_check: Instant,
     /// Chat backend (None if initialization failed)
     chat_backend: Option<Arc<ChatBackend>>,
+    /// Fast-path matcher for common chat queries (local pattern matching, no LLM call)
+    fast_path_matcher: Option<forge_chat::FastPathMatcher>,
     /// Channel for sending responses from background thread to UI
     chat_response_tx: Option<Sender<(String, Result<ChatResponse, forge_chat::ChatError>)>>,
     /// Channel receiver for chat responses from background thread
@@ -643,6 +645,7 @@ impl App {
             update_ready_for_restart: false,
             last_update_check: now,
             chat_backend,
+            fast_path_matcher: Some(forge_chat::FastPathMatcher::new()),
             chat_response_tx: None,
             chat_response_rx: None,
             chat_pending: false,
@@ -730,6 +733,7 @@ impl App {
             update_ready_for_restart: false,
             last_update_check: now,
             chat_backend: None, // Don't initialize in test mode
+            fast_path_matcher: Some(forge_chat::FastPathMatcher::new()),
             chat_response_tx: None,
             chat_response_rx: None,
             chat_pending: false,
@@ -1124,6 +1128,89 @@ impl App {
                 false
             }
         }
+    }
+
+    /// Handle a query through the local fast path, without contacting the chat provider.
+    fn handle_fast_path_query(&mut self, query: &str) -> bool {
+        let result = self
+            .fast_path_matcher
+            .as_ref()
+            .map(|matcher| matcher.match_query(query));
+        let action = match result {
+            Some(forge_chat::FastPathResult::Handled(action)) => action,
+            _ => return false,
+        };
+
+        let response_text = match action {
+            forge_chat::FastPathAction::ShowCosts => {
+                self.switch_view(View::Costs);
+                let cost_data = &self.data_manager.cost_data;
+                if cost_data.today.is_some() {
+                    format!(
+                        "Today's spending: {} ({} calls, {} tokens).",
+                        crate::cost_panel::format_usd(cost_data.today_total()),
+                        cost_data.today_calls(),
+                        crate::cost_panel::format_tokens(cost_data.today_tokens()),
+                    )
+                } else {
+                    "Costs view opened; today's spending is not available yet.".to_string()
+                }
+            }
+            forge_chat::FastPathAction::ShowWorkers => {
+                self.switch_view(View::Workers);
+                format!(
+                    "Workers view opened ({} workers).",
+                    self.data_manager.worker_data.total_worker_count()
+                )
+            }
+            forge_chat::FastPathAction::ShowTasks { priority } => {
+                self.priority_filter = priority;
+                self.task_search_mode = false;
+                self.task_search_query.clear();
+                self.switch_view(View::Tasks);
+                let count = self.data_manager.bead_manager.task_count_filtered(priority);
+                match priority {
+                    Some(priority) => format!("Showing P{} tasks ({} ready).", priority, count),
+                    None => format!("Tasks view opened ({} ready).", count),
+                }
+            }
+            forge_chat::FastPathAction::SwitchView(target) => {
+                let view = match target {
+                    forge_chat::ViewTarget::Overview => View::Overview,
+                    forge_chat::ViewTarget::Workers => View::Workers,
+                    forge_chat::ViewTarget::Tasks => View::Tasks,
+                    forge_chat::ViewTarget::Costs => View::Costs,
+                    forge_chat::ViewTarget::Alerts => View::Alerts,
+                    forge_chat::ViewTarget::Logs => View::Logs,
+                    forge_chat::ViewTarget::Chat => View::Chat,
+                };
+                self.switch_view(view);
+                format!("{} view opened.", view.title())
+            }
+        };
+
+        let exchange = ChatExchange {
+            user_query: query.to_string(),
+            assistant_response: response_text.clone(),
+            timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+            is_error: false,
+            tool_calls: vec![],
+            side_effects: vec![],
+            confirmation: None,
+            metadata: ResponseMetadata {
+                provider: "local-fast-path".to_string(),
+                ..ResponseMetadata::default()
+            },
+            error_guidance: None,
+        };
+        self.persist_chat_exchange(&exchange);
+        self.chat_history.push(exchange);
+        if self.chat_history.len() > 10 {
+            self.chat_history.remove(0);
+        }
+        self.status_message = Some(response_text);
+        self.mark_dirty();
+        true
     }
 
     /// Save current chat history to disk.
@@ -2758,6 +2845,11 @@ impl App {
                     // Check for local commands first (commands handled by the TUI, not the backend)
                     if self.handle_chat_command(&query) {
                         self.mark_dirty();
+                        return;
+                    }
+
+                    // Handle common exact-match queries locally before invoking the LLM.
+                    if self.handle_fast_path_query(&query) {
                         return;
                     }
 
