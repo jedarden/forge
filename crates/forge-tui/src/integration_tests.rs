@@ -5378,4 +5378,76 @@ mod tests {
             );
         }
     }
+
+    // ============================================================
+    // Integration Test: Server Mode Detection
+    // ============================================================
+
+    #[test]
+    fn test_e2e_server_mode_detection_standalone() {
+        let mut app = App::new();
+
+        // In standalone mode (default), is_connected_to_server should return false
+        assert!(
+            !app.is_connected_to_server(),
+            "is_connected_to_server should return false in standalone mode"
+        );
+
+        // Verify the app renders correctly in standalone mode
+        let buffer = render_app(&mut app, 120, 40);
+        assert!(
+            buffer_contains(&buffer, "FORGE"),
+            "App should render correctly in standalone mode"
+        );
+    }
+
+    #[test]
+    fn test_e2e_server_mode_detection_with_server_connection() {
+        let mut app = App::new();
+
+        // Initially in standalone mode
+        assert!(
+            !app.is_connected_to_server(),
+            "Should start in standalone mode"
+        );
+
+        // Simulate server mode by creating a channel (as would be done during server connection)
+        let (tx, _rx) = std::sync::mpsc::channel();
+        app.set_server_client_tx_for_testing(Some(tx));
+
+        // Now is_connected_to_server should return true
+        assert!(
+            app.is_connected_to_server(),
+            "is_connected_to_server should return true when server_client_tx is Some"
+        );
+
+        // Verify the app still renders correctly in server mode
+        let buffer = render_app(&mut app, 120, 40);
+        assert!(
+            buffer_contains(&buffer, "FORGE"),
+            "App should render correctly in server mode"
+        );
+    }
+
+    #[test]
+    fn test_e2e_server_mode_detection_state_transitions() {
+        let mut app = App::new();
+
+        // Start in standalone mode
+        assert!(!app.is_connected_to_server(), "Should start in standalone mode");
+
+        // Transition to server mode
+        let (tx1, _rx1) = std::sync::mpsc::channel();
+        app.set_server_client_tx_for_testing(Some(tx1));
+        assert!(app.is_connected_to_server(), "Should be in server mode after channel creation");
+
+        // Simulate disconnection (None = disconnected)
+        app.set_server_client_tx_for_testing(None);
+        assert!(!app.is_connected_to_server(), "Should return to standalone after disconnection");
+
+        // Reconnect
+        let (tx2, _rx2) = std::sync::mpsc::channel();
+        app.set_server_client_tx_for_testing(Some(tx2));
+        assert!(app.is_connected_to_server(), "Should detect reconnection");
+    }
 }

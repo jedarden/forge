@@ -3580,6 +3580,16 @@ impl App {
         self.server_client_tx.is_some()
     }
 
+    #[cfg(test)]
+    /// Testing helper: Set the server client channel directly.
+    /// This is only used in integration tests to simulate server mode.
+    pub(crate) fn set_server_client_tx_for_testing(
+        &mut self,
+        tx: Option<std::sync::mpsc::Sender<crate::app::ServerClientRequest>>,
+    ) {
+        self.server_client_tx = tx;
+    }
+
     /// Acknowledge the currently selected alert in the alerts list.
     fn acknowledge_selected_alert(&mut self) {
         let alerts = self.data_manager.alert_manager.alerts_by_severity();
