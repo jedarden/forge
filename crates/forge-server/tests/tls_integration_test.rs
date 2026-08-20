@@ -358,9 +358,8 @@ async fn test_tls_client_refuses_invalid_cert() {
     let client_clone = client.clone();
 
     // Attempt connection - should fail due to self-signed cert
-    let connection_result = tokio::spawn(async move {
-        let result = client_clone.connect_and_run().await;
-        result
+    let _connection_result = tokio::spawn(async move {
+        client_clone.connect_and_run().await
     });
 
     // Wait for connection attempt
@@ -584,7 +583,7 @@ async fn test_websocket_tls_server_startup() {
         Ok(Ok(_)) => {
             // Server shut down successfully - ideal case
         }
-        Ok(Err(e)) => {
+        Ok(Err(_e)) => {
             // Server shut down with error - acceptable if it's a cancellation/error we caused
             // Don't panic - the test validated that the server started and stopped
         }

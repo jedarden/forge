@@ -230,7 +230,6 @@ impl Default for SessionsPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
 
     fn create_test_session(user_id: &str, display_name: &str, role: UserRole) -> UserSession {
         UserSession::new("test-session", user_id, display_name, role)

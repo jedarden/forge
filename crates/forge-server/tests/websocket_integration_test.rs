@@ -12,19 +12,17 @@ use forge_core::{WorkerStatus, BeadStatus, Priority, UserRole};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
-use tokio::sync::{Mutex, Barrier};
+use tokio::sync::Mutex;
 
 /// Helper struct to track received messages during tests with proper synchronization.
 struct MessageTracker {
     messages: Arc<Mutex<Vec<ServerMessage>>>,
-    barrier: Arc<Barrier>,
 }
 
 impl MessageTracker {
     fn new() -> Self {
         Self {
             messages: Arc::new(Mutex::new(Vec::new())),
-            barrier: Arc::new(Barrier::new(2)),
         }
     }
 
@@ -109,21 +107,6 @@ async fn wait_for_server_ready(port: u16, max_wait_ms: u64) -> bool {
         }
     }
     false
-}
-
-/// Simple wait for server to start (fallback when health check doesn't work).
-async fn wait_for_server_start(port: u16, max_wait_ms: u64) {
-    let start = std::time::Instant::now();
-    let url = format!("http://127.0.0.1:{}/health", port);
-
-    while start.elapsed() < Duration::from_millis(max_wait_ms) {
-        if let Ok(resp) = reqwest::get(&url).await {
-            if resp.status().is_success() {
-                return;
-            }
-        }
-        sleep(Duration::from_millis(100)).await;
-    }
 }
 
 /// Wait for client connection with timeout.

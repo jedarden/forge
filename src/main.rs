@@ -1264,8 +1264,6 @@ fn handle_validate_tls_command(
     key_path: Option<&std::path::Path>,
     verbose: bool,
 ) -> ExitCode {
-    use forge_server::tls_validation;
-
     eprintln!("🔍 Validating TLS Configuration");
     eprintln!();
 
@@ -1382,7 +1380,6 @@ fn run_server_mode(
     server_config_path: Option<std::path::PathBuf>,
 ) -> ExitCode {
     use forge_tui::{ClientConfig, App};
-    use forge_server::{TlsConfig, server_config};
     use forge_server::server_config::{load_server_yaml_config, merge_config_with_cli_overrides};
 
     info!("Starting FORGE in server mode");

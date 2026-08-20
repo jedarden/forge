@@ -241,8 +241,6 @@ async fn test_mock_provider_clear_calls() {
 
 #[tokio::test]
 async fn test_mock_provider_and_then_tool_call() {
-    use forge_chat::provider::FinishReason;
-
     // Test and_then_tool_call by chaining it after creating the provider.
     // Note: and_then_tool_call takes self by value, so we must reassign.
     let mock = MockProvider::new()
@@ -277,8 +275,6 @@ async fn test_mock_provider_and_then_tool_call() {
 
 #[tokio::test]
 async fn test_mock_provider_with_multiple_tool_calls() {
-    use forge_chat::provider::FinishReason;
-
     // Test chaining multiple tool calls
     let context = DashboardContext::default();
 
@@ -310,8 +306,6 @@ async fn test_mock_provider_with_multiple_tool_calls() {
 
 #[tokio::test]
 async fn test_mock_provider_and_then_tool_call_with_response() {
-    use forge_chat::provider::FinishReason;
-
     // Test mixing text responses and tool calls using chaining
     let context = DashboardContext::default();
 
