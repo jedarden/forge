@@ -659,6 +659,10 @@ pub struct DataManager {
     prev_worker_statuses: HashMap<String, WorkerStatus>,
     /// Server bead state for team collaboration sync
     server_beads: Vec<forge_server::protocol::BeadState>,
+    /// Server session state for team collaboration sync
+    server_sessions: Vec<forge_core::UserSession>,
+    /// Last sessions update timestamp
+    last_sessions_update: Option<std::time::Instant>,
 }
 
 impl DataManager {
@@ -816,6 +820,8 @@ impl DataManager {
             log_rx,
             prev_worker_statuses: HashMap::new(),
             server_beads: Vec::new(),
+            server_sessions: Vec::new(),
+            last_sessions_update: None,
         };
 
         // Skip initial poll_updates during initialization - it blocks for too long
@@ -941,6 +947,8 @@ impl DataManager {
             log_rx,
             prev_worker_statuses: HashMap::new(),
             server_beads: Vec::new(),
+            server_sessions: Vec::new(),
+            last_sessions_update: None,
         }
     }
 
@@ -2157,12 +2165,13 @@ impl DataManager {
     ///
     /// This method is called when the TUI is connected to a FORGE server
     /// and receives state updates. The server provides authoritative
-    /// worker, bead, and cost state that should be reflected in the UI.
+    /// worker, bead, cost, and session state that should be reflected in the UI.
     pub fn update_from_server_state(
         &mut self,
         workers: Vec<forge_server::protocol::WorkerState>,
         beads: Vec<forge_server::protocol::BeadState>,
         costs: forge_server::protocol::CostState,
+        sessions: Vec<forge_server::protocol::SessionSummary>,
     ) {
         use crate::status::WorkerStatusFile;
 
@@ -2190,6 +2199,19 @@ impl DataManager {
         // Update server bead state
         // Store server beads in a separate cache (option 2 from TODO)
         self.server_beads = beads;
+
+        // Update server session state for team collaboration
+        // Convert SessionSummary to UserSession format
+        use forge_core::UserSession;
+        self.server_sessions = sessions.into_iter().map(|summary| {
+            UserSession::new(
+                &format!("session-{}", summary.user_id),
+                &summary.user_id,
+                &summary.display_name,
+                summary.role,
+            )
+        }).collect();
+        self.last_sessions_update = Some(std::time::Instant::now());
 
         // Update cost data from server state
         // Server provides authoritative cost data when connected
@@ -2236,6 +2258,26 @@ impl DataManager {
     /// Get server bead by ID.
     pub fn get_server_bead(&self, bead_id: &str) -> Option<&forge_server::protocol::BeadState> {
         self.server_beads.iter().find(|b| b.bead_id == bead_id)
+    }
+
+    /// Get server session state for team collaboration.
+    pub fn get_server_sessions(&self) -> &[forge_core::UserSession] {
+        &self.server_sessions
+    }
+
+    /// Check if server session data is available.
+    pub fn has_server_sessions(&self) -> bool {
+        !self.server_sessions.is_empty()
+    }
+
+    /// Get server session by user ID.
+    pub fn get_server_session(&self, user_id: &str) -> Option<&forge_core::UserSession> {
+        self.server_sessions.iter().find(|s| s.user_id == user_id)
+    }
+
+    /// Get the count of connected users from server state.
+    pub fn server_session_count(&self) -> usize {
+        self.server_sessions.len()
     }
 }
 

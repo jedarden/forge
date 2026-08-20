@@ -138,6 +138,7 @@ pub enum ServerClientMessage {
         workers: Vec<forge_server::protocol::WorkerState>,
         beads: Vec<forge_server::protocol::BeadState>,
         costs: forge_server::protocol::CostState,
+        sessions: Vec<forge_server::protocol::SessionSummary>,
     },
     /// User joined the session
     UserJoined { user: String, display_name: String, role: forge_core::UserRole },
@@ -3164,6 +3165,17 @@ impl App {
             worker.suffix, session_name
         );
 
+        // Extract worker_id from session_name (format: "forge-{worker_id}")
+        let worker_id = session_name.strip_prefix("forge-").unwrap_or(&session_name);
+
+        // Check if connected to server - send kill request before killing locally
+        if self.server_client_tx.is_some() {
+            self.send_server_client_request(ServerClientRequest::KillWorker {
+                worker_id: worker_id.to_string(),
+            });
+            info!("Sent KillWorker request to server for worker: {}", worker_id);
+        }
+
         // First check if session exists (to handle already-dead workers gracefully)
         let exists = self
             .worker_runtime
@@ -4405,6 +4417,7 @@ impl App {
                             workers: update.workers,
                             beads: update.beads,
                             costs: update.costs,
+                            sessions: update.sessions,
                         }
                     }
                     ServerMessage::UserJoined { user, display_name, role } => {
@@ -4618,9 +4631,9 @@ impl App {
                     server_url, session.display_name, session.role
                 ));
             }
-            ServerClientMessage::StateUpdate { workers, beads, costs } => {
+            ServerClientMessage::StateUpdate { workers, beads, costs, sessions } => {
                 // Update data manager with server state
-                self.data_manager.update_from_server_state(workers, beads, costs);
+                self.data_manager.update_from_server_state(workers, beads, costs, sessions);
             }
             ServerClientMessage::UserJoined { user, display_name, role } => {
                 self.sessions_panel.add_user(user, display_name.clone(), role);
