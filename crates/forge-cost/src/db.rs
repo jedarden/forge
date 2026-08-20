@@ -1,6 +1,6 @@
 //! SQLite database layer for cost tracking.
 
-use crate::error::{is_database_locked_error, CostError, Result};
+use crate::error::{CostError, Result, is_database_locked_error};
 use crate::models::{
     ApiCall, CostBreakdown, DailyCost, DailyStat, HourlyStat, ModelPerformance, Subscription,
     SubscriptionType, SubscriptionUsageRecord, WorkerEfficiency,
@@ -70,8 +70,7 @@ impl CostDatabase {
                     if attempt > 1 {
                         info!(
                             attempt,
-                            operation,
-                            "Database operation succeeded after retry"
+                            operation, "Database operation succeeded after retry"
                         );
                     }
                     return Ok(result);
@@ -2364,7 +2363,7 @@ impl CostDatabase {
                         cost_usd, bead_id, event_type
                  FROM api_calls
                  WHERE timestamp >= ?1
-                 ORDER BY timestamp DESC"
+                 ORDER BY timestamp DESC",
             )?;
 
             let calls: Vec<ApiCall> = stmt
@@ -2400,9 +2399,7 @@ impl CostDatabase {
                 CostError::Database(rusqlite::Error::InvalidParameterName(e.to_string()))
             })?;
 
-            let mut stmt = conn.prepare_cached(
-                "SELECT id FROM subscriptions WHERE name = ?1"
-            )?;
+            let mut stmt = conn.prepare_cached("SELECT id FROM subscriptions WHERE name = ?1")?;
 
             match stmt.query_row(params![name], |row| row.get(0)) {
                 Ok(id) => Ok(Some(id)),

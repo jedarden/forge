@@ -124,13 +124,12 @@ impl RouterConfig {
 
     /// Load configuration from a YAML file.
     pub fn from_yaml(path: &std::path::Path) -> Result<Self, RouterError> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| RouterError::ConfigLoad {
-                path: path.to_path_buf(),
-                source: e,
-            })?;
-        let config: Self = serde_yaml::from_str(&content)
-            .map_err(|e| RouterError::ConfigParse {
+        let content = std::fs::read_to_string(path).map_err(|e| RouterError::ConfigLoad {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
+        let config: Self =
+            serde_yaml::from_str(&content).map_err(|e| RouterError::ConfigParse {
                 message: e.to_string(),
             })?;
         config.validate()?;
@@ -391,7 +390,10 @@ impl TaskMetadata {
 
         // Check for special labels
         let label_lower: Vec<String> = self.labels.iter().map(|l| l.to_lowercase()).collect();
-        if label_lower.iter().any(|l| l == "architecture" || l == "critical") {
+        if label_lower
+            .iter()
+            .any(|l| l == "architecture" || l == "critical")
+        {
             return WorkerTier::Premium;
         }
         if label_lower.iter().any(|l| l == "complex") {
@@ -532,16 +534,17 @@ impl Router {
 
     /// Initialize model states from configuration.
     fn initialize_model_states(&mut self) {
-        let all_models: Vec<_> = self.config.premium_models.iter()
+        let all_models: Vec<_> = self
+            .config
+            .premium_models
+            .iter()
             .chain(self.config.standard_models.iter())
             .chain(self.config.budget_models.iter())
             .collect();
 
         for model in all_models {
-            self.availability.insert(
-                model.id.clone(),
-                ModelAvailability::new(&model.id, true),
-            );
+            self.availability
+                .insert(model.id.clone(), ModelAvailability::new(&model.id, true));
             self.load_counters.insert(model.id.clone(), 0);
         }
     }
@@ -558,7 +561,8 @@ impl Router {
 
     /// Update model availability.
     pub fn update_availability(&mut self, availability: ModelAvailability) {
-        self.availability.insert(availability.model_id.clone(), availability);
+        self.availability
+            .insert(availability.model_id.clone(), availability);
     }
 
     /// Get all models for a tier.
@@ -700,9 +704,15 @@ impl Router {
     }
 
     /// Determine the routing reason.
-    fn determine_reason(&self, model: &ModelConfig, task: &TaskMetadata, tier: WorkerTier) -> RoutingReason {
+    fn determine_reason(
+        &self,
+        model: &ModelConfig,
+        task: &TaskMetadata,
+        tier: WorkerTier,
+    ) -> RoutingReason {
         // Check subscription preference first
-        if self.config.prefer_subscription && model.has_subscription
+        if self.config.prefer_subscription
+            && model.has_subscription
             && let Some(quota) = self.quotas.get(&model.id)
             && quota.is_urgent()
         {
@@ -1063,38 +1073,34 @@ mod tests {
     #[test]
     fn test_task_complexity_overrides_priority() {
         // P2 with high complexity should go to premium
-        let task = TaskMetadata::new("test", Priority::P2)
-            .with_complexity(85);
+        let task = TaskMetadata::new("test", Priority::P2).with_complexity(85);
         assert_eq!(task.recommended_tier(), WorkerTier::Premium);
 
         // P2 with medium complexity should stay standard
-        let task = TaskMetadata::new("test", Priority::P2)
-            .with_complexity(50);
+        let task = TaskMetadata::new("test", Priority::P2).with_complexity(50);
         assert_eq!(task.recommended_tier(), WorkerTier::Standard);
     }
 
     #[test]
     fn test_task_reasoning_requires_premium() {
-        let task = TaskMetadata::new("test", Priority::P4)
-            .with_reasoning(true);
+        let task = TaskMetadata::new("test", Priority::P4).with_reasoning(true);
         assert_eq!(task.recommended_tier(), WorkerTier::Premium);
     }
 
     #[test]
     fn test_task_label_based_routing() {
         // Architecture label should upgrade to premium
-        let task = TaskMetadata::new("test", Priority::P2)
-            .with_labels(vec!["architecture".to_string()]);
+        let task =
+            TaskMetadata::new("test", Priority::P2).with_labels(vec!["architecture".to_string()]);
         assert_eq!(task.recommended_tier(), WorkerTier::Premium);
 
         // Critical label should upgrade to premium
-        let task = TaskMetadata::new("test", Priority::P3)
-            .with_labels(vec!["critical".to_string()]);
+        let task =
+            TaskMetadata::new("test", Priority::P3).with_labels(vec!["critical".to_string()]);
         assert_eq!(task.recommended_tier(), WorkerTier::Premium);
 
         // Complex label should upgrade to standard
-        let task = TaskMetadata::new("test", Priority::P4)
-            .with_labels(vec!["complex".to_string()]);
+        let task = TaskMetadata::new("test", Priority::P4).with_labels(vec!["complex".to_string()]);
         assert_eq!(task.recommended_tier(), WorkerTier::Standard);
     }
 
@@ -1141,7 +1147,9 @@ mod tests {
         let decision = router.route(&task).unwrap();
 
         // Should prefer subscription model
-        assert!(decision.uses_subscription || decision.reason == RoutingReason::SubscriptionPreference);
+        assert!(
+            decision.uses_subscription || decision.reason == RoutingReason::SubscriptionPreference
+        );
     }
 
     #[test]
@@ -1223,8 +1231,16 @@ mod tests {
         assert_eq!(stats.total_decisions, 10);
 
         // Check tier distribution
-        let premium_count = stats.by_tier.get(&WorkerTier::Premium).copied().unwrap_or(0);
-        let standard_count = stats.by_tier.get(&WorkerTier::Standard).copied().unwrap_or(0);
+        let premium_count = stats
+            .by_tier
+            .get(&WorkerTier::Premium)
+            .copied()
+            .unwrap_or(0);
+        let standard_count = stats
+            .by_tier
+            .get(&WorkerTier::Standard)
+            .copied()
+            .unwrap_or(0);
         let budget_count = stats.by_tier.get(&WorkerTier::Budget).copied().unwrap_or(0);
 
         assert_eq!(premium_count, 3);

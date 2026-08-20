@@ -373,22 +373,28 @@ impl WorkerHealthStatus {
         for check_type in &self.failed_checks {
             match check_type {
                 HealthCheckType::PidExists => {
-                    self.guidance.push("Process died - restart the worker".to_string());
+                    self.guidance
+                        .push("Process died - restart the worker".to_string());
                 }
                 HealthCheckType::ActivityFresh => {
-                    self.guidance.push("Worker may be stuck - check logs".to_string());
+                    self.guidance
+                        .push("Worker may be stuck - check logs".to_string());
                 }
                 HealthCheckType::MemoryUsage => {
-                    self.guidance.push("Memory usage high - consider restart".to_string());
+                    self.guidance
+                        .push("Memory usage high - consider restart".to_string());
                 }
                 HealthCheckType::TaskProgress => {
-                    self.guidance.push("Task may be stuck - verify progress".to_string());
+                    self.guidance
+                        .push("Task may be stuck - verify progress".to_string());
                 }
                 HealthCheckType::TmuxSession => {
-                    self.guidance.push("Session missing - restart required".to_string());
+                    self.guidance
+                        .push("Session missing - restart required".to_string());
                 }
                 HealthCheckType::ResponseHealth => {
-                    self.guidance.push("Worker not responding - check if hung".to_string());
+                    self.guidance
+                        .push("Worker not responding - check if hung".to_string());
                 }
             }
         }
@@ -431,9 +437,10 @@ impl HealthMonitor {
     pub fn new(config: HealthMonitorConfig) -> forge_core::Result<Self> {
         let status_reader = StatusReader::new(None)?;
 
-        let home = std::env::var("HOME").map_err(|_| forge_core::ForgeError::ConfigMissingField {
-            field: "HOME environment variable".to_string(),
-        })?;
+        let home =
+            std::env::var("HOME").map_err(|_| forge_core::ForgeError::ConfigMissingField {
+                field: "HOME environment variable".to_string(),
+            })?;
         let log_dir = PathBuf::from(home).join(".forge").join("logs");
 
         Ok(Self {
@@ -549,8 +556,7 @@ impl HealthMonitor {
         }
 
         // Check if recovery is exhausted
-        status.recovery_exhausted =
-            status.recovery_attempts >= self.config.max_recovery_attempts;
+        status.recovery_exhausted = status.recovery_attempts >= self.config.max_recovery_attempts;
 
         // Generate guidance based on results
         status.generate_guidance();
@@ -617,10 +623,7 @@ impl HealthMonitor {
         };
 
         // Check if process exists using kill -0
-        let output = Command::new("kill")
-            .arg("-0")
-            .arg(pid.to_string())
-            .output();
+        let output = Command::new("kill").arg("-0").arg(pid.to_string()).output();
 
         match output {
             Ok(output) if output.status.success() => {
@@ -639,13 +642,11 @@ impl HealthMonitor {
                 }
                 HealthCheckResult::passed(HealthCheckType::PidExists)
             }
-            _ => {
-                HealthCheckResult::failed(
-                    HealthCheckType::PidExists,
-                    HealthErrorType::DeadProcess,
-                    format!("Process {} does not exist", pid),
-                )
-            }
+            _ => HealthCheckResult::failed(
+                HealthCheckType::PidExists,
+                HealthErrorType::DeadProcess,
+                format!("Process {} does not exist", pid),
+            ),
         }
     }
 
@@ -757,7 +758,10 @@ impl HealthMonitor {
 
     /// Record a recovery attempt for a worker.
     pub fn record_recovery_attempt(&mut self, worker_id: &str) {
-        let attempts = self.recovery_attempts.entry(worker_id.to_string()).or_insert(0);
+        let attempts = self
+            .recovery_attempts
+            .entry(worker_id.to_string())
+            .or_insert(0);
         *attempts = attempts.saturating_add(1);
         info!(
             worker_id = %worker_id,
@@ -784,7 +788,10 @@ impl HealthMonitor {
 
     /// Get consecutive failure count for a worker.
     pub fn consecutive_failures(&self, worker_id: &str) -> u8 {
-        self.consecutive_failures.get(worker_id).copied().unwrap_or(0)
+        self.consecutive_failures
+            .get(worker_id)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Check if auto-restart should be triggered for a worker.
@@ -816,7 +823,8 @@ pub fn check_worker_health(
     log_dir: &Path,
 ) -> forge_core::Result<WorkerHealthStatus> {
     let config = HealthMonitorConfig::default();
-    let mut monitor = HealthMonitor::with_dirs(config, status_dir.to_path_buf(), log_dir.to_path_buf())?;
+    let mut monitor =
+        HealthMonitor::with_dirs(config, status_dir.to_path_buf(), log_dir.to_path_buf())?;
 
     let worker = monitor
         .status_reader
@@ -970,8 +978,8 @@ mod tests {
         let status_dir = temp_dir.path().to_path_buf();
         let log_dir = temp_dir.path().to_path_buf();
 
-        let mut monitor =
-            HealthMonitor::with_dirs(config, status_dir, log_dir).expect("Failed to create monitor");
+        let mut monitor = HealthMonitor::with_dirs(config, status_dir, log_dir)
+            .expect("Failed to create monitor");
 
         let worker_id = "test-worker";
 
@@ -1001,8 +1009,8 @@ mod tests {
         let status_dir = temp_dir.path().to_path_buf();
         let log_dir = temp_dir.path().to_path_buf();
 
-        let monitor =
-            HealthMonitor::with_dirs(config, status_dir, log_dir).expect("Failed to create monitor");
+        let monitor = HealthMonitor::with_dirs(config, status_dir, log_dir)
+            .expect("Failed to create monitor");
 
         let worker = WorkerStatusInfo {
             worker_id: "test".to_string(),
@@ -1025,8 +1033,8 @@ mod tests {
         let status_dir = temp_dir.path().to_path_buf();
         let log_dir = temp_dir.path().to_path_buf();
 
-        let monitor =
-            HealthMonitor::with_dirs(config, status_dir, log_dir).expect("Failed to create monitor");
+        let monitor = HealthMonitor::with_dirs(config, status_dir, log_dir)
+            .expect("Failed to create monitor");
 
         let worker = WorkerStatusInfo {
             worker_id: "test".to_string(),
@@ -1050,8 +1058,8 @@ mod tests {
         let status_dir = temp_dir.path().to_path_buf();
         let log_dir = temp_dir.path().to_path_buf();
 
-        let monitor =
-            HealthMonitor::with_dirs(config, status_dir, log_dir).expect("Failed to create monitor");
+        let monitor = HealthMonitor::with_dirs(config, status_dir, log_dir)
+            .expect("Failed to create monitor");
 
         // Idle worker - should pass
         let worker = WorkerStatusInfo {
@@ -1075,8 +1083,8 @@ mod tests {
         let status_dir = temp_dir.path().to_path_buf();
         let log_dir = temp_dir.path().to_path_buf();
 
-        let monitor =
-            HealthMonitor::with_dirs(config, status_dir, log_dir).expect("Failed to create monitor");
+        let monitor = HealthMonitor::with_dirs(config, status_dir, log_dir)
+            .expect("Failed to create monitor");
 
         // Active worker with stuck task
         let worker = WorkerStatusInfo {
@@ -1108,7 +1116,10 @@ mod tests {
         assert_eq!(HealthErrorType::StaleActivity.to_string(), "stale activity");
         assert_eq!(HealthErrorType::HighMemory.to_string(), "high memory");
         assert_eq!(HealthErrorType::StuckTask.to_string(), "stuck task");
-        assert_eq!(HealthErrorType::MissingSession.to_string(), "missing session");
+        assert_eq!(
+            HealthErrorType::MissingSession.to_string(),
+            "missing session"
+        );
         assert_eq!(HealthErrorType::Unresponsive.to_string(), "unresponsive");
     }
 
@@ -1123,8 +1134,8 @@ mod tests {
         let status_dir = temp_dir.path().to_path_buf();
         let log_dir = temp_dir.path().to_path_buf();
 
-        let mut monitor =
-            HealthMonitor::with_dirs(config, status_dir, log_dir).expect("Failed to create monitor");
+        let mut monitor = HealthMonitor::with_dirs(config, status_dir, log_dir)
+            .expect("Failed to create monitor");
 
         let worker_id = "test-worker";
 
@@ -1161,7 +1172,10 @@ mod tests {
     #[test]
     fn test_auto_recovery_disabled_by_default() {
         let config = HealthMonitorConfig::default();
-        assert!(!config.enable_auto_recovery, "Auto-recovery should be disabled by default per ADR 0014");
+        assert!(
+            !config.enable_auto_recovery,
+            "Auto-recovery should be disabled by default per ADR 0014"
+        );
     }
 
     #[test]
@@ -1175,13 +1189,15 @@ mod tests {
         let status_dir = temp_dir.path().to_path_buf();
         let log_dir = temp_dir.path().to_path_buf();
 
-        let mut monitor =
-            HealthMonitor::with_dirs(config, status_dir, log_dir).expect("Failed to create monitor");
+        let mut monitor = HealthMonitor::with_dirs(config, status_dir, log_dir)
+            .expect("Failed to create monitor");
 
         let worker_id = "test-worker";
 
         // Set up some consecutive failures
-        monitor.consecutive_failures.insert(worker_id.to_string(), 3);
+        monitor
+            .consecutive_failures
+            .insert(worker_id.to_string(), 3);
         assert_eq!(monitor.consecutive_failures(worker_id), 3);
 
         // Reset via the reset_recovery_attempts method
@@ -1199,8 +1215,8 @@ mod tests {
         let status_dir = temp_dir.path().to_path_buf();
         let log_dir = temp_dir.path().to_path_buf();
 
-        let monitor =
-            HealthMonitor::with_dirs(config, status_dir, log_dir).expect("Failed to create monitor");
+        let monitor = HealthMonitor::with_dirs(config, status_dir, log_dir)
+            .expect("Failed to create monitor");
 
         // Worker without PID - should skip
         let worker = WorkerStatusInfo {
@@ -1250,8 +1266,8 @@ mod tests {
         let status_dir = temp_dir.path().to_path_buf();
         let log_dir = temp_dir.path().to_path_buf();
 
-        let mut monitor =
-            HealthMonitor::with_dirs(config, status_dir, log_dir).expect("Failed to create monitor");
+        let mut monitor = HealthMonitor::with_dirs(config, status_dir, log_dir)
+            .expect("Failed to create monitor");
 
         let paused_at = Utc::now();
         let worker = WorkerStatusInfo {
@@ -1278,8 +1294,8 @@ mod tests {
         let status_dir = temp_dir.path().to_path_buf();
         let log_dir = temp_dir.path().to_path_buf();
 
-        let mut monitor =
-            HealthMonitor::with_dirs(config, status_dir, log_dir).expect("Failed to create monitor");
+        let mut monitor = HealthMonitor::with_dirs(config, status_dir, log_dir)
+            .expect("Failed to create monitor");
 
         let worker = WorkerStatusInfo {
             worker_id: "active-worker".to_string(),

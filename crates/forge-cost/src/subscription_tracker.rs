@@ -130,11 +130,19 @@ impl SubscriptionTracker {
         if config_path.exists() {
             match Self::from_config_file(&config_path) {
                 Ok(tracker) => {
-                    info!("Loaded {} subscriptions from {}", tracker.len(), config_path.display());
+                    info!(
+                        "Loaded {} subscriptions from {}",
+                        tracker.len(),
+                        config_path.display()
+                    );
                     return tracker;
                 }
                 Err(e) => {
-                    warn!("Failed to load subscriptions from {}: {}", config_path.display(), e);
+                    warn!(
+                        "Failed to load subscriptions from {}: {}",
+                        config_path.display(),
+                        e
+                    );
                 }
             }
         }
@@ -147,12 +155,16 @@ impl SubscriptionTracker {
 
     /// Reload subscriptions from the config file.
     pub fn reload(&mut self) -> Result<()> {
-        let config_path = self.config_path.as_ref().ok_or_else(|| {
-            CostError::Config("No config path set".to_string())
-        })?;
+        let config_path = self
+            .config_path
+            .as_ref()
+            .ok_or_else(|| CostError::Config("No config path set".to_string()))?;
 
         if !config_path.exists() {
-            debug!("Subscription config file does not exist: {}", config_path.display());
+            debug!(
+                "Subscription config file does not exist: {}",
+                config_path.display()
+            );
             return Ok(());
         }
 
@@ -170,7 +182,10 @@ impl SubscriptionTracker {
         self.last_loaded = Some(Utc::now());
         self.update_summary_cache();
 
-        info!("Loaded {} subscriptions from config", self.subscriptions.len());
+        info!(
+            "Loaded {} subscriptions from config",
+            self.subscriptions.len()
+        );
         Ok(())
     }
 
@@ -258,7 +273,9 @@ impl SubscriptionTracker {
             }
 
             let billing_end = chrono::NaiveDate::from_ymd_opt(renewal_year, renewal_month, day)
-                .unwrap_or_else(|| chrono::NaiveDate::from_ymd_opt(renewal_year, renewal_month, 28).unwrap())
+                .unwrap_or_else(|| {
+                    chrono::NaiveDate::from_ymd_opt(renewal_year, renewal_month, 28).unwrap()
+                })
                 .and_hms_opt(23, 59, 59)
                 .unwrap()
                 .and_utc();
@@ -275,7 +292,8 @@ impl SubscriptionTracker {
 
     /// Update the summary cache.
     fn update_summary_cache(&mut self) {
-        self.summary_cache = self.subscriptions
+        self.summary_cache = self
+            .subscriptions
             .values()
             .map(SubscriptionSummary::from)
             .collect();
@@ -544,19 +562,25 @@ mod tests {
 
         // Low usage - no alert
         sub.quota_used = 10;
-        tracker.subscriptions.insert("test".to_string(), sub.clone());
+        tracker
+            .subscriptions
+            .insert("test".to_string(), sub.clone());
         tracker.update_summary_cache();
         assert_eq!(tracker.get_alert("test"), SubscriptionAlert::None);
 
         // 85% usage - warning
         sub.quota_used = 85;
-        tracker.subscriptions.insert("test".to_string(), sub.clone());
+        tracker
+            .subscriptions
+            .insert("test".to_string(), sub.clone());
         tracker.update_summary_cache();
         assert_eq!(tracker.get_alert("test"), SubscriptionAlert::Warning);
 
         // 95% usage - critical
         sub.quota_used = 95;
-        tracker.subscriptions.insert("test".to_string(), sub.clone());
+        tracker
+            .subscriptions
+            .insert("test".to_string(), sub.clone());
         tracker.update_summary_cache();
         assert_eq!(tracker.get_alert("test"), SubscriptionAlert::Critical);
 
@@ -570,9 +594,15 @@ mod tests {
     #[test]
     fn test_parse_billing_period_iso_date() {
         let tracker = SubscriptionTracker::new();
-        let now = chrono::NaiveDate::from_ymd_opt(2026, 2, 12).unwrap().and_hms_opt(12, 0, 0).unwrap().and_utc();
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 2, 12)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_utc();
 
-        let (_start, end) = tracker.parse_billing_period(&Some("2026-02-28".to_string()), now).unwrap();
+        let (_start, end) = tracker
+            .parse_billing_period(&Some("2026-02-28".to_string()), now)
+            .unwrap();
 
         assert_eq!(end.day(), 28);
         assert_eq!(end.month(), 2);
@@ -582,9 +612,15 @@ mod tests {
     #[test]
     fn test_parse_billing_period_day_of_month() {
         let tracker = SubscriptionTracker::new();
-        let now = chrono::NaiveDate::from_ymd_opt(2026, 2, 12).unwrap().and_hms_opt(12, 0, 0).unwrap().and_utc();
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 2, 12)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_utc();
 
-        let (_start, end) = tracker.parse_billing_period(&Some("15".to_string()), now).unwrap();
+        let (_start, end) = tracker
+            .parse_billing_period(&Some("15".to_string()), now)
+            .unwrap();
 
         // Should be 15th of current or next month
         assert!(end.day() == 15);
@@ -629,7 +665,10 @@ mod tests {
     fn test_increment_usage() {
         let mut tracker = SubscriptionTracker::with_demo_data();
 
-        let initial = tracker.get_subscription("anthropic max_5x").unwrap().quota_used;
+        let initial = tracker
+            .get_subscription("anthropic max_5x")
+            .unwrap()
+            .quota_used;
         tracker.increment_usage("anthropic max_5x", 1_000_000);
 
         let sub = tracker.get_subscription("anthropic max_5x").unwrap();

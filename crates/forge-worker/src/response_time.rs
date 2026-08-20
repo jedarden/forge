@@ -447,16 +447,20 @@ mod tests {
 
     #[test]
     fn test_ping_result_is_responsive() {
-        assert!(PingResult::Responsive {
-            response_time_ms: 100
-        }
-        .is_responsive());
+        assert!(
+            PingResult::Responsive {
+                response_time_ms: 100
+            }
+            .is_responsive()
+        );
         assert!(!PingResult::Unresponsive { timeout_ms: 5000 }.is_responsive());
         assert!(!PingResult::SessionNotFound.is_responsive());
-        assert!(!PingResult::Error {
-            message: "test".to_string()
-        }
-        .is_responsive());
+        assert!(
+            !PingResult::Error {
+                message: "test".to_string()
+            }
+            .is_responsive()
+        );
     }
 
     #[test]

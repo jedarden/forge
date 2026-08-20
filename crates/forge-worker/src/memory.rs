@@ -64,7 +64,7 @@ pub struct MemoryConfig {
 impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
-            warning_limit_mb: DEFAULT_MEMORY_LIMIT_MB,  // 4GB
+            warning_limit_mb: DEFAULT_MEMORY_LIMIT_MB,   // 4GB
             kill_limit_mb: DEFAULT_MEMORY_KILL_LIMIT_MB, // 8GB
             track_growth_rate: true,
             sample_history_size: 10,
@@ -418,8 +418,7 @@ impl MemoryMonitor {
     pub fn kill_runaway_worker(&self, pid: u32, worker_id: &str) -> Result<bool> {
         info!(
             worker_id,
-            pid, "Killing runaway worker (memory > {} MB)",
-            self.config.kill_limit_mb
+            pid, "Killing runaway worker (memory > {} MB)", self.config.kill_limit_mb
         );
 
         let output = Command::new("kill")

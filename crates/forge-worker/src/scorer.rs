@@ -120,14 +120,12 @@ impl ScoringConfig {
 
     /// Validate that weights sum to approximately 1.0.
     pub fn validate(&self) -> Result<(), String> {
-        let sum = self.priority_weight + self.blockers_weight + self.age_weight + self.labels_weight;
+        let sum =
+            self.priority_weight + self.blockers_weight + self.age_weight + self.labels_weight;
         let tolerance = 0.01;
 
         if (sum - 1.0).abs() > tolerance {
-            return Err(format!(
-                "Scoring weights must sum to 1.0, got {:.3}",
-                sum
-            ));
+            return Err(format!("Scoring weights must sum to 1.0, got {:.3}", sum));
         }
 
         Ok(())
@@ -416,7 +414,7 @@ mod tests {
         assert_eq!(scorer.calculate_priority_score(1), 32); // P1
         assert_eq!(scorer.calculate_priority_score(2), 24); // P2
         assert_eq!(scorer.calculate_priority_score(3), 16); // P3
-        assert_eq!(scorer.calculate_priority_score(4), 8);  // P4
+        assert_eq!(scorer.calculate_priority_score(4), 8); // P4
         assert_eq!(scorer.calculate_priority_score(99), 8); // Invalid
     }
 
@@ -573,15 +571,27 @@ mod tests {
 
         // P0 should come before P2
         let ordering = scorer.compare_by_score(
-            0, 0, None, &[],    // P0
-            2, 0, None, &[],    // P2
+            0,
+            0,
+            None,
+            &[], // P0
+            2,
+            0,
+            None,
+            &[], // P2
         );
         assert_eq!(ordering, std::cmp::Ordering::Less); // Less means a comes first
 
         // Higher score comes first
         let ordering = scorer.compare_by_score(
-            1, 3, Some(20), &["critical".to_string()],  // High score
-            3, 0, None, &[],                            // Low score
+            1,
+            3,
+            Some(20),
+            &["critical".to_string()], // High score
+            3,
+            0,
+            None,
+            &[], // Low score
         );
         assert_eq!(ordering, std::cmp::Ordering::Less); // High score comes first
     }
