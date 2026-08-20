@@ -4,45 +4,41 @@
 //! and bead assignment tracking.
 
 use forge_server::{
-    auth::{SimpleAuth, AuthProvider, check_permission, PermissionAction},
+    auth::{TestAuthProvider, AuthProvider, check_permission, PermissionAction},
     session::SessionManager,
     assignment::BeadAssignmentTracker,
 };
 use forge_core::UserRole;
 use tokio::time::{sleep, Duration};
 
-/// Test authentication with default users.
+/// Test authentication with test provider.
 #[tokio::test]
-async fn test_authentication_default_users() {
-    let auth = SimpleAuth::default().with_defaults().await;
+async fn test_test_provider_authentication() {
+    let auth = TestAuthProvider::new();
 
     // Test admin user
-    let result = auth.authenticate("admin", "admin123").await;
+    let result = auth.authenticate("", "test_admin_token").await;
     assert!(result.is_ok());
     let auth_result = result.unwrap();
     assert_eq!(auth_result.user_id, "admin");
     assert_eq!(auth_result.role, UserRole::Admin);
 
     // Test operator user
-    let result = auth.authenticate("operator", "operator123").await;
+    let result = auth.authenticate("", "test_operator_token").await;
     assert!(result.is_ok());
     let auth_result = result.unwrap();
     assert_eq!(auth_result.user_id, "operator");
     assert_eq!(auth_result.role, UserRole::Operator);
 
     // Test viewer user
-    let result = auth.authenticate("viewer", "viewer123").await;
+    let result = auth.authenticate("", "test_viewer_token").await;
     assert!(result.is_ok());
     let auth_result = result.unwrap();
     assert_eq!(auth_result.user_id, "viewer");
     assert_eq!(auth_result.role, UserRole::Viewer);
 
-    // Test invalid password
-    let result = auth.authenticate("admin", "wrong").await;
-    assert!(result.is_err());
-
-    // Test non-existent user
-    let result = auth.authenticate("nobody", "password").await;
+    // Test invalid token
+    let result = auth.authenticate("", "invalid_token").await;
     assert!(result.is_err());
 }
 

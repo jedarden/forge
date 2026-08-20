@@ -6,13 +6,29 @@ use forge_server::{
     websocket::{ForgeServer, ServerConfig},
     client::{ForgeClient, ClientConfig},
     protocol::{ServerMessage, WorkerState, BeadState, CostState, ClientMessage},
-    auth::{SimpleAuth, AuthProvider},
+    auth::{TestAuthProvider, AuthProvider},
 };
 use forge_core::{WorkerStatus, BeadStatus, Priority, UserRole};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use tokio::sync::Mutex;
+
+/// Helper function to create a test auth provider for testing.
+/// Uses TestAuthProvider with predefined test users and tokens.
+fn create_test_auth_provider() -> Arc<dyn AuthProvider> {
+    Arc::new(TestAuthProvider::new())
+}
+
+/// Helper function to get test token for a specific user role.
+fn get_test_token(role: &str) -> String {
+    match role {
+        "admin" => "test_admin_token".to_string(),
+        "operator" => "test_operator_token".to_string(),
+        "viewer" => "test_viewer_token".to_string(),
+        _ => "test_viewer_token".to_string(),
+    }
+}
 
 /// Helper struct to track received messages during tests with proper synchronization.
 struct MessageTracker {
@@ -159,7 +175,7 @@ impl TrackedClient {
 #[tokio::test]
 async fn test_websocket_connect_disconnect_cycle() {
     let config = create_test_config(8081);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Track initial server state
@@ -182,7 +198,7 @@ async fn test_websocket_connect_disconnect_cycle() {
     let client_config = ClientConfig {
         server_url: "ws://127.0.0.1:8081/ws".to_string(),
         user_id: "viewer".to_string(),
-        password: "viewer123".to_string(),
+        password: get_test_token("viewer"),
     };
 
     let client = ForgeClient::new(client_config.clone());
@@ -242,7 +258,7 @@ async fn test_websocket_connect_disconnect_cycle() {
 
     // Test reconnection with new server instance
     let config2 = create_test_config(8081);
-    let auth2: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth2: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server2 = ForgeServer::new(config2, Arc::clone(&auth2));
 
     let server2_clone = server2.clone();
@@ -273,7 +289,7 @@ async fn test_websocket_connect_disconnect_cycle() {
 #[tokio::test]
 async fn test_state_broadcast() {
     let config = create_test_config(8082);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server in background
@@ -446,7 +462,7 @@ async fn test_state_broadcast() {
 #[tokio::test]
 async fn test_message_relay() {
     let config = create_test_config(8083);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server in background
@@ -465,13 +481,13 @@ async fn test_message_relay() {
     let client1_config = ClientConfig {
         server_url: "ws://127.0.0.1:8083/ws".to_string(),
         user_id: "admin".to_string(),
-        password: "admin123".to_string(),
+        password: get_test_token("admin").to_string(),
     };
 
     let client2_config = ClientConfig {
         server_url: "ws://127.0.0.1:8083/ws".to_string(),
         user_id: "operator".to_string(),
-        password: "operator123".to_string(),
+        password: get_test_token("operator").to_string(),
     };
 
     let tracked1 = TrackedClient::new(client1_config).await;
@@ -571,7 +587,7 @@ async fn test_message_relay() {
 #[tokio::test]
 async fn test_comprehensive_state_update_broadcast() {
     let config = create_test_config(8094);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server
@@ -692,7 +708,7 @@ async fn test_comprehensive_state_update_broadcast() {
 #[tokio::test]
 async fn test_user_join_leave_broadcast() {
     let config = create_test_config(8084);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server in background
@@ -760,7 +776,7 @@ async fn test_user_join_leave_broadcast() {
 #[tokio::test]
 async fn test_bead_assignment_operations() {
     let config = create_test_config(8085);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server in background
@@ -776,7 +792,7 @@ async fn test_bead_assignment_operations() {
     let client_config = ClientConfig {
         server_url: "ws://127.0.0.1:8085/ws".to_string(),
         user_id: "admin".to_string(),
-        password: "admin123".to_string(),
+        password: get_test_token("admin").to_string(),
     };
 
     let client = ForgeClient::new(client_config);
@@ -807,7 +823,7 @@ async fn test_bead_assignment_operations() {
 #[tokio::test]
 async fn test_worker_status_change_broadcast() {
     let config = create_test_config(8086);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server in background
@@ -823,7 +839,7 @@ async fn test_worker_status_change_broadcast() {
     let client_config = ClientConfig {
         server_url: "ws://127.0.0.1:8086/ws".to_string(),
         user_id: "viewer".to_string(),
-        password: "viewer123".to_string(),
+        password: get_test_token("viewer").to_string(),
     };
 
     let client = ForgeClient::new(client_config);
@@ -867,7 +883,7 @@ async fn test_worker_status_change_broadcast() {
 #[tokio::test]
 async fn test_bead_status_change_broadcast() {
     let config = create_test_config(8087);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server in background
@@ -883,7 +899,7 @@ async fn test_bead_status_change_broadcast() {
     let client_config = ClientConfig {
         server_url: "ws://127.0.0.1:8087/ws".to_string(),
         user_id: "operator".to_string(),
-        password: "operator123".to_string(),
+        password: get_test_token("operator").to_string(),
     };
 
     let client = ForgeClient::new(client_config);
@@ -928,7 +944,7 @@ async fn test_bead_status_change_broadcast() {
 #[tokio::test]
 async fn test_cost_state_broadcast() {
     let config = create_test_config(8088);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server in background
@@ -944,7 +960,7 @@ async fn test_cost_state_broadcast() {
     let client_config = ClientConfig {
         server_url: "ws://127.0.0.1:8088/ws".to_string(),
         user_id: "viewer".to_string(),
-        password: "viewer123".to_string(),
+        password: get_test_token("viewer").to_string(),
     };
 
     let client = ForgeClient::new(client_config);
@@ -986,7 +1002,7 @@ async fn test_cost_state_broadcast() {
 #[tokio::test]
 async fn test_chat_message_relay() {
     let config = create_test_config(8089);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server in background
@@ -1004,13 +1020,13 @@ async fn test_chat_message_relay() {
     let client1_config = ClientConfig {
         server_url: "ws://127.0.0.1:8089/ws".to_string(),
         user_id: "admin".to_string(),
-        password: "admin123".to_string(),
+        password: get_test_token("admin").to_string(),
     };
 
     let client2_config = ClientConfig {
         server_url: "ws://127.0.0.1:8089/ws".to_string(),
         user_id: "operator".to_string(),
-        password: "operator123".to_string(),
+        password: get_test_token("operator").to_string(),
     };
 
     let tracked1 = TrackedClient::new(client1_config).await;
@@ -1110,7 +1126,7 @@ async fn test_chat_message_relay() {
 #[tokio::test]
 async fn test_multiple_concurrent_connections() {
     let config = create_test_config(8090);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server in background
@@ -1182,7 +1198,7 @@ async fn test_multiple_concurrent_connections() {
 #[tokio::test]
 async fn test_ping_pong_keepalive() {
     let config = create_test_config(8091);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server in background
@@ -1198,7 +1214,7 @@ async fn test_ping_pong_keepalive() {
     let client_config = ClientConfig {
         server_url: "ws://127.0.0.1:8091/ws".to_string(),
         user_id: "viewer".to_string(),
-        password: "viewer123".to_string(),
+        password: get_test_token("viewer").to_string(),
     };
 
     let client = ForgeClient::new(client_config);
@@ -1221,7 +1237,7 @@ async fn test_ping_pong_keepalive() {
 #[tokio::test]
 async fn test_authentication_failure() {
     let config = create_test_config(8092);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server in background
@@ -1260,7 +1276,7 @@ async fn test_authentication_failure() {
 #[tokio::test]
 async fn test_concurrent_client_operations() {
     let config = create_test_config(8095);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server
@@ -1280,7 +1296,7 @@ async fn test_concurrent_client_operations() {
         let config = ClientConfig {
             server_url: "ws://127.0.0.1:8095/ws".to_string(),
             user_id: format!("admin{}", i),
-            password: "admin123".to_string(),
+            password: get_test_token("admin").to_string(),
         };
 
         let tracked = TrackedClient::new(config).await;
@@ -1366,7 +1382,7 @@ async fn test_concurrent_client_operations() {
 #[tokio::test]
 async fn test_message_ordering() {
     let config = create_test_config(8096);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server
@@ -1384,7 +1400,7 @@ async fn test_message_ordering() {
     let config = ClientConfig {
         server_url: "ws://127.0.0.1:8096/ws".to_string(),
         user_id: "admin".to_string(),
-        password: "admin123".to_string(),
+        password: get_test_token("admin").to_string(),
     };
 
     let tracked = TrackedClient::new(config).await;
@@ -1432,7 +1448,7 @@ async fn test_message_ordering() {
 #[tokio::test]
 async fn test_rapid_state_updates() {
     let config = create_test_config(8097);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server
@@ -1450,7 +1466,7 @@ async fn test_rapid_state_updates() {
     let config = ClientConfig {
         server_url: "ws://127.0.0.1:8097/ws".to_string(),
         user_id: "admin".to_string(),
-        password: "admin123".to_string(),
+        password: get_test_token("admin").to_string(),
     };
 
     let tracked = TrackedClient::new(config).await;
@@ -1500,7 +1516,7 @@ async fn test_rapid_state_updates() {
 #[tokio::test]
 async fn test_error_recovery() {
     let config = create_test_config(8098);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server
@@ -1537,7 +1553,7 @@ async fn test_error_recovery() {
     let valid_config = ClientConfig {
         server_url: "ws://127.0.0.1:8098/ws".to_string(),
         user_id: "admin".to_string(),
-        password: "admin123".to_string(),
+        password: get_test_token("admin").to_string(),
     };
 
     let tracked = TrackedClient::new(valid_config).await;
@@ -1577,7 +1593,7 @@ async fn test_error_recovery() {
 #[tokio::test]
 async fn test_session_persistence() {
     let config = create_test_config(8093);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server in background
@@ -1593,7 +1609,7 @@ async fn test_session_persistence() {
     let client_config = ClientConfig {
         server_url: "ws://127.0.0.1:8093/ws".to_string(),
         user_id: "admin".to_string(),
-        password: "admin123".to_string(),
+        password: get_test_token("admin").to_string(),
     };
 
     let client1 = ForgeClient::new(client_config.clone());
@@ -1616,7 +1632,7 @@ async fn test_session_persistence() {
 
     // Create new server instance
     let config2 = create_test_config(8093);
-    let auth2: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth2: Arc<dyn AuthProvider> = create_test_auth_provider();
     let server2 = ForgeServer::new(config2, Arc::clone(&auth2));
 
     // Start new server
