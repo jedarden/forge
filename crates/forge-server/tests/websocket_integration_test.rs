@@ -64,6 +64,7 @@ fn create_test_config(port: u16) -> ServerConfig {
     ServerConfig {
         bind_address: "127.0.0.1".to_string(),
         port,
+        tls: None,  // No TLS for basic tests
     }
 }
 

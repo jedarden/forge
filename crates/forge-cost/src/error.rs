@@ -77,7 +77,11 @@ impl CostError {
     /// Create a user-friendly message for this error.
     pub fn friendly_message(&self) -> String {
         match self {
-            CostError::DatabaseLocked { retry_count, max_retries, .. } => {
+            CostError::DatabaseLocked {
+                retry_count,
+                max_retries,
+                ..
+            } => {
                 format!(
                     "Database is busy (attempt {}/{}). FORGE will automatically retry.",
                     retry_count, max_retries

@@ -7,6 +7,7 @@ use super::protocol::{ServerMessage, ClientMessage, ServerInfo, StateUpdate, Wor
 use super::session::SessionRegistry;
 use super::assignment::BeadAssignmentTracker;
 use super::auth::AuthProvider;
+use super::tls_validation::{self, TlsValidationResult};
 use crate::ServerError;
 use forge_core::{WorkerStatus, BeadStatus, Priority, audit::{AuditLogger, AuditEvent, EventType}};
 use std::net::SocketAddr;
@@ -43,6 +44,45 @@ pub struct TlsConfig {
     pub cert_path: String,
     /// Path to the TLS private key file (PEM format)
     pub key_path: String,
+    /// Verify TLS certificates (default: true for production)
+    pub verify: bool,
+    /// Minimum TLS version (default: TLSv1.2)
+    pub min_version: String,
+}
+
+impl TlsConfig {
+    /// Validate the TLS configuration before starting the server.
+    ///
+    /// This method performs comprehensive validation of the TLS configuration:
+    /// - Checks file existence and readability
+    /// - Validates PEM format
+    /// - Checks certificate expiry (warns if < 30 days)
+    /// - Validates domain matches CN or SANs
+    /// - Verifies certificate chain is present
+    ///
+    /// # Returns
+    /// Ok(TlsValidationResult) with validation details
+    /// Err(ServerError) if validation fails with fatal errors
+    pub fn validate(&self) -> Result<TlsValidationResult, ServerError> {
+        tls_validation::validate_tls_config(self)
+    }
+
+    /// Create a new TlsConfig with automatic validation.
+    ///
+    /// # Arguments
+    /// * `cert_path` - Path to the TLS certificate file (PEM format)
+    /// * `key_path` - Path to the TLS private key file (PEM format)
+    /// * `verify` - Verify TLS certificates (default: true)
+    /// * `min_version` - Minimum TLS version (default: "TLSv1.2")
+    ///
+    /// # Returns
+    /// Ok(TlsConfig) if configuration is valid
+    /// Err(ServerError) if validation fails
+    pub fn new(cert_path: String, key_path: String, verify: bool, min_version: String) -> Result<Self, ServerError> {
+        let config = Self { cert_path, key_path, verify, min_version };
+        config.validate()?;
+        Ok(config)
+    }
 }
 
 impl Default for ServerConfig {
@@ -328,39 +368,93 @@ impl ForgeServer {
 
         // Check if TLS is configured
         if let Some(ref tls_config) = self.config.tls {
+            info!("TLS is configured, validating certificate configuration...");
+
+            // Validate TLS configuration before starting server
+            let validation_result = match tls_validation::validate_tls_config(tls_config) {
+                Ok(result) => result,
+                Err(e) => {
+                    let mut running = self.running.write().await;
+                    *running = false;
+                    return Err(e);
+                }
+            };
+
+            // Log detailed TLS configuration information
+            tls_validation::log_tls_config_details(tls_config, &validation_result);
+
             // Load certificate and key
             let cert_file = File::open(&tls_config.cert_path)
-                .map_err(|e| ServerError::Io(e))?;
-            let key_file = File::open(&tls_config.key_path);
+                .map_err(|e| ServerError::CertificateLoadError(tls_config.cert_path.clone(), e.to_string()))?;
 
-            if let Err(e) = key_file {
-                let mut running = self.running.write().await;
-                *running = false;
-                return Err(ServerError::Io(e));
-            }
+            let key_file = File::open(&tls_config.key_path)
+                .map_err(|e| ServerError::PrivateKeyLoadError(tls_config.key_path.clone(), e.to_string()))?;
 
             let mut cert_reader = BufReader::new(cert_file);
-            let mut key_reader = BufReader::new(key_file.unwrap());
+            let mut key_reader = BufReader::new(key_file);
 
-            // Parse certificate and key
+            // Parse certificate chain (handles multiple certs in chain)
             let certs = rustls_pemfile::certs(&mut cert_reader)
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| ServerError::ServerError(format!("Failed to load certificate: {}", e)))?;
+                .map_err(|e| ServerError::CertificateLoadError(
+                    tls_config.cert_path.clone(),
+                    format!("Failed to parse certificate PEM: {}", e)
+                ))?;
 
-            let key = rustls_pemfile::private_key(&mut key_reader)
-                .map_err(|e| ServerError::ServerError(format!("Failed to load private key: {}", e)))?
-                .ok_or_else(|| ServerError::ServerError("No private key found".to_string()))?;
+            if certs.is_empty() {
+                let mut running = self.running.write().await;
+                *running = false;
+                return Err(ServerError::CertificateChainError(
+                    "No certificates found in certificate file".to_string()
+                ));
+            }
 
-            // Create TLS config
-            let config = rustls::ServerConfig::builder()
+            info!("Loaded {} certificate(s) from {}", certs.len(), tls_config.cert_path);
+
+            // Parse private key
+            let key = match rustls_pemfile::private_key(&mut key_reader) {
+                Ok(Some(key)) => key,
+                Ok(None) => {
+                    let mut running = self.running.write().await;
+                    *running = false;
+                    return Err(ServerError::PrivateKeyLoadError(
+                        tls_config.key_path.clone(),
+                        "No private key found in file".to_string()
+                    ));
+                }
+                Err(e) => {
+                    let mut running = self.running.write().await;
+                    *running = false;
+                    return Err(ServerError::PrivateKeyLoadError(
+                        tls_config.key_path.clone(),
+                        format!("Failed to parse private key PEM: {}", e)
+                    ));
+                }
+            };
+
+            info!("Successfully loaded private key from {}", tls_config.key_path);
+
+            // Create TLS config with certificate chain support
+            let config = match rustls::ServerConfig::builder()
                 .with_no_client_auth()
-                .with_single_cert(certs, key)
-                .map_err(|e| ServerError::ServerError(format!("TLS config error: {}", e)))?;
+                .with_single_cert(certs.clone(), key)
+            {
+                Ok(config) => config,
+                Err(e) => {
+                    let mut running = self.running.write().await;
+                    *running = false;
+                    return Err(ServerError::TlsValidationFailed(format!("Failed to create TLS config: {}", e)));
+                }
+            };
+
+            // Log TLS configuration (rustls doesn't expose protocol_versions in current API)
+            debug!("TLS configuration created successfully");
 
             // Wrap in Arc for axum-server
             let config = std::sync::Arc::new(config);
 
             info!("FORGE server listening with TLS on {}", addr_parsed);
+            info!("TLS certificate chain: {} certificate(s)", certs.len());
 
             // Run with TLS
             let rustls_config = axum_server::tls_rustls::RustlsConfig::from_config(config);

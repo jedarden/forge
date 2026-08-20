@@ -28,12 +28,7 @@ mod tests {
         let workspace = PathBuf::from("/test/workspace");
         let model = "sonnet";
 
-        let config = LaunchConfig::new(
-            &launcher_path,
-            session_name,
-            &workspace,
-            model,
-        );
+        let config = LaunchConfig::new(&launcher_path, session_name, &workspace, model);
 
         assert_eq!(config.launcher_path, launcher_path);
         assert_eq!(config.session_name, session_name);
@@ -46,12 +41,7 @@ mod tests {
     #[test]
     fn test_spawn_request_creation() {
         // Test spawn request with worker ID
-        let config = LaunchConfig::new(
-            "/test/launcher.sh",
-            "test-session",
-            "/workspace",
-            "sonnet",
-        );
+        let config = LaunchConfig::new("/test/launcher.sh", "test-session", "/workspace", "sonnet");
 
         let request = SpawnRequest::new("worker-123", config);
 
@@ -62,13 +52,8 @@ mod tests {
     #[test]
     fn test_spawn_worker_with_tier() {
         // Test spawning worker with specific tier
-        let config = LaunchConfig::new(
-            "/test/launcher.sh",
-            "test-session",
-            "/workspace",
-            "opus",
-        )
-        .with_tier(WorkerTier::Premium);
+        let config = LaunchConfig::new("/test/launcher.sh", "test-session", "/workspace", "opus")
+            .with_tier(WorkerTier::Premium);
 
         assert_eq!(config.tier, WorkerTier::Premium);
     }
@@ -76,30 +61,23 @@ mod tests {
     #[test]
     fn test_spawn_worker_with_env() {
         // Test spawning worker with custom environment variables
-        let config = LaunchConfig::new(
-            "/test/launcher.sh",
-            "test-session",
-            "/workspace",
-            "haiku",
-        )
-        .with_env("FORGE_DEBUG", "1")
-        .with_env("CUSTOM_VAR", "test_value");
+        let config = LaunchConfig::new("/test/launcher.sh", "test-session", "/workspace", "haiku")
+            .with_env("FORGE_DEBUG", "1")
+            .with_env("CUSTOM_VAR", "test_value");
 
         assert_eq!(config.env.len(), 2);
         assert_eq!(config.env[0], ("FORGE_DEBUG".to_string(), "1".to_string()));
-        assert_eq!(config.env[1], ("CUSTOM_VAR".to_string(), "test_value".to_string()));
+        assert_eq!(
+            config.env[1],
+            ("CUSTOM_VAR".to_string(), "test_value".to_string())
+        );
     }
 
     #[test]
     fn test_spawn_worker_with_bead() {
         // Test spawning worker with bead assignment
-        let config = LaunchConfig::new(
-            "/test/launcher.sh",
-            "test-session",
-            "/workspace",
-            "sonnet",
-        )
-        .with_bead("fg-1234");
+        let config = LaunchConfig::new("/test/launcher.sh", "test-session", "/workspace", "sonnet")
+            .with_bead("fg-1234");
 
         assert!(config.has_bead());
         assert_eq!(config.bead_id, Some("fg-1234".to_string()));
@@ -128,10 +106,7 @@ mod tests {
 
         assert_eq!(configs.len(), 3);
         for (i, config) in configs.iter().enumerate() {
-            assert_eq!(
-                config.session_name,
-                format!("forge-sonnet-{}", i)
-            );
+            assert_eq!(config.session_name, format!("forge-sonnet-{}", i));
         }
     }
 
@@ -354,7 +329,10 @@ mod tests {
         };
 
         assert!(!output.is_success());
-        assert_eq!(output.error, Some("Failed to start: no API key".to_string()));
+        assert_eq!(
+            output.error,
+            Some("Failed to start: no API key".to_string())
+        );
     }
 
     #[test]
@@ -390,12 +368,8 @@ mod tests {
         ];
 
         for (model, expected_tier) in tiers {
-            let config = LaunchConfig::new(
-                "/test/launcher.sh",
-                "test-session",
-                "/workspace",
-                model,
-            );
+            let config =
+                LaunchConfig::new("/test/launcher.sh", "test-session", "/workspace", model);
 
             // Default tier is Standard, so we need to explicitly set it based on model
             let tier = match model {
@@ -405,7 +379,11 @@ mod tests {
             };
             let config = config.with_tier(tier);
 
-            assert_eq!(config.tier, expected_tier, "Model {} should be {:?}", model, expected_tier);
+            assert_eq!(
+                config.tier, expected_tier,
+                "Model {} should be {:?}",
+                model, expected_tier
+            );
         }
     }
 
@@ -416,13 +394,8 @@ mod tests {
     #[test]
     fn test_spawn_timeout_configuration() {
         // Test configuring spawn timeout
-        let config = LaunchConfig::new(
-            "/test/launcher.sh",
-            "test-session",
-            "/workspace",
-            "sonnet",
-        )
-        .with_timeout(60);
+        let config = LaunchConfig::new("/test/launcher.sh", "test-session", "/workspace", "sonnet")
+            .with_timeout(60);
 
         assert_eq!(config.timeout_secs, 60);
     }
@@ -430,12 +403,7 @@ mod tests {
     #[test]
     fn test_spawn_default_timeout() {
         // Test default spawn timeout
-        let config = LaunchConfig::new(
-            "/test/launcher.sh",
-            "test-session",
-            "/workspace",
-            "sonnet",
-        );
+        let config = LaunchConfig::new("/test/launcher.sh", "test-session", "/workspace", "sonnet");
 
         assert_eq!(config.timeout_secs, 30); // Default is 30 seconds
     }

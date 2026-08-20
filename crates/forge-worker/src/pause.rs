@@ -394,7 +394,10 @@ mod tests {
     #[test]
     fn test_pause_config_default() {
         let config = PauseConfig::default();
-        assert_eq!(config.check_interval_secs, DEFAULT_PAUSE_CHECK_INTERVAL_SECS);
+        assert_eq!(
+            config.check_interval_secs,
+            DEFAULT_PAUSE_CHECK_INTERVAL_SECS
+        );
         assert_eq!(config.max_wait_secs, 0);
     }
 
