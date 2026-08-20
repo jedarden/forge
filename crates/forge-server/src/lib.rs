@@ -53,13 +53,11 @@ pub mod cert_gen;
 
 pub use session::{SessionManager, SessionRegistry};
 pub use assignment::BeadAssignmentTracker;
-pub use auth::{AuthProvider, AuthResult};
+pub use auth::{AuthProvider, AuthResult, TestAuthProvider};
 pub use oauth_auth::{OAuthAuthProvider, OAuthConfig, OAuthProvider};
 
-// SimpleAuth is kept for backward compatibility and testing only
-// Use OAuthAuthProvider for production deployments
-#[deprecated(note = "Use OAuthAuthProvider for production. SimpleAuth is for testing only.")]
-pub use auth::SimpleAuth;
+// SimpleAuth has been removed - use OAuthAuthProvider for all deployments
+// For testing, use OAuthAuthProvider::with_defaults() which provides test credentials
 pub use protocol::{ServerMessage, ClientMessage, StateUpdate, ServerState};
 pub use websocket::{ForgeServer, ServerConfig, TlsConfig, create_server};
 pub use client::{ForgeClient, ClientConfig, ClientStateSnapshot, ConnectedUser};

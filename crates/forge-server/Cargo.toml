@@ -58,9 +58,6 @@ serde_yaml = "0.9"
 # Random for cache cleanup
 rand = "0.8"
 
-# Password hashing
-argon2 = "0.5"
-
 # Certificate generation
 rcgen = "0.13"
 time = "0.3"
