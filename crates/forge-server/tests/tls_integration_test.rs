@@ -3,9 +3,9 @@
 //! Tests secure WebSocket connections, TLS handshake, and certificate handling.
 
 use forge_server::{
+    auth::{TestAuthProvider, AuthProvider},
     websocket::{ForgeServer, ServerConfig, TlsConfig},
     client::{ForgeClient, ClientConfig},
-    auth::{SimpleAuth, AuthProvider},
 };
 use std::sync::Arc;
 use std::path::PathBuf;
@@ -76,7 +76,7 @@ async fn test_tls_server_start_and_connect() {
     let (_temp_dir, cert_path, key_path) = setup_test_certs().await;
 
     let config = create_tls_config(9010, cert_path, key_path);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = Arc::new(TestAuthProvider::new());
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server in background
@@ -141,7 +141,7 @@ async fn test_tls_cert_file_errors() {
             }),
         };
 
-        let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+        let auth: Arc<dyn AuthProvider> = Arc::new(TestAuthProvider::new());
         let server = ForgeServer::new(config, Arc::clone(&auth));
 
         let server_clone = server.clone();
@@ -195,7 +195,7 @@ async fn test_tls_cert_file_errors() {
             }),
         };
 
-        let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+        let auth: Arc<dyn AuthProvider> = Arc::new(TestAuthProvider::new());
         let server = ForgeServer::new(config, Arc::clone(&auth));
 
         let server_clone = server.clone();
@@ -247,7 +247,7 @@ async fn test_tls_cert_file_errors() {
             }),
         };
 
-        let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+        let auth: Arc<dyn AuthProvider> = Arc::new(TestAuthProvider::new());
         let server = ForgeServer::new(config, Arc::clone(&auth));
 
         let server_clone = server.clone();
@@ -300,7 +300,7 @@ async fn test_tls_cert_file_errors() {
             }),
         };
 
-        let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+        let auth: Arc<dyn AuthProvider> = Arc::new(TestAuthProvider::new());
         let server = ForgeServer::new(config, Arc::clone(&auth));
 
         let server_clone = server.clone();
@@ -329,7 +329,7 @@ async fn test_tls_client_refuses_invalid_cert() {
     let (_temp_dir, cert_path, key_path) = setup_test_certs().await;
 
     let config = create_tls_config(9030, cert_path, key_path);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = Arc::new(TestAuthProvider::new());
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server in background
@@ -505,7 +505,7 @@ async fn test_websocket_non_tls_still_works() {
         tls: None,  // No TLS
     };
 
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = Arc::new(TestAuthProvider::new());
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server in background
@@ -552,7 +552,7 @@ async fn test_websocket_tls_server_startup() {
     let (_temp_dir, cert_path, key_path) = setup_test_certs().await;
 
     let config = create_tls_config(9050, cert_path, key_path);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = Arc::new(TestAuthProvider::new());
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server in background
@@ -604,7 +604,7 @@ async fn test_websocket_wss_client_connection() {
     let (_temp_dir, cert_path, key_path) = setup_test_certs().await;
 
     let config = create_tls_config(9060, cert_path, key_path);
-    let auth: Arc<dyn AuthProvider> = Arc::new(SimpleAuth::default().with_defaults().await);
+    let auth: Arc<dyn AuthProvider> = Arc::new(TestAuthProvider::new());
     let server = ForgeServer::new(config, Arc::clone(&auth));
 
     // Start server in background
