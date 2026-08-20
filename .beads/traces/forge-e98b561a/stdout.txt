@@ -1,0 +1,8 @@
+Implemented and pushed as `bab82db`.
+
+- Added explicit local fast-path matching for costs, workers, tasks/P0–P4, and view navigation.
+- Wired TUI actions to cached data/view switching before LLM dispatch.
+- Unknown queries still use the existing LLM path.
+- `cargo test -p forge-chat --lib`: 113 passed.
+- TUI check remains blocked by an unrelated concurrent `update_from_server_state` argument mismatch.
+- Bead `forge-e98b561a` closed.

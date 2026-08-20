@@ -47,6 +47,7 @@ pub mod assignment;
 pub mod protocol;
 pub mod client;
 pub mod oauth_auth;
+pub mod server_config;
 pub mod tls_validation;
 pub mod cert_gen;
 
@@ -60,8 +61,9 @@ pub use oauth_auth::{OAuthAuthProvider, OAuthConfig, OAuthProvider};
 #[deprecated(note = "Use OAuthAuthProvider for production. SimpleAuth is for testing only.")]
 pub use auth::SimpleAuth;
 pub use protocol::{ServerMessage, ClientMessage, StateUpdate, ServerState};
-pub use websocket::{ForgeServer, ServerConfig, create_server};
+pub use websocket::{ForgeServer, ServerConfig, TlsConfig, create_server};
 pub use client::{ForgeClient, ClientConfig, ClientStateSnapshot, ConnectedUser};
+pub use server_config::{load_server_yaml_config, merge_config_with_cli_overrides, ServerYamlConfig};
 
 use forge_core::ForgeError;
 
@@ -83,11 +85,20 @@ pub enum ServerError {
     #[error("server error: {0}")]
     ServerError(String),
 
+    #[error("config load error: {0}")]
+    ConfigLoadError(String),
+
+    #[error("config parse error: {0}")]
+    ConfigParseError(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("YAML error: {0}")]
+    Yaml(#[from] serde_yaml::Error),
 
     // TLS-specific errors with detailed context
     #[error("certificate load error: failed to load certificate from '{0}': {1}")]

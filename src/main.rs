@@ -76,6 +76,18 @@ struct Cli {
     #[arg(long)]
     server_tls_key: Option<std::path::PathBuf>,
 
+    /// Verify TLS certificates (default: true for production)
+    #[arg(long, default_value = "true")]
+    server_tls_verify: bool,
+
+    /// Minimum TLS version (default: TLSv1.2)
+    #[arg(long, default_value = "TLSv1.2")]
+    server_tls_min_version: String,
+
+    /// Path to server configuration file (YAML format)
+    #[arg(long)]
+    server_config: Option<std::path::PathBuf>,
+
     /// Enable client mode and connect to a FORGE server
     #[arg(long, value_name = "URL")]
     connect: Option<String>,
@@ -170,6 +182,21 @@ enum Commands {
         /// Certificate validity period in days (default: 365)
         #[arg(short, long, default_value = "365")]
         days: u32,
+    },
+
+    /// Validate TLS certificate configuration
+    ValidateTls {
+        /// Path to TLS certificate file (PEM format)
+        #[arg(long)]
+        cert_path: Option<std::path::PathBuf>,
+
+        /// Path to TLS private key file (PEM format)
+        #[arg(long)]
+        key_path: Option<std::path::PathBuf>,
+
+        /// Show detailed validation results
+        #[arg(long, short = 'v')]
+        verbose: bool,
     },
 }
 
@@ -291,7 +318,14 @@ fn main() -> ExitCode {
                 return handle_validate_command(*verbose, *fix, *skip_backend_test, *json);
             }
             Commands::GenerateCert { domain, days } => {
-                return handle_generate_cert_command(domain, *days);
+                return handle_generate_cert_command(domain.clone(), *days);
+            }
+            Commands::ValidateTls {
+                cert_path,
+                key_path,
+                verbose,
+            } => {
+                return handle_validate_tls_command(cert_path.as_deref(), key_path.as_deref(), *verbose);
             }
             _ => {
                 // Other commands fall through to TUI startup
@@ -334,7 +368,16 @@ fn main() -> ExitCode {
 
     // Check if server mode is enabled
     if cli.server {
-        return run_server_mode(cli.server_bind, cli.server_port, cli.server_tls, cli.server_tls_cert, cli.server_tls_key);
+        return run_server_mode(
+            cli.server_bind.clone(),
+            cli.server_port,
+            cli.server_tls,
+            cli.server_tls_cert.clone(),
+            cli.server_tls_key.clone(),
+            cli.server_tls_verify,
+            cli.server_tls_min_version.clone(),
+            cli.server_config.clone(),
+        );
     }
 
     // Check if client mode is enabled
@@ -1216,51 +1259,188 @@ fn handle_generate_cert_command(domain: String, days: u32) -> ExitCode {
     }
 }
 
+fn handle_validate_tls_command(
+    cert_path: Option<&std::path::Path>,
+    key_path: Option<&std::path::Path>,
+    verbose: bool,
+) -> ExitCode {
+    use forge_server::tls_validation;
+
+    eprintln!("🔍 Validating TLS Configuration");
+    eprintln!();
+
+    // Use provided paths or default to ~/.forge/
+    let forge_dir = get_forge_dir();
+    let default_cert_path = forge_dir.join("server-cert.pem");
+    let default_key_path = forge_dir.join("server-key.pem");
+    let cert_path = cert_path.unwrap_or(&default_cert_path);
+    let key_path = key_path.unwrap_or(&default_key_path);
+
+    eprintln!("Certificate: {}", cert_path.display());
+    eprintln!("Private Key: {}", key_path.display());
+    eprintln!();
+
+    // Create TlsConfig for validation
+    let tls_config = forge_server::TlsConfig {
+        cert_path: cert_path.to_string_lossy().to_string(),
+        key_path: key_path.to_string_lossy().to_string(),
+        verify: true, // Default to true for validation
+        min_version: "TLSv1.2".to_string(), // Default to TLSv1.2
+    };
+
+    // Run validation
+    match tls_config.validate() {
+        Ok(result) => {
+            // Print validation summary
+            if result.is_valid {
+                eprintln!("✅ Valid TLS Configuration");
+            } else {
+                eprintln!("✗ Invalid TLS Configuration");
+            }
+
+            eprintln!();
+
+            // Print certificate details
+            if let Some(ref cn) = result.subject_cn {
+                eprintln!("Subject CN: {}", cn);
+            }
+
+            if let Some(ref issuer) = result.issuer {
+                eprintln!("Issuer: {}", issuer);
+            }
+
+            if let Some(ref expires_at) = result.expires_at {
+                eprintln!("Expires: {}", expires_at);
+            }
+
+            if let Some(days) = result.days_until_expiry {
+                if days < 0 {
+                    eprintln!("⚠️  Certificate EXPIRED {} days ago", days.abs());
+                } else if days < 30 {
+                    eprintln!("⚠️  Certificate expires in {} days (< 30 day warning)", days);
+                } else {
+                    eprintln!("✅ Certificate validity: {} days remaining", days);
+                }
+            }
+
+            if !result.domains.is_empty() {
+                eprintln!("Domains: {}", result.domains.join(", "));
+            }
+
+            // Print warnings if verbose or if there are errors
+            if verbose && !result.warnings.is_empty() {
+                eprintln!();
+                eprintln!("Warnings:");
+                for warning in &result.warnings {
+                    eprintln!("  ⚠️  {}", warning);
+                }
+            }
+
+            if !result.errors.is_empty() {
+                eprintln!();
+                eprintln!("Errors:");
+                for error in &result.errors {
+                    eprintln!("  ❌ {}", error);
+                }
+            } else if verbose {
+                eprintln!();
+                eprintln!("✅ No validation errors found");
+            }
+
+            eprintln!();
+
+            if result.is_valid && result.errors.is_empty() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            }
+        }
+        Err(e) => {
+            eprintln!("❌ Validation Failed:");
+            eprintln!("   {}", e);
+            eprintln!();
+            eprintln!("Please check that:");
+            eprintln!("  1. Certificate file exists and is readable");
+            eprintln!("  2. Private key file exists and is readable");
+            eprintln!("  3. Both files are in PEM format");
+            eprintln!("  4. Certificate has not expired");
+            eprintln!();
+            ExitCode::from(1)
+        }
+    }
+}
+
 /// Run FORGE in server mode for multi-user collaboration.
-fn run_server_mode(bind_address: String, port: u16, tls: bool, tls_cert: Option<std::path::PathBuf>, tls_key: Option<std::path::PathBuf>) -> ExitCode {
+fn run_server_mode(
+    bind_address: String,
+    port: u16,
+    tls: bool,
+    tls_cert: Option<std::path::PathBuf>,
+    tls_key: Option<std::path::PathBuf>,
+    tls_verify: bool,
+    tls_min_version: String,
+    server_config_path: Option<std::path::PathBuf>,
+) -> ExitCode {
     use forge_tui::{ClientConfig, App};
-    use forge_server::TlsConfig;
+    use forge_server::{TlsConfig, server_config};
+    use forge_server::server_config::{load_server_yaml_config, merge_config_with_cli_overrides};
 
-    info!("Starting FORGE in server mode on {}:{}", bind_address, port);
+    info!("Starting FORGE in server mode");
     eprintln!("🚀 FORGE Server Mode");
-    eprintln!("   Listening on {}:{}", bind_address, port);
 
-    // Validate TLS configuration
-    let tls_config = if tls {
-        match (&tls_cert, &tls_key) {
-            (Some(cert_path), Some(key_path)) => {
-                eprintln!("   🔒 TLS enabled with certificate: {}", cert_path.display());
-                eprintln!("   🔒 TLS private key: {}", key_path.display());
-                Some(TlsConfig {
-                    cert_path: cert_path.to_string_lossy().to_string(),
-                    key_path: key_path.to_string_lossy().to_string(),
-                })
+    // Load YAML config if provided
+    let yaml_config = if let Some(ref config_path) = server_config_path {
+        eprintln!("   Loading configuration from: {}", config_path.display());
+        match load_server_yaml_config(config_path) {
+            Ok(config) => {
+                eprintln!("   ✅ Configuration loaded successfully");
+                Some(config)
             }
-            (None, None) => {
-                eprintln!("❌ Error: TLS enabled but --server-tls-cert and --server-tls-key not provided");
-                eprintln!("   Usage: forge --server --server-tls --server-tls-cert <cert.pem> --server-tls-key <key.pem>");
-                return ExitCode::from(1);
-            }
-            (Some(_), None) | (None, Some(_)) => {
-                eprintln!("❌ Error: Both --server-tls-cert and --server-tls-key must be provided together");
+            Err(e) => {
+                eprintln!("❌ Failed to load configuration: {}", e);
                 return ExitCode::from(1);
             }
         }
     } else {
-        eprintln!("   ⚠️  TLS disabled (use --server-tls for production deployments)");
         None
     };
+
+    // Merge YAML config with CLI overrides (CLI args take precedence)
+    let merged_config = merge_config_with_cli_overrides(
+        yaml_config,
+        Some(bind_address.clone()),
+        Some(port),
+        if tls { Some(true) } else { None },
+        tls_cert.as_ref().map(|p| p.to_string_lossy().to_string()),
+        tls_key.as_ref().map(|p| p.to_string_lossy().to_string()),
+        Some(tls_verify),
+        Some(tls_min_version.clone()),
+    );
+
+    // Use merged configuration
+    let final_bind_address = merged_config.bind_address;
+    let final_port = merged_config.port;
+    let tls_config = merged_config.tls;
+
+    eprintln!("   Listening on {}:{}", final_bind_address, final_port);
+    if let Some(ref tls) = tls_config {
+        eprintln!("   🔒 TLS enabled with: {}", tls.cert_path);
+        eprintln!("   🔒 TLS verification: {}", tls.verify);
+        eprintln!("   🔒 Minimum TLS version: {}", tls.min_version);
+    } else {
+        eprintln!("   ⚠️  TLS disabled (use --server-tls for production deployments)");
+    }
 
     eprintln!();
 
     // Clone values before moving config
-    let server_bind_address = bind_address.clone();
-    let server_port = port;
+    let server_bind_address = final_bind_address.clone();
+    let server_port = final_port;
     let tls_enabled = tls_config.is_some();
 
     let config = ServerConfig {
-        bind_address,
-        port,
+        bind_address: final_bind_address,
+        port: final_port,
         tls: tls_config,
     };
 

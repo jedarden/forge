@@ -70,8 +70,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use tracing::{debug, error, info, warn};
 
-use forge_core::types::{BeadId, WorkerId};
 use forge_core::Result;
+use forge_core::types::{BeadId, WorkerId};
 
 use crate::health::{HealthCheckType, HealthErrorType, WorkerHealthStatus};
 
@@ -128,7 +128,9 @@ impl CrashRecord {
 
     /// Get age of crash in seconds.
     pub fn age_secs(&self) -> i64 {
-        Utc::now().signed_duration_since(self.crashed_at).num_seconds()
+        Utc::now()
+            .signed_duration_since(self.crashed_at)
+            .num_seconds()
     }
 
     /// Check if crash is within the rate limit window.
@@ -273,7 +275,8 @@ impl CrashRecoveryManager {
         self.cleanup_old_crashes(worker_id);
 
         // Mark worker as crashed
-        self.crashed_workers.insert(worker_id.to_string(), record.clone());
+        self.crashed_workers
+            .insert(worker_id.to_string(), record.clone());
 
         // Determine if we should auto-restart
         let action = if self.should_auto_restart(worker_id) {
@@ -313,13 +316,22 @@ impl CrashRecoveryManager {
                     "unknown".to_string()
                 };
 
-                let message = result.error_message.clone().unwrap_or_else(|| "No error message".to_string());
+                let message = result
+                    .error_message
+                    .clone()
+                    .unwrap_or_else(|| "No error message".to_string());
                 return (reason, message);
             }
         }
 
         // Fallback
-        ("unknown".to_string(), health.primary_error.clone().unwrap_or_else(|| "No details".to_string()))
+        (
+            "unknown".to_string(),
+            health
+                .primary_error
+                .clone()
+                .unwrap_or_else(|| "No details".to_string()),
+        )
     }
 
     /// Clear bead assignee using br CLI.
@@ -606,11 +618,17 @@ mod tests {
         let health = create_crashed_health();
 
         // First crash - should restart
-        manager.handle_crash("worker-1", &health, None, None).await.unwrap();
+        manager
+            .handle_crash("worker-1", &health, None, None)
+            .await
+            .unwrap();
         manager.mark_recovered("worker-1");
 
         // Second crash - should restart
-        manager.handle_crash("worker-1", &health, None, None).await.unwrap();
+        manager
+            .handle_crash("worker-1", &health, None, None)
+            .await
+            .unwrap();
         manager.mark_recovered("worker-1");
 
         // Third crash - should NOT restart (limit exceeded)
@@ -648,7 +666,10 @@ mod tests {
         let mut manager = CrashRecoveryManager::new();
         let health = create_crashed_health();
 
-        manager.handle_crash("worker-1", &health, None, None).await.unwrap();
+        manager
+            .handle_crash("worker-1", &health, None, None)
+            .await
+            .unwrap();
         assert!(manager.get_crash("worker-1").is_some());
 
         manager.mark_recovered("worker-1");
@@ -660,20 +681,21 @@ mod tests {
         let mut manager = CrashRecoveryManager::new();
 
         // Add old crash manually
-        let mut old_record = CrashRecord::new(
-            "worker-1",
-            "process died",
-            "Old crash",
-            None,
-            None,
-        );
+        let mut old_record = CrashRecord::new("worker-1", "process died", "Old crash", None, None);
         old_record.crashed_at = Utc::now() - chrono::Duration::seconds(700); // 11+ minutes ago
 
-        manager.crash_history.entry("worker-1".to_string()).or_insert_with(Vec::new).push(old_record);
+        manager
+            .crash_history
+            .entry("worker-1".to_string())
+            .or_insert_with(Vec::new)
+            .push(old_record);
 
         // Add recent crash
         let health = create_crashed_health();
-        manager.handle_crash("worker-1", &health, None, None).await.unwrap();
+        manager
+            .handle_crash("worker-1", &health, None, None)
+            .await
+            .unwrap();
 
         // Cleanup should remove old crash
         manager.cleanup_old_crashes("worker-1");
@@ -700,17 +722,13 @@ mod tests {
         }
 
         // Add 1 old crash
-        let mut old_record = CrashRecord::new(
-            "worker-1",
-            "process died",
-            "Old crash",
-            None,
-            None,
-        );
+        let mut old_record = CrashRecord::new("worker-1", "process died", "Old crash", None, None);
         old_record.crashed_at = Utc::now() - chrono::Duration::seconds(700);
         history.push(old_record);
 
-        manager.crash_history.insert("worker-1".to_string(), history);
+        manager
+            .crash_history
+            .insert("worker-1".to_string(), history);
 
         // Should only count recent crashes
         assert_eq!(manager.recent_crash_count("worker-1"), 2);

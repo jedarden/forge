@@ -64,9 +64,9 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
+use forge_core::Result;
 use forge_core::status::StatusReader;
 use forge_core::stuck_detection::{StuckDetectionConfig, StuckTask, StuckTaskDetector};
-use forge_core::Result;
 
 use crate::crash_recovery::{CrashRecoveryConfig, CrashRecoveryManager};
 use crate::health::{HealthMonitor, HealthMonitorConfig, WorkerHealthStatus};
@@ -285,7 +285,12 @@ impl RecoveryAction {
     /// Format for display in TUI.
     pub fn format_for_display(&self) -> String {
         let status = if self.executed {
-            if self.result.as_ref().map(|r| r.contains("error")).unwrap_or(false) {
+            if self
+                .result
+                .as_ref()
+                .map(|r| r.contains("error"))
+                .unwrap_or(false)
+            {
                 "FAILED"
             } else {
                 "DONE"
@@ -315,7 +320,10 @@ impl RecoveryAttemptTracker {
     fn can_attempt(&self, policy: &RecoveryPolicy) -> bool {
         match policy {
             RecoveryPolicy::Disabled | RecoveryPolicy::NotifyOnly => false,
-            RecoveryPolicy::AutoRecover { max_attempts, cooldown } => {
+            RecoveryPolicy::AutoRecover {
+                max_attempts,
+                cooldown,
+            } => {
                 // Check attempt limit
                 if self.attempts >= *max_attempts {
                     return false;
@@ -523,8 +531,7 @@ impl AutoRecoveryManager {
         for worker_id in health_results.keys() {
             if let Some(pid) = self.get_worker_pid(worker_id) {
                 // Check memory and track growth rate
-                if let Ok(Some(mem_stats)) =
-                    self.memory_monitor.check_worker_memory(pid, worker_id)
+                if let Ok(Some(mem_stats)) = self.memory_monitor.check_worker_memory(pid, worker_id)
                 {
                     // Log memory status with growth rate
                     if mem_stats.growth_rate_mb_per_min.abs() > 1.0 {
@@ -548,7 +555,9 @@ impl AutoRecoveryManager {
 
         // Kill runaway workers
         for (worker_id, pid, mem_stats) in runaway_workers {
-            let action = self.handle_runaway_worker(&worker_id, pid, &mem_stats).await;
+            let action = self
+                .handle_runaway_worker(&worker_id, pid, &mem_stats)
+                .await;
             if let Some(a) = action {
                 actions.push(a);
             }
@@ -557,10 +566,9 @@ impl AutoRecoveryManager {
         // Second pass: handle other health issues based on policy
         for (worker_id, health) in health_results {
             // Skip workers that were already handled as runaway
-            if actions
-                .iter()
-                .any(|a| a.target == worker_id && a.action_type == RecoveryActionType::TerminateWorker)
-            {
+            if actions.iter().any(|a| {
+                a.target == worker_id && a.action_type == RecoveryActionType::TerminateWorker
+            }) {
                 continue;
             }
 
@@ -577,17 +585,13 @@ impl AutoRecoveryManager {
 
             match action_type {
                 RecoveryActionType::RestartWorker => {
-                    let action = self
-                        .handle_dead_worker(&worker_id, &health, &reason)
-                        .await;
+                    let action = self.handle_dead_worker(&worker_id, &health, &reason).await;
                     if let Some(a) = action {
                         actions.push(a);
                     }
                 }
                 RecoveryActionType::TerminateWorker => {
-                    let action = self
-                        .handle_memory_leak(&worker_id, &health, &reason)
-                        .await;
+                    let action = self.handle_memory_leak(&worker_id, &health, &reason).await;
                     if let Some(a) = action {
                         actions.push(a);
                     }
@@ -669,17 +673,17 @@ impl AutoRecoveryManager {
     }
 
     /// Classify a health issue into an action type.
-    fn classify_health_issue(
-        &self,
-        health: &WorkerHealthStatus,
-    ) -> (RecoveryActionType, String) {
+    fn classify_health_issue(&self, health: &WorkerHealthStatus) -> (RecoveryActionType, String) {
         use crate::health::HealthCheckType;
 
         // Check for dead process first (highest priority)
         if health.failed_checks.contains(&HealthCheckType::PidExists) {
             return (
                 RecoveryActionType::RestartWorker,
-                health.primary_error.clone().unwrap_or_else(|| "Process died".to_string()),
+                health
+                    .primary_error
+                    .clone()
+                    .unwrap_or_else(|| "Process died".to_string()),
             );
         }
 
@@ -687,14 +691,20 @@ impl AutoRecoveryManager {
         if health.failed_checks.contains(&HealthCheckType::MemoryUsage) {
             return (
                 RecoveryActionType::TerminateWorker,
-                health.primary_error.clone().unwrap_or_else(|| "Memory limit exceeded".to_string()),
+                health
+                    .primary_error
+                    .clone()
+                    .unwrap_or_else(|| "Memory limit exceeded".to_string()),
             );
         }
 
         // Default to restart for other issues
         (
             RecoveryActionType::RestartWorker,
-            health.primary_error.clone().unwrap_or_else(|| "Worker unhealthy".to_string()),
+            health
+                .primary_error
+                .clone()
+                .unwrap_or_else(|| "Worker unhealthy".to_string()),
         )
     }
 
@@ -710,11 +720,7 @@ impl AutoRecoveryManager {
             .entry(worker_id.to_string())
             .or_default();
 
-        let mut action = RecoveryAction::new(
-            RecoveryActionType::RestartWorker,
-            worker_id,
-            reason,
-        );
+        let mut action = RecoveryAction::new(RecoveryActionType::RestartWorker, worker_id, reason);
 
         if tracker.can_attempt(&self.config.dead_worker_policy) {
             // Execute restart
@@ -749,11 +755,8 @@ impl AutoRecoveryManager {
             .entry(worker_id.to_string())
             .or_default();
 
-        let mut action = RecoveryAction::new(
-            RecoveryActionType::TerminateWorker,
-            worker_id,
-            reason,
-        );
+        let mut action =
+            RecoveryAction::new(RecoveryActionType::TerminateWorker, worker_id, reason);
 
         if tracker.can_attempt(&self.config.memory_leak_policy) {
             tracker.record_attempt();
@@ -792,10 +795,7 @@ impl AutoRecoveryManager {
 
     /// Handle a stuck task based on policy.
     async fn handle_stuck_task(&mut self, stuck: &StuckTask) -> Option<RecoveryAction> {
-        let tracker = self
-            .bead_attempts
-            .entry(stuck.bead_id.clone())
-            .or_default();
+        let tracker = self.bead_attempts.entry(stuck.bead_id.clone()).or_default();
 
         let mut action = RecoveryAction::new(
             RecoveryActionType::TimeoutTask,
@@ -844,10 +844,7 @@ impl AutoRecoveryManager {
     }
 
     /// Find beads with stale assignees in a workspace.
-    fn find_stale_assignees(
-        &self,
-        workspace: &PathBuf,
-    ) -> Result<Vec<(String, String, i64)>> {
+    fn find_stale_assignees(&self, workspace: &PathBuf) -> Result<Vec<(String, String, i64)>> {
         // Use br CLI to list in_progress beads
         let output = Command::new("br")
             .arg("list")
@@ -884,7 +881,10 @@ impl AutoRecoveryManager {
         for bead in beads {
             let bead_id = bead.get("id").and_then(|v| v.as_str()).unwrap_or("");
             let assignee = bead.get("assignee").and_then(|v| v.as_str()).unwrap_or("");
-            let updated_at = bead.get("updated_at").and_then(|v| v.as_str()).unwrap_or("");
+            let updated_at = bead
+                .get("updated_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
 
             if bead_id.is_empty() || assignee.is_empty() {
                 continue;
@@ -893,9 +893,7 @@ impl AutoRecoveryManager {
             // Parse timestamp and check if stale
             if let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(updated_at) {
                 let now = Utc::now();
-                let elapsed_mins = now
-                    .signed_duration_since(timestamp)
-                    .num_minutes();
+                let elapsed_mins = now.signed_duration_since(timestamp).num_minutes();
 
                 if elapsed_mins > threshold {
                     // Check if assignee (worker) is still alive
@@ -928,29 +926,23 @@ impl AutoRecoveryManager {
         assignee: &str,
         in_progress_mins: i64,
     ) -> Option<RecoveryAction> {
-        let tracker = self
-            .bead_attempts
-            .entry(bead_id.to_string())
-            .or_default();
+        let tracker = self.bead_attempts.entry(bead_id.to_string()).or_default();
 
         let reason = format!(
             "Assignee '{}' is stale ({} mins, worker not responding)",
             assignee, in_progress_mins
         );
 
-        let mut action = RecoveryAction::new(
-            RecoveryActionType::ClearAssignee,
-            bead_id,
-            &reason,
-        )
-        .with_workspace(workspace.to_path_buf());
+        let mut action = RecoveryAction::new(RecoveryActionType::ClearAssignee, bead_id, &reason)
+            .with_workspace(workspace.to_path_buf());
 
         if tracker.can_attempt(&self.config.stale_assignee_policy) {
             tracker.record_attempt();
 
             match self.clear_assignee(workspace, bead_id).await {
                 Ok(()) => {
-                    action = action.with_result("Assignee cleared, task available for reassignment");
+                    action =
+                        action.with_result("Assignee cleared, task available for reassignment");
                     info!(bead_id, assignee, "Cleared stale assignee");
                 }
                 Err(e) => {
@@ -987,8 +979,7 @@ impl AutoRecoveryManager {
             // Look for launcher script
             let launcher_paths = [
                 workspace.join(".forge/launcher.sh"),
-                PathBuf::from(std::env::var("HOME").unwrap_or_default())
-                    .join(".forge/launcher.sh"),
+                PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".forge/launcher.sh"),
             ];
 
             for launcher_path in launcher_paths {
@@ -1244,7 +1235,10 @@ mod tests {
         .with_result("Worker restarted successfully");
 
         assert!(action.executed);
-        assert_eq!(action.result, Some("Worker restarted successfully".to_string()));
+        assert_eq!(
+            action.result,
+            Some("Worker restarted successfully".to_string())
+        );
     }
 
     #[test]
@@ -1315,9 +1309,18 @@ mod tests {
 
     #[test]
     fn test_action_type_display() {
-        assert_eq!(RecoveryActionType::RestartWorker.to_string(), "restart worker");
-        assert_eq!(RecoveryActionType::TerminateWorker.to_string(), "terminate worker");
+        assert_eq!(
+            RecoveryActionType::RestartWorker.to_string(),
+            "restart worker"
+        );
+        assert_eq!(
+            RecoveryActionType::TerminateWorker.to_string(),
+            "terminate worker"
+        );
         assert_eq!(RecoveryActionType::TimeoutTask.to_string(), "timeout task");
-        assert_eq!(RecoveryActionType::ClearAssignee.to_string(), "clear assignee");
+        assert_eq!(
+            RecoveryActionType::ClearAssignee.to_string(),
+            "clear assignee"
+        );
     }
 }
