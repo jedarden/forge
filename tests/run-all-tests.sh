@@ -31,10 +31,11 @@ TEST_SCRIPTS=(
     "test-forge-workers.sh"
     "test-forge-sessions.sh"
     "test-forge-chat.sh"
+    "test-forge-server-connect.sh"
     "test-forge-e2e.sh"
 )
 
-# Quick tests (skip slow chat and e2e tests)
+# Quick tests (skip slow chat, server, and e2e tests)
 QUICK_TESTS=(
     "test-forge-views.sh"
     "test-forge-theme.sh"

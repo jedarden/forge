@@ -99,8 +99,8 @@ main() {
 
     # Define test suites
     declare -a test_suites=(
-        "$SCRIPT_DIR/test-forge-server.sh:Server Mode Tests"
-        "$SCRIPT_DIR/test-forge-connect.sh:Client Mode Tests"
+        "$SCRIPT_DIR/../test-forge-server.sh:Server Mode Tests"
+        "$SCRIPT_DIR/../test-forge-connect.sh:Client Mode Tests"
     )
 
     # Run each test suite
