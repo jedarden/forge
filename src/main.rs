@@ -52,6 +52,14 @@ struct Cli {
     #[arg(long)]
     log_dir: Option<std::path::PathBuf>,
 
+    /// Generate a self-signed TLS certificate for DOMAIN and exit
+    #[arg(long, value_name = "DOMAIN")]
+    generate_cert: Option<String>,
+
+    /// Certificate validity period in days (default: 365)
+    #[arg(long, value_name = "DAYS", requires = "generate_cert")]
+    days: Option<u32>,
+
     /// Enable server mode for multi-user collaboration
     #[arg(long)]
     server: bool,
@@ -295,6 +303,14 @@ fn main() -> ExitCode {
         // No self-update feature, skip installation check
     }
 
+    if let Some(domain) = cli.generate_cert.as_deref() {
+        return handle_generate_cert_command(
+            domain,
+            cli.days
+                .unwrap_or(forge_server::cert_gen::DEFAULT_CERT_VALIDITY_DAYS),
+        );
+    }
+
     // Handle subcommands that don't require the TUI
     if let Some(command) = &cli.command {
         match command {
@@ -318,7 +334,7 @@ fn main() -> ExitCode {
                 return handle_validate_command(*verbose, *fix, *skip_backend_test, *json);
             }
             Commands::GenerateCert { domain, days } => {
-                return handle_generate_cert_command(domain.clone(), *days);
+                return handle_generate_cert_command(domain, *days);
             }
             Commands::ValidateTls {
                 cert_path,
@@ -1208,8 +1224,8 @@ fn print_validation_results(results: &validator::ComprehensiveValidationResults,
     }
 }
 
-/// Handle the `forge generate-cert` command.
-fn handle_generate_cert_command(domain: String, days: u32) -> ExitCode {
+/// Handle `forge --generate-cert` and `forge generate-cert`.
+fn handle_generate_cert_command(domain: &str, days: u32) -> ExitCode {
     use forge_server::cert_gen;
 
     info!("Generating self-signed certificate for domain: {} (days: {})", domain, days);
@@ -1220,7 +1236,7 @@ fn handle_generate_cert_command(domain: String, days: u32) -> ExitCode {
     eprintln!();
 
     // Generate the certificate
-    let (cert_pem, key_pem) = match cert_gen::generate_self_signed_cert(&domain, days) {
+    let (cert_pem, key_pem) = match cert_gen::generate_self_signed_cert_with_validity(domain, days) {
         Ok(result) => result,
         Err(e) => {
             eprintln!("❌ Failed to generate certificate: {}", e);
@@ -1555,4 +1571,33 @@ fn run_app() -> forge_tui::AppResult<()> {
     info!("⏱️ app.run() completed in {:?}", run_start.elapsed());
 
     result
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn parses_generate_cert_flag_with_default_validity() {
+        let cli = Cli::try_parse_from(["forge", "--generate-cert", "localhost"])
+            .expect("generate-cert flag should parse");
+
+        assert_eq!(cli.generate_cert.as_deref(), Some("localhost"));
+        assert_eq!(cli.days, None);
+    }
+
+    #[test]
+    fn parses_generate_cert_flag_with_custom_validity() {
+        let cli = Cli::try_parse_from([
+            "forge",
+            "--generate-cert",
+            "example.test",
+            "--days",
+            "30",
+        ])
+        .expect("generate-cert flag with --days should parse");
+
+        assert_eq!(cli.generate_cert.as_deref(), Some("example.test"));
+        assert_eq!(cli.days, Some(30));
+    }
 }
