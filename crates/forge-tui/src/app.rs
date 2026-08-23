@@ -3331,8 +3331,8 @@ impl App {
         // Extract worker_id from session_name (format: "forge-{worker_id}")
         let worker_id = session_name.strip_prefix("forge-").unwrap_or(&session_name);
 
-        // Check if connected to server - send kill request before killing locally
-        if self.server_client_tx.is_some() {
+        // Check if connected to server FIRST - route to server if connected
+        if self.is_connected_to_server() {
             self.send_server_client_request(ServerClientRequest::KillWorker {
                 worker_id: worker_id.to_string(),
             });
@@ -3340,8 +3340,32 @@ impl App {
                 "Sent KillWorker request to server for worker: {}",
                 worker_id
             );
+            self.status_message = Some(format!(
+                "Requested kill of worker {} via server",
+                worker.suffix
+            ));
+
+            // Remove the worker from the kill dialog list (optimistic UI update)
+            self.kill_dialog_workers.remove(self.kill_dialog_selected);
+
+            // Adjust selection if needed
+            if self.kill_dialog_selected >= self.kill_dialog_workers.len()
+                && self.kill_dialog_selected > 0
+            {
+                self.kill_dialog_selected -= 1;
+            }
+
+            // Close dialog if no workers left
+            if self.kill_dialog_workers.is_empty() {
+                self.show_kill_dialog = false;
+                self.kill_dialog_error = None;
+            }
+
+            self.mark_dirty();
+            return; // Done - server will handle the kill
         }
 
+        // NOT connected to server: execute local kill (standalone mode)
         // First check if session exists (to handle already-dead workers gracefully)
         let exists = self
             .worker_runtime
