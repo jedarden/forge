@@ -3,13 +3,13 @@
 //! Shows active user sessions, their roles, and current views.
 
 use crate::view::LayoutMode;
-use forge_core::{UserSession, UserRole, SessionStatus};
+use forge_core::{SessionStatus, UserRole, UserSession};
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table, Wrap},
-    Frame,
 };
 
 /// Panel data for sessions view.
@@ -81,10 +81,22 @@ impl SessionsPanel {
         }
     }
 
+    /// Get list of available users for assignment.
+    ///
+    /// Returns a list of (user_id, display_name) tuples.
+    pub fn get_users(&self) -> Vec<(String, String)> {
+        self.sessions
+            .iter()
+            .map(|s| (s.user_id.clone(), s.display_name.clone()))
+            .collect()
+    }
+
     /// Draw the sessions panel.
     pub fn draw(&mut self, frame: &mut Frame, area: Rect, layout_mode: LayoutMode, focused: bool) {
         let border_style = if focused {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::Gray)
         };
@@ -101,79 +113,110 @@ impl SessionsPanel {
         };
 
         // Header
-        let header = Paragraph::new(vec![
-            Line::from(vec![
-                Span::styled("Connected Users", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                Span::raw(" "),
-                Span::styled(format!("({})", self.sessions.len()), Style::default().fg(Color::Gray)),
-            ]),
-        ])
+        let header = Paragraph::new(vec![Line::from(vec![
+            Span::styled(
+                "Connected Users",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            Span::styled(
+                format!("({})", self.sessions.len()),
+                Style::default().fg(Color::Gray),
+            ),
+        ])])
         .block(Block::default())
         .alignment(Alignment::Center);
 
-        frame.render_widget(header, Rect {
-            x: area.x,
-            y: area.y,
-            width: area.width,
-            height: header_height,
-        });
+        frame.render_widget(
+            header,
+            Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: header_height,
+            },
+        );
 
         if self.sessions.is_empty() {
             let empty = Paragraph::new("No active sessions. Server mode not enabled.")
-                .block(Block::default()
-                    .title(" Team Sessions ")
-                    .title_style(border_style)
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(border_style))
+                .block(
+                    Block::default()
+                        .title(" Team Sessions ")
+                        .title_style(border_style)
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .border_style(border_style),
+                )
                 .alignment(Alignment::Center)
                 .wrap(Wrap { trim: true });
 
-            frame.render_widget(empty, Rect {
-                x: area.x,
-                y: area.y + header_height,
-                width: area.width,
-                height: area.height.saturating_sub(header_height),
-            });
+            frame.render_widget(
+                empty,
+                Rect {
+                    x: area.x,
+                    y: area.y + header_height,
+                    width: area.width,
+                    height: area.height.saturating_sub(header_height),
+                },
+            );
             return;
         }
 
         // Build table rows
-        let rows: Vec<Row> = self.sessions.iter().enumerate().map(|(i, session)| {
-            let is_selected = i == self.selected_index;
+        let rows: Vec<Row> = self
+            .sessions
+            .iter()
+            .enumerate()
+            .map(|(i, session)| {
+                let is_selected = i == self.selected_index;
 
-            let role_color = match session.role {
-                UserRole::Admin => Color::Red,
-                UserRole::Operator => Color::Yellow,
-                UserRole::Viewer => Color::Gray,
-            };
+                let role_color = match session.role {
+                    UserRole::Admin => Color::Red,
+                    UserRole::Operator => Color::Yellow,
+                    UserRole::Viewer => Color::Gray,
+                };
 
-            let status_indicator = match session.status {
-                SessionStatus::Active => "●",
-                SessionStatus::Idle => "○",
-                SessionStatus::Disconnected => "○",
-            };
+                let status_indicator = match session.status {
+                    SessionStatus::Active => "●",
+                    SessionStatus::Idle => "○",
+                    SessionStatus::Disconnected => "○",
+                };
 
-            let status_color = match session.status {
-                SessionStatus::Active => Color::Green,
-                SessionStatus::Idle => Color::Yellow,
-                SessionStatus::Disconnected => Color::Gray,
-            };
+                let status_color = match session.status {
+                    SessionStatus::Active => Color::Green,
+                    SessionStatus::Idle => Color::Yellow,
+                    SessionStatus::Disconnected => Color::Gray,
+                };
 
-            let style = if is_selected {
-                Style::default().bg(Color::DarkGray).add_modifier(Modifier::REVERSED)
-            } else {
-                Style::default()
-            };
+                let style = if is_selected {
+                    Style::default()
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
 
-            Row::new(vec![
-                Cell::from(status_indicator.to_string()).style(Style::default().fg(status_color)),
-                Cell::from(session.display_name.clone()).style(style),
-                Cell::from(session.user_id.clone()).style(Style::default().fg(Color::Blue)),
-                Cell::from(format!("{:?}", session.role)).style(Style::default().fg(role_color)),
-                Cell::from(session.current_view.as_deref().unwrap_or("None").to_string()).style(Style::default().fg(Color::Gray)),
-            ]).style(style)
-        }).collect();
+                Row::new(vec![
+                    Cell::from(status_indicator.to_string())
+                        .style(Style::default().fg(status_color)),
+                    Cell::from(session.display_name.clone()).style(style),
+                    Cell::from(session.user_id.clone()).style(Style::default().fg(Color::Blue)),
+                    Cell::from(format!("{:?}", session.role))
+                        .style(Style::default().fg(role_color)),
+                    Cell::from(
+                        session
+                            .current_view
+                            .as_deref()
+                            .unwrap_or("None")
+                            .to_string(),
+                    )
+                    .style(Style::default().fg(Color::Gray)),
+                ])
+                .style(style)
+            })
+            .collect();
 
         // Table header
         let header_cells = vec![
@@ -204,20 +247,25 @@ impl SessionsPanel {
 
         let table = Table::new(rows, widths)
             .header(Row::new(header_cells).style(Style::default().fg(Color::Cyan)))
-            .block(Block::default()
-                .title(" Team Sessions ")
-                .title_style(border_style)
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(border_style))
+            .block(
+                Block::default()
+                    .title(" Team Sessions ")
+                    .title_style(border_style)
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(border_style),
+            )
             .column_spacing(1);
 
-        frame.render_widget(table, Rect {
-            x: area.x,
-            y: area.y + header_height,
-            width: area.width,
-            height: area.height.saturating_sub(header_height),
-        });
+        frame.render_widget(
+            table,
+            Rect {
+                x: area.x,
+                y: area.y + header_height,
+                width: area.width,
+                height: area.height.saturating_sub(header_height),
+            },
+        );
     }
 }
 

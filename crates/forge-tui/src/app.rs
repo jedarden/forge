@@ -340,6 +340,12 @@ pub struct App {
     is_server_connected: bool,
     /// Server connection URL (for display)
     server_url: Option<String>,
+    /// Whether to show the bead assignment dialog
+    show_assign_dialog: bool,
+    /// List of available users for bead assignment
+    available_users: Vec<(String, String)>, // (user_id, display_name)
+    /// Currently selected user index in assign dialog
+    assign_dialog_selected: usize,
 }
 
 /// Temporary storage for chat exchange data during streaming display.
@@ -761,6 +767,9 @@ impl App {
             session_manager,
             is_server_connected: false,
             server_url: None,
+            show_assign_dialog: false,
+            available_users: Vec::new(),
+            assign_dialog_selected: 0,
         }
     }
 
@@ -852,6 +861,9 @@ impl App {
             session_manager: SessionManager::new(),
             is_server_connected: false,
             server_url: None,
+            show_assign_dialog: false,
+            available_users: Vec::new(),
+            assign_dialog_selected: 0,
         }
     }
 
@@ -2673,6 +2685,12 @@ impl App {
             return;
         }
 
+        // Handle assignment dialog if active
+        if self.show_assign_dialog {
+            self.handle_assign_dialog_key(key);
+            return;
+        }
+
         // Handle task detail overlay if active
         if self.show_task_detail {
             self.handle_task_detail_key(key);
@@ -2693,6 +2711,7 @@ impl App {
 
         // Handle priority filter keys (0-4) when in Tasks view
         // Also handle search mode activation with '/' key
+        // Also handle bead assignment/unassignment
         if self.current_view == View::Tasks {
             if let KeyCode::Char(c) = key.code {
                 match c {
@@ -2725,6 +2744,16 @@ impl App {
                         self.priority_filter = None;
                         self.status_message = Some("Priority filter cleared".to_string());
                         self.mark_dirty();
+                        return;
+                    }
+                    // Open assignment dialog with 'a' key
+                    'a' | 'A' if !self.task_search_mode => {
+                        self.handle_open_assign_dialog();
+                        return;
+                    }
+                    // Quick unassign with 'u' key
+                    'u' | 'U' if !self.task_search_mode => {
+                        self.handle_unassign_bead();
                         return;
                     }
                     _ => {}
@@ -3814,6 +3843,38 @@ impl App {
     }
 
     /// Handle bead assignment (assign selected bead to current user).
+    /// Handle opening the bead assignment dialog.
+    fn handle_open_assign_dialog(&mut self) {
+        // Check if connected to server
+        if !self.is_connected_to_server() {
+            self.status_message = Some(
+                "Bead assignment requires server connection (not available in standalone mode)"
+                    .to_string(),
+            );
+            self.mark_dirty();
+            return;
+        }
+
+        // Get available users from sessions panel
+        let users = self.sessions_panel.get_users();
+
+        if users.is_empty() {
+            self.status_message = Some("No users available for assignment".to_string());
+            self.mark_dirty();
+            return;
+        }
+
+        // Populate available users list
+        self.available_users = users;
+
+        // Reset selection
+        self.assign_dialog_selected = 0;
+
+        // Show dialog
+        self.show_assign_dialog = true;
+        self.mark_dirty();
+    }
+
     fn handle_assign_bead(&mut self) {
         // Get the aggregated bead data
         let data = self
@@ -3968,6 +4029,79 @@ impl App {
                 // Close dialog
                 self.show_kill_dialog = false;
                 self.kill_dialog_error = None;
+                self.mark_dirty();
+            }
+            _ => {}
+        }
+    }
+
+    /// Handle assignment dialog key navigation.
+    fn handle_assign_dialog_key(&mut self, key: KeyEvent) {
+        use crossterm::event::KeyCode;
+
+        match key.code {
+            KeyCode::Char('k') | KeyCode::Up => {
+                // Move selection up
+                if self.assign_dialog_selected > 0 {
+                    self.assign_dialog_selected -= 1;
+                    self.mark_dirty();
+                }
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                // Move selection down
+                if self.assign_dialog_selected + 1 < self.available_users.len() {
+                    self.assign_dialog_selected += 1;
+                    self.mark_dirty();
+                }
+            }
+            KeyCode::Enter => {
+                // Assign bead to selected user
+                if self.assign_dialog_selected < self.available_users.len() {
+                    let (user_id, display_name) =
+                        &self.available_users[self.assign_dialog_selected];
+
+                    // Get selected bead
+                    let data = self
+                        .data_manager
+                        .bead_manager
+                        .get_filtered_aggregated_data(self.priority_filter);
+                    let mut all_beads: Vec<(String, &crate::bead::Bead, &str)> = Vec::new();
+
+                    for (ws, bead) in &data.in_progress {
+                        all_beads.push((ws.clone(), bead, "In Progress"));
+                    }
+                    for (ws, bead) in &data.ready {
+                        all_beads.push((ws.clone(), bead, "Ready"));
+                    }
+                    for (ws, bead) in &data.blocked {
+                        all_beads.push((ws.clone(), bead, "Blocked"));
+                    }
+
+                    if !all_beads.is_empty() {
+                        let idx = self.selected_task_index.min(all_beads.len() - 1);
+                        let (_workspace, bead, _section) = &all_beads[idx];
+                        let bead_id = bead.id.clone();
+
+                        // Send assignment request to server
+                        self.send_server_client_request(ServerClientRequest::AssignBead {
+                            bead_id: bead_id.clone(),
+                            to: user_id.clone(),
+                        });
+
+                        self.status_message = Some(format!(
+                            "Requested assignment of {} to {}",
+                            bead_id, display_name
+                        ));
+                    }
+                }
+
+                // Close dialog
+                self.show_assign_dialog = false;
+                self.mark_dirty();
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                // Close dialog
+                self.show_assign_dialog = false;
                 self.mark_dirty();
             }
             _ => {}
@@ -5020,6 +5154,9 @@ impl App {
                 // Update data manager with server state
                 self.data_manager
                     .update_from_server_state(workers, beads, costs, sessions);
+
+                // Update sessions panel with current users
+                self.sessions_panel.set_sessions(sessions);
             }
             ServerClientMessage::UserJoined {
                 user,
@@ -5239,6 +5376,11 @@ impl App {
         // Draw kill worker dialog if active
         if self.show_kill_dialog {
             self.draw_kill_dialog(frame, area);
+        }
+
+        // Draw bead assignment dialog if active
+        if self.show_assign_dialog {
+            self.draw_assign_dialog(frame, area);
         }
 
         // Draw confirmation dialog if active
@@ -6839,6 +6981,125 @@ Press any key to close this help.";
                     .title(Span::styled(
                         " Kill Worker ",
                         Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    ))
+                    .style(Style::default().bg(Color::Black)),
+            )
+            .wrap(Wrap { trim: false });
+
+        frame.render_widget(dialog, overlay_area);
+    }
+
+    /// Draw the bead assignment dialog overlay.
+    fn draw_assign_dialog(&mut self, frame: &mut Frame, area: Rect) {
+        let theme = self.theme_manager.current();
+
+        // Calculate dialog dimensions based on content
+        let overlay_width = 70.min(area.width.saturating_sub(4));
+        let max_height = 20.min(area.height.saturating_sub(4));
+        let overlay_x = (area.width - overlay_width) / 2;
+        let overlay_y = (area.height - max_height) / 2;
+
+        let overlay_area = Rect::new(overlay_x, overlay_y, overlay_width, max_height);
+
+        // Clear background
+        frame.render_widget(Clear, overlay_area);
+
+        // Build dialog content
+        let mut lines: Vec<Line> = Vec::new();
+
+        // Get selected bead info
+        let data = self
+            .data_manager
+            .bead_manager
+            .get_filtered_aggregated_data(self.priority_filter);
+        let mut all_beads: Vec<(String, &crate::bead::Bead, &str)> = Vec::new();
+
+        for (ws, bead) in &data.in_progress {
+            all_beads.push((ws.clone(), bead, "In Progress"));
+        }
+        for (ws, bead) in &data.ready {
+            all_beads.push((ws.clone(), bead, "Ready"));
+        }
+        for (ws, bead) in &data.blocked {
+            all_beads.push((ws.clone(), bead, "Blocked"));
+        }
+
+        let selected_bead = if !all_beads.is_empty() {
+            let idx = self.selected_task_index.min(all_beads.len() - 1);
+            Some(&all_beads[idx])
+        } else {
+            None
+        };
+
+        // Header
+        lines.push(Line::from(Span::styled(
+            "Assign bead to user:",
+            Style::default()
+                .fg(theme.colors.text)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::raw("")); // Empty line
+
+        if let Some((_workspace, bead, _section)) = selected_bead {
+            lines.push(Line::from(Span::styled(
+                format!("Bead: {}", bead.id),
+                Style::default()
+                    .fg(theme.colors.text_dim)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(Span::styled(
+                format!("Title: {}", bead.title),
+                Style::default().fg(theme.colors.text_dim),
+            )));
+            lines.push(Line::raw("")); // Empty line
+        }
+
+        if self.available_users.is_empty() {
+            // No users message
+            lines.push(Line::from(Span::styled(
+                "No users available for assignment",
+                Style::default().fg(theme.colors.status_warning),
+            )));
+        } else {
+            // User list
+            for (i, (user_id, display_name)) in self.available_users.iter().enumerate() {
+                let is_selected = i == self.assign_dialog_selected;
+
+                // Format: [ ] display_name (user_id)
+                let checkbox = if is_selected { "[x] " } else { "[ ] " };
+                let user_line = format!("{}{} ({})", checkbox, display_name, user_id);
+
+                let style = if is_selected {
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(theme.colors.hotkey)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme.colors.text)
+                };
+
+                lines.push(Line::from(Span::styled(user_line, style)));
+            }
+        }
+
+        lines.push(Line::raw("")); // Empty line
+
+        // Footer with instructions
+        lines.push(Line::from(Span::styled(
+            "↑/k: up  ↓/j: down  Enter: assign  Esc/q: cancel",
+            Style::default().fg(theme.colors.text_dim),
+        )));
+
+        let dialog = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Cyan))
+                    .title(Span::styled(
+                        " Assign Bead ",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
                     ))
                     .style(Style::default().bg(Color::Black)),
             )
