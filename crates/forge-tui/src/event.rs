@@ -79,6 +79,10 @@ pub enum AppEvent {
     AcknowledgeAlert,
     /// Acknowledge all alerts (Alerts view only)
     AcknowledgeAllAlerts,
+    /// Assign selected bead to a user (Tasks view only)
+    AssignBead,
+    /// Unassign selected bead (Tasks view only)
+    UnassignBead,
     /// No action needed
     None,
 }
@@ -228,10 +232,17 @@ impl InputHandler {
             // 'p' = pause selected worker (in Workers view), 'P' = pause all workers
             // 'r' = resume selected worker, 'R' = resume all workers
             KeyCode::Char('p') if self.current_view == View::Workers => AppEvent::PauseWorker,
-            KeyCode::Char('p') if self.current_view != View::Workers => AppEvent::SwitchView(View::Perf),
+            KeyCode::Char('p') if self.current_view != View::Workers => {
+                AppEvent::SwitchView(View::Perf)
+            }
             KeyCode::Char('P') if self.current_view == View::Workers => AppEvent::PauseAllWorkers,
             KeyCode::Char('r') if self.current_view == View::Workers => AppEvent::ResumeWorker,
             KeyCode::Char('R') if self.current_view == View::Workers => AppEvent::ResumeAllWorkers,
+
+            // Tasks view: Bead assignment controls (when task detail overlay is shown)
+            // 'e' = assign bead (engage), 'd' = unassign bead (disengage/drop)
+            KeyCode::Char('e') if self.current_view == View::Tasks => AppEvent::AssignBead,
+            KeyCode::Char('d') if self.current_view == View::Tasks => AppEvent::UnassignBead,
 
             // Routing view (lowercase 'r' when not in Workers view)
             KeyCode::Char('r') => AppEvent::SwitchView(View::Routing),
@@ -244,7 +255,9 @@ impl InputHandler {
             KeyCode::Char('t') | KeyCode::Char('T') => AppEvent::SwitchView(View::Tasks),
             // 'a' for Alerts view, 'A' for acknowledge all when in Alerts view
             KeyCode::Char('a') => AppEvent::SwitchView(View::Alerts),
-            KeyCode::Char('A') if self.current_view == View::Alerts => AppEvent::AcknowledgeAllAlerts,
+            KeyCode::Char('A') if self.current_view == View::Alerts => {
+                AppEvent::AcknowledgeAllAlerts
+            }
             KeyCode::Char('A') => AppEvent::SwitchView(View::Alerts),
             // 'l' or 'L' for Logs view
             KeyCode::Char('l') | KeyCode::Char('L') => AppEvent::SwitchView(View::Logs),
@@ -297,7 +310,6 @@ impl InputHandler {
 
             // Alerts view: Acknowledge all alerts with 'A' (already mapped to SwitchView)
             // We handle 'A' in the Alerts view via app.rs instead
-
             _ => AppEvent::None,
         }
     }
