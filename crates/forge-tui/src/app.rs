@@ -3004,8 +3004,15 @@ impl App {
                         return;
                     }
 
-                    // Process chat request in background thread
-                    if let Some(backend) = &self.chat_backend {
+                    // Client mode: route the chat request to the server instead of
+                    // invoking the local chat backend
+                    if self.is_connected_to_server() {
+                        self.send_server_client_request(ServerClientRequest::SendChat {
+                            message: query,
+                        });
+                        self.chat_pending = true;
+                        self.status_message = Some("Sent chat to server".to_string());
+                    } else if let Some(backend) = &self.chat_backend {
                         // Check if streaming is supported
                         let supports_streaming = backend.supports_streaming();
 
@@ -8989,6 +8996,60 @@ mod tests {
         assert!(
             app.is_connected_to_server(),
             "is_connected_to_server should return true when server_client_tx is Some"
+        );
+    }
+
+    // ============================================================
+    // Chat Submission Routing Tests
+    // ============================================================
+
+    #[test]
+    fn test_chat_submit_routes_to_server_in_client_mode() {
+        let mut app = App::new();
+
+        // Simulate client mode with a live channel so the request is observable
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.set_server_client_tx_for_testing(Some(tx));
+        assert!(app.is_connected_to_server());
+
+        app.chat_input = "hello from client mode".to_string();
+        app.handle_app_event(AppEvent::Submit);
+
+        // The submission must reach the server client channel as SendChat
+        let request = rx
+            .try_recv()
+            .expect("Submit in client mode should send a request to the server");
+        match request {
+            ServerClientRequest::SendChat { message } => {
+                assert_eq!(message, "hello from client mode");
+            }
+            other => panic!("expected SendChat request, got {:?}", other),
+        }
+
+        // Input buffer cleared and pending indicator set while awaiting the reply
+        assert!(app.chat_input.is_empty());
+        assert!(app.chat_pending);
+        assert_eq!(app.status_message.as_deref(), Some("Sent chat to server"));
+    }
+
+    #[test]
+    fn test_chat_submit_uses_local_backend_in_standalone_mode() {
+        let mut app = App::new();
+        assert!(!app.is_connected_to_server());
+
+        // Force the backend to None so the local fallback path is deterministic
+        // (no real API call, no dependence on ~/.forge/config.yaml existing)
+        app.chat_backend = None;
+
+        app.chat_input = "hello from standalone mode".to_string();
+        app.handle_app_event(AppEvent::Submit);
+
+        // Standalone mode: local path taken, no server routing
+        assert!(app.chat_input.is_empty());
+        assert!(!app.chat_pending);
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("Chat backend not initialized")
         );
     }
 }
