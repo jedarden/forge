@@ -47,18 +47,15 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::time::{Duration, Instant};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyEvent};
-use forge_config::ForgeConfig;
 use forge_chat::{ChatBackend, ChatConfig, ChatResponse, StreamingChatChunk};
+use forge_config::ForgeConfig;
 use forge_core::types::WorkerTier;
-use forge_core::{UserSession, UserRole, SessionManager};
-use forge_worker::{
-    LaunchConfig, SpawnRequest, WorkerLauncher,
-    discovery::DiscoveredWorker,
-};
+use forge_core::{SessionManager, UserRole, UserSession};
+use forge_worker::{LaunchConfig, SpawnRequest, WorkerLauncher, discovery::DiscoveredWorker};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
@@ -68,17 +65,19 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
 
-use crate::config_menu::{ConfigMenuType, build_budget_items, build_settings_items, build_worker_items, draw_config_menu};
+use crate::config_menu::{
+    ConfigMenuType, build_budget_items, build_settings_items, build_worker_items, draw_config_menu,
+};
 use crate::config_watcher::{ConfigEvent, ConfigWatcher};
 use crate::cost_panel::CostPanel;
 use crate::data::DataManager;
+use crate::error_recovery::{ErrorCategory, ErrorSeverity, SharedErrorRecoveryManager};
 use crate::event::{AppEvent, InputHandler};
 use crate::metrics_panel::MetricsPanel;
 use crate::perf_panel::PerfPanel;
 use crate::theme::ThemeManager;
 use crate::view::{FocusPanel, LayoutMode, View};
 use crate::widget::QuickActionsPanel;
-use crate::error_recovery::{ErrorCategory, ErrorSeverity, SharedErrorRecoveryManager};
 use tracing::{error, info, warn};
 
 /// Result type for app operations.
@@ -132,7 +131,10 @@ pub enum ServerClientRequest {
 #[derive(Clone, Debug)]
 pub enum ServerClientMessage {
     /// Connected and authenticated successfully
-    Connected { session: forge_core::UserSession, server_url: String },
+    Connected {
+        session: forge_core::UserSession,
+        server_url: String,
+    },
     /// State update received from server
     StateUpdate {
         workers: Vec<forge_server::protocol::WorkerState>,
@@ -141,13 +143,25 @@ pub enum ServerClientMessage {
         sessions: Vec<forge_server::protocol::SessionSummary>,
     },
     /// User joined the session
-    UserJoined { user: String, display_name: String, role: forge_core::UserRole },
+    UserJoined {
+        user: String,
+        display_name: String,
+        role: forge_core::UserRole,
+    },
     /// User left the session
     UserLeft { user: String },
     /// Bead assigned notification
-    BeadAssigned { bead_id: String, assigned_to: String, assigned_by: String },
+    BeadAssigned {
+        bead_id: String,
+        assigned_to: String,
+        assigned_by: String,
+    },
     /// Chat message from another user
-    ChatMessage { from: String, message: String, timestamp: chrono::DateTime<chrono::Utc> },
+    ChatMessage {
+        from: String,
+        message: String,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    },
     /// Connection error
     ConnectionError { message: String },
     /// Disconnected from server
@@ -433,18 +447,29 @@ fn get_error_guidance(error_message: &str) -> Option<String> {
     let error_lower = error_message.to_lowercase();
 
     // Config not found errors
-    if error_lower.contains("config") && (error_lower.contains("not found") || error_lower.contains("missing")) {
+    if error_lower.contains("config")
+        && (error_lower.contains("not found") || error_lower.contains("missing"))
+    {
         return Some("Run 'forge init' to create a configuration file, or check that ~/.forge/config.yaml exists.".to_string());
     }
 
     // API/authentication errors
-    if error_lower.contains("api key") || error_lower.contains("authentication") || error_lower.contains("unauthorized") {
-        return Some("Check your API key in ~/.forge/config.yaml. Ensure the key is valid and not expired.".to_string());
+    if error_lower.contains("api key")
+        || error_lower.contains("authentication")
+        || error_lower.contains("unauthorized")
+    {
+        return Some(
+            "Check your API key in ~/.forge/config.yaml. Ensure the key is valid and not expired."
+                .to_string(),
+        );
     }
 
     // Rate limit errors
     if error_lower.contains("rate limit") || error_lower.contains("too many requests") {
-        return Some("Wait a moment before sending more commands. Rate limits reset automatically.".to_string());
+        return Some(
+            "Wait a moment before sending more commands. Rate limits reset automatically."
+                .to_string(),
+        );
     }
 
     // Network unreachable (no internet)
@@ -453,7 +478,10 @@ fn get_error_guidance(error_message: &str) -> Option<String> {
     }
 
     // DNS resolution failures
-    if error_lower.contains("dns") || error_lower.contains("failed to lookup address") || error_lower.contains("name or service not known") {
+    if error_lower.contains("dns")
+        || error_lower.contains("failed to lookup address")
+        || error_lower.contains("name or service not known")
+    {
         return Some("⚠️  DNS resolution failed. Check DNS settings or try using 8.8.8.8 as your DNS server. Click 'r' to retry.".to_string());
     }
 
@@ -478,33 +506,57 @@ fn get_error_guidance(error_message: &str) -> Option<String> {
     }
 
     // Worker errors
-    if error_lower.contains("worker") && (error_lower.contains("spawn") || error_lower.contains("launch")) {
-        return Some("Ensure you have sufficient system resources and the worker binary is available.".to_string());
+    if error_lower.contains("worker")
+        && (error_lower.contains("spawn") || error_lower.contains("launch"))
+    {
+        return Some(
+            "Ensure you have sufficient system resources and the worker binary is available."
+                .to_string(),
+        );
     }
 
     // Context gathering errors
     if error_lower.contains("context") && error_lower.contains("failed") {
-        return Some("The dashboard context could not be loaded. Try restarting the application.".to_string());
+        return Some(
+            "The dashboard context could not be loaded. Try restarting the application."
+                .to_string(),
+        );
     }
 
     // Permission/access errors
-    if error_lower.contains("permission") || error_lower.contains("access denied") || error_lower.contains("forbidden") {
-        return Some("You don't have permission for this action. Check your configuration and credentials.".to_string());
+    if error_lower.contains("permission")
+        || error_lower.contains("access denied")
+        || error_lower.contains("forbidden")
+    {
+        return Some(
+            "You don't have permission for this action. Check your configuration and credentials."
+                .to_string(),
+        );
     }
 
     // Resource not found errors (general)
     if error_lower.contains("not found") || error_lower.contains("does not exist") {
-        return Some("The requested resource was not found. Verify the name and try again.".to_string());
+        return Some(
+            "The requested resource was not found. Verify the name and try again.".to_string(),
+        );
     }
 
     // JSON parsing errors
-    if error_lower.contains("json") || error_lower.contains("parse") || error_lower.contains("deserialize") {
+    if error_lower.contains("json")
+        || error_lower.contains("parse")
+        || error_lower.contains("deserialize")
+    {
         return Some("There was a problem processing the response. The server may have returned unexpected data.".to_string());
     }
 
     // IO errors
-    if error_lower.contains("io error") || error_lower.contains("file") && error_lower.contains("error") {
-        return Some("A file system error occurred. Check file permissions and available disk space.".to_string());
+    if error_lower.contains("io error")
+        || error_lower.contains("file") && error_lower.contains("error")
+    {
+        return Some(
+            "A file system error occurred. Check file permissions and available disk space."
+                .to_string(),
+        );
     }
 
     None
@@ -575,7 +627,9 @@ impl App {
         // Time chat backend initialization
         let chat_start = Instant::now();
         info!("⏱️ Initializing chat backend...");
-        let chat_backend = Self::init_chat_backend_with_worker_spawner(&worker_runtime, &worker_launcher).map(Arc::new);
+        let chat_backend =
+            Self::init_chat_backend_with_worker_spawner(&worker_runtime, &worker_launcher)
+                .map(Arc::new);
         info!("⏱️ Chat backend initialized in {:?}", chat_start.elapsed());
 
         // Initialize config watcher for hot-reload (skip in test mode to save inotify instances)
@@ -588,7 +642,10 @@ impl App {
             match ConfigWatcher::new() {
                 Some((watcher, rx)) => {
                     let config = watcher.current_config().clone();
-                    info!("⏱️ Config watcher initialized in {:?}", config_start.elapsed());
+                    info!(
+                        "⏱️ Config watcher initialized in {:?}",
+                        config_start.elapsed()
+                    );
                     (Some(watcher), Some(rx), config)
                 }
                 None => {
@@ -600,7 +657,10 @@ impl App {
 
         // Calculate initial data poll interval from config
         let data_poll_interval = Duration::from_millis(
-            forge_config.dashboard.refresh_interval_ms.min(DEFAULT_DATA_POLL_INTERVAL_MS)
+            forge_config
+                .dashboard
+                .refresh_interval_ms
+                .min(DEFAULT_DATA_POLL_INTERVAL_MS),
         );
 
         // Configure alert notifier from config
@@ -803,9 +863,9 @@ impl App {
         _worker_runtime: &tokio::runtime::Runtime,
         _worker_launcher: &WorkerLauncher,
     ) -> Option<ChatBackend> {
+        use forge_chat::ChatProviderFactory;
         use forge_chat::config::{AuditConfig, ConfirmationConfig, RateLimitConfig};
         use forge_chat::spawner::RealWorkerSpawner;
-        use forge_chat::ChatProviderFactory;
         use tracing::{error, info, warn};
 
         let start = std::time::Instant::now();
@@ -815,7 +875,10 @@ impl App {
         let config_path = match dirs::home_dir() {
             Some(home) => home.join(".forge/config.yaml"),
             None => {
-                warn!("⏱️ Could not determine home directory (took {:?})", start.elapsed());
+                warn!(
+                    "⏱️ Could not determine home directory (took {:?})",
+                    start.elapsed()
+                );
                 return None;
             }
         };
@@ -961,13 +1024,16 @@ impl App {
             .unwrap_or_else(|_| std::path::PathBuf::from(&home).join("forge"));
 
         // Create RealWorkerSpawner with default launcher detection
-        let worker_spawner: Arc<dyn forge_chat::spawner::WorkerSpawner> = match RealWorkerSpawner::with_default_launcher(workspace) {
-            Some(spawner) => Arc::new(spawner),
-            None => {
-                warn!("⏱️ No worker launcher script found, worker spawning via chat will not be available");
-                Arc::new(forge_chat::spawner::NoOpWorkerSpawner)
-            }
-        };
+        let worker_spawner: Arc<dyn forge_chat::spawner::WorkerSpawner> =
+            match RealWorkerSpawner::with_default_launcher(workspace) {
+                Some(spawner) => Arc::new(spawner),
+                None => {
+                    warn!(
+                        "⏱️ No worker launcher script found, worker spawning via chat will not be available"
+                    );
+                    Arc::new(forge_chat::spawner::NoOpWorkerSpawner)
+                }
+            };
 
         // Initialize backend (async, but we block here during startup)
         let runtime_start = std::time::Instant::now();
@@ -1339,11 +1405,15 @@ impl App {
                             .collect(),
                         side_effects: vec![],
                         confirmation: None,
-                        metadata: entry.metadata.as_ref().map(|m| ResponseMetadata {
-                            duration_ms: m.duration_ms,
-                            cost_usd: m.cost_usd,
-                            provider: m.provider.clone(),
-                        }).unwrap_or_default(),
+                        metadata: entry
+                            .metadata
+                            .as_ref()
+                            .map(|m| ResponseMetadata {
+                                duration_ms: m.duration_ms,
+                                cost_usd: m.cost_usd,
+                                provider: m.provider.clone(),
+                            })
+                            .unwrap_or_default(),
                         error_guidance: None,
                     });
                     loaded += 1;
@@ -1410,7 +1480,11 @@ impl App {
                     if let Err(e) = std::fs::write(&export_path_clone, json) {
                         error!("Failed to write export file: {}", e);
                     } else {
-                        info!("Exported {} entries to {}", entries.len(), export_path_clone.display());
+                        info!(
+                            "Exported {} entries to {}",
+                            entries.len(),
+                            export_path_clone.display()
+                        );
                     }
                 }
                 Err(e) => {
@@ -1438,7 +1512,8 @@ impl App {
         if !history_path.exists() {
             self.chat_history.push(ChatExchange {
                 user_query: "/stats".to_string(),
-                assistant_response: "No saved history. Session has {} exchanges.".replace("{}", &self.chat_history.len().to_string()),
+                assistant_response: "No saved history. Session has {} exchanges."
+                    .replace("{}", &self.chat_history.len().to_string()),
                 timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
                 is_error: false,
                 tool_calls: vec![],
@@ -1480,7 +1555,11 @@ impl App {
                     "History Stats:\n• Total exchanges: {}\n• Errors: {} ({:.1}%)\n• Sessions: {}\n• Est. cost: ${:.4}\n• Current session: {} exchanges",
                     total,
                     errors,
-                    if total > 0 { (errors as f64 / total as f64) * 100.0 } else { 0.0 },
+                    if total > 0 {
+                        (errors as f64 / total as f64) * 100.0
+                    } else {
+                        0.0
+                    },
                     sessions.len(),
                     total_cost,
                     self.chat_history.len()
@@ -1748,7 +1827,10 @@ impl App {
                     // Check if ChatResponse indicates an error (ChatResponse::error() returns Ok with success=false)
                     if !response.success {
                         info!("❌ ChatResponse error: {:?}", response.error);
-                        let error_msg = response.error.clone().unwrap_or_else(|| "Unknown error".to_string());
+                        let error_msg = response
+                            .error
+                            .clone()
+                            .unwrap_or_else(|| "Unknown error".to_string());
                         let guidance = get_error_guidance(&error_msg);
 
                         let exchange = ChatExchange {
@@ -1811,20 +1893,28 @@ impl App {
                             .collect();
 
                         // Extract confirmation info if present
-                        let confirmation = response.confirmation_required.as_ref().map(|c| {
-                            ConfirmationInfo {
-                                title: c.title.clone(),
-                                description: c.description.clone(),
-                                level: match c.level {
-                                    forge_chat::tools::ConfirmationLevel::Info => ConfirmationLevel::Info,
-                                    forge_chat::tools::ConfirmationLevel::Warning => ConfirmationLevel::Warning,
-                                    forge_chat::tools::ConfirmationLevel::Danger => ConfirmationLevel::Danger,
-                                },
-                                cost_impact: c.cost_impact,
-                                affected_items: c.affected_items.clone(),
-                                reversible: c.reversible,
-                            }
-                        });
+                        let confirmation =
+                            response
+                                .confirmation_required
+                                .as_ref()
+                                .map(|c| ConfirmationInfo {
+                                    title: c.title.clone(),
+                                    description: c.description.clone(),
+                                    level: match c.level {
+                                        forge_chat::tools::ConfirmationLevel::Info => {
+                                            ConfirmationLevel::Info
+                                        }
+                                        forge_chat::tools::ConfirmationLevel::Warning => {
+                                            ConfirmationLevel::Warning
+                                        }
+                                        forge_chat::tools::ConfirmationLevel::Danger => {
+                                            ConfirmationLevel::Danger
+                                        }
+                                    },
+                                    cost_impact: c.cost_impact,
+                                    affected_items: c.affected_items.clone(),
+                                    reversible: c.reversible,
+                                });
 
                         // Extract metadata
                         let metadata = ResponseMetadata {
@@ -1855,7 +1945,10 @@ impl App {
 
                         // Network is working - clear any network error status
                         if !self.network_available {
-                            info!("Network recovered after {:?}", self.network_unavailable_since.map(|t| t.elapsed()));
+                            info!(
+                                "Network recovered after {:?}",
+                                self.network_unavailable_since.map(|t| t.elapsed())
+                            );
                             self.network_available = true;
                             self.network_error_message = None;
                             self.network_unavailable_since = None;
@@ -1916,7 +2009,11 @@ impl App {
                     self.chat_history.push(exchange);
 
                     if is_retryable {
-                        self.status_message = Some(format!("❌ {}: {} | Press 'r' to retry", e, e.suggested_action()));
+                        self.status_message = Some(format!(
+                            "❌ {}: {} | Press 'r' to retry",
+                            e,
+                            e.suggested_action()
+                        ));
                     } else {
                         self.status_message = Some(format!("❌ Chat error: {}", e));
                     }
@@ -2161,10 +2258,7 @@ impl App {
         let new_position = (self.streaming_position + CHARS_PER_FRAME).min(total_chars);
 
         // Update streaming_response with characters up to new position
-        self.streaming_response = complete_text
-            .chars()
-            .take(new_position)
-            .collect();
+        self.streaming_response = complete_text.chars().take(new_position).collect();
 
         self.streaming_position = new_position;
         self.mark_dirty();
@@ -2258,7 +2352,8 @@ impl App {
             let rt = match tokio::runtime::Runtime::new() {
                 Ok(rt) => rt,
                 Err(e) => {
-                    let _ = chunk_tx.send(StreamingChatChunk::error(format!("Runtime error: {}", e)));
+                    let _ =
+                        chunk_tx.send(StreamingChatChunk::error(format!("Runtime error: {}", e)));
                     return;
                 }
             };
@@ -2266,7 +2361,10 @@ impl App {
             rt.block_on(async {
                 // Check rate limit
                 if let Err(e) = backend_clone.check_and_record_rate_limit().await {
-                    let _ = chunk_tx.send(StreamingChatChunk::error(format!("Rate limit error: {}", e)));
+                    let _ = chunk_tx.send(StreamingChatChunk::error(format!(
+                        "Rate limit error: {}",
+                        e
+                    )));
                     return;
                 }
 
@@ -2274,19 +2372,23 @@ impl App {
                 let context = match backend_clone.get_context().await {
                     Ok(ctx) => ctx,
                     Err(e) => {
-                        let _ = chunk_tx.send(StreamingChatChunk::error(format!("Context error: {}", e)));
+                        let _ = chunk_tx
+                            .send(StreamingChatChunk::error(format!("Context error: {}", e)));
                         return;
                     }
                 };
 
-                let prompt = backend_clone.build_streaming_prompt(&query_clone, &context).await;
+                let prompt = backend_clone
+                    .build_streaming_prompt(&query_clone, &context)
+                    .await;
                 let tools = backend_clone.get_tool_definitions();
 
                 // Create provider for streaming
                 let provider = match forge_chat::ClaudeApiProvider::from_config(api_config) {
                     Ok(p) => p,
                     Err(e) => {
-                        let _ = chunk_tx.send(StreamingChatChunk::error(format!("Provider error: {}", e)));
+                        let _ = chunk_tx
+                            .send(StreamingChatChunk::error(format!("Provider error: {}", e)));
                         return;
                     }
                 };
@@ -2295,7 +2397,8 @@ impl App {
                 let stream = match provider.process_streaming(&prompt, &context, &tools).await {
                     Ok(s) => s,
                     Err(e) => {
-                        let _ = chunk_tx.send(StreamingChatChunk::error(format!("Streaming error: {}", e)));
+                        let _ = chunk_tx
+                            .send(StreamingChatChunk::error(format!("Streaming error: {}", e)));
                         return;
                     }
                 };
@@ -2334,7 +2437,11 @@ impl App {
                         }
 
                         let _ = chunk_tx.send(StreamingChatChunk::done(response));
-                        info!("Streaming complete: {} chars in {}ms", accumulated_text.len(), duration_ms);
+                        info!(
+                            "Streaming complete: {} chars in {}ms",
+                            accumulated_text.len(),
+                            duration_ms
+                        );
                         return;
                     }
                 }
@@ -2465,24 +2572,45 @@ impl App {
 
         // Apply refresh interval change
         let new_interval = Duration::from_millis(
-            config.dashboard.refresh_interval_ms.min(DEFAULT_DATA_POLL_INTERVAL_MS)
+            config
+                .dashboard
+                .refresh_interval_ms
+                .min(DEFAULT_DATA_POLL_INTERVAL_MS),
         );
         if self.data_poll_interval != new_interval {
             self.data_poll_interval = new_interval;
-            changes_applied.push(format!("refresh_interval={}ms", config.dashboard.refresh_interval_ms));
-            info!("Refresh interval changed to: {}ms", config.dashboard.refresh_interval_ms);
+            changes_applied.push(format!(
+                "refresh_interval={}ms",
+                config.dashboard.refresh_interval_ms
+            ));
+            info!(
+                "Refresh interval changed to: {}ms",
+                config.dashboard.refresh_interval_ms
+            );
         }
 
         // Apply budget threshold changes (these are used by cost_panel when rendering)
         let old_warning = self.forge_config.cost_tracking.budget_warning_threshold;
         let old_critical = self.forge_config.cost_tracking.budget_critical_threshold;
         if config.cost_tracking.budget_warning_threshold != old_warning {
-            changes_applied.push(format!("warning_threshold={}%", config.cost_tracking.budget_warning_threshold));
-            info!("Budget warning threshold changed: {}% -> {}%", old_warning, config.cost_tracking.budget_warning_threshold);
+            changes_applied.push(format!(
+                "warning_threshold={}%",
+                config.cost_tracking.budget_warning_threshold
+            ));
+            info!(
+                "Budget warning threshold changed: {}% -> {}%",
+                old_warning, config.cost_tracking.budget_warning_threshold
+            );
         }
         if config.cost_tracking.budget_critical_threshold != old_critical {
-            changes_applied.push(format!("critical_threshold={}%", config.cost_tracking.budget_critical_threshold));
-            info!("Budget critical threshold changed: {}% -> {}%", old_critical, config.cost_tracking.budget_critical_threshold);
+            changes_applied.push(format!(
+                "critical_threshold={}%",
+                config.cost_tracking.budget_critical_threshold
+            ));
+            info!(
+                "Budget critical threshold changed: {}% -> {}%",
+                old_critical, config.cost_tracking.budget_critical_threshold
+            );
         }
 
         // Apply notification settings
@@ -2493,21 +2621,22 @@ impl App {
             config.notifications.visual_flash_on_critical,
         );
         if config.notifications.bell_on_critical != self.forge_config.notifications.bell_on_critical
-            || config.notifications.bell_on_warning != self.forge_config.notifications.bell_on_warning
+            || config.notifications.bell_on_warning
+                != self.forge_config.notifications.bell_on_warning
         {
             changes_applied.push(format!(
                 "notifications=bell_critical:{},bell_warning:{}",
-                config.notifications.bell_on_critical,
-                config.notifications.bell_on_warning
+                config.notifications.bell_on_critical, config.notifications.bell_on_warning
             ));
         }
 
         // Log config reload to activity panel
         if !changes_applied.is_empty() {
             let message = format!("Config reloaded: {}", changes_applied.join(", "));
-            self.data_manager.activity_data.push(
-                ActivityEntry::new(ActivityEventType::ConfigReload, message.clone())
-            );
+            self.data_manager.activity_data.push(ActivityEntry::new(
+                ActivityEventType::ConfigReload,
+                message.clone(),
+            ));
 
             // Show visual feedback via status message
             self.status_message = Some(message);
@@ -2572,7 +2701,8 @@ impl App {
                         self.task_search_mode = true;
                         self.task_search_query.clear();
                         self.input_handler.set_chat_mode(true);
-                        self.status_message = Some("Search mode: type to filter tasks, Esc to clear".to_string());
+                        self.status_message =
+                            Some("Search mode: type to filter tasks, Esc to clear".to_string());
                         self.mark_dirty();
                         return;
                     }
@@ -2652,7 +2782,9 @@ impl App {
                                 info!("Chat retry thread started for query: {}", query_clone);
 
                                 let result = match tokio::runtime::Runtime::new() {
-                                    Ok(rt) => rt.block_on(backend_clone.process_command(&query_clone)),
+                                    Ok(rt) => {
+                                        rt.block_on(backend_clone.process_command(&query_clone))
+                                    }
                                     Err(e) => Err(forge_chat::ChatError::ApiError(format!(
                                         "Runtime error: {}",
                                         e
@@ -2663,12 +2795,15 @@ impl App {
 
                                 // Send result back to UI thread
                                 match tx.send((query_clone, result)) {
-                                    Ok(_) => info!("✅ Sent retry response to UI thread via channel"),
+                                    Ok(_) => {
+                                        info!("✅ Sent retry response to UI thread via channel")
+                                    }
                                     Err(e) => info!("❌ Failed to send retry response: {:?}", e),
                                 }
                             });
                         } else {
-                            self.status_message = Some("Chat backend not available for retry".to_string());
+                            self.status_message =
+                                Some("Chat backend not available for retry".to_string());
                         }
                     }
                 } else {
@@ -2744,8 +2879,15 @@ impl App {
                 } else if self.current_view == View::Tasks {
                     // In Tasks view, navigate down through tasks
                     // Get actual task count for proper clamping (including search)
-                    let search_query = if self.task_search_mode { &self.task_search_query } else { "" };
-                    let task_count = self.data_manager.bead_manager.task_count_filtered_with_search(self.priority_filter, search_query);
+                    let search_query = if self.task_search_mode {
+                        &self.task_search_query
+                    } else {
+                        ""
+                    };
+                    let task_count = self
+                        .data_manager
+                        .bead_manager
+                        .task_count_filtered_with_search(self.priority_filter, search_query);
                     if self.selected_task_index < task_count.saturating_sub(1) {
                         self.selected_task_index += 1;
                     }
@@ -2776,11 +2918,16 @@ impl App {
                 } else if self.current_view == View::Alerts {
                     // In Alerts view, page down through alerts
                     let alert_count = self.data_manager.alert_manager.active_count();
-                    self.selected_alert_index = (self.selected_alert_index + 10).min(alert_count.saturating_sub(1));
+                    self.selected_alert_index =
+                        (self.selected_alert_index + 10).min(alert_count.saturating_sub(1));
                 } else if self.current_view == View::Tasks {
                     // In Tasks view, page down through tasks
-                    let task_count = self.data_manager.bead_manager.task_count_filtered(self.priority_filter);
-                    self.selected_task_index = (self.selected_task_index + 10).min(task_count.saturating_sub(1));
+                    let task_count = self
+                        .data_manager
+                        .bead_manager
+                        .task_count_filtered(self.priority_filter);
+                    self.selected_task_index =
+                        (self.selected_task_index + 10).min(task_count.saturating_sub(1));
                 } else {
                     self.scroll_offset += 10;
                 }
@@ -2811,7 +2958,10 @@ impl App {
                     self.selected_alert_index = alert_count.saturating_sub(1);
                 } else if self.current_view == View::Tasks {
                     // In Tasks view, go to last task
-                    let task_count = self.data_manager.bead_manager.task_count_filtered(self.priority_filter);
+                    let task_count = self
+                        .data_manager
+                        .bead_manager
+                        .task_count_filtered(self.priority_filter);
                     self.selected_task_index = task_count.saturating_sub(1);
                 } else {
                     // For other views, just reset to 0 since we don't have exact content height
@@ -2861,7 +3011,11 @@ impl App {
 
                         self.status_message = Some(format!(
                             "⏳ Processing{}...",
-                            if supports_streaming { " (streaming)" } else { "" }
+                            if supports_streaming {
+                                " (streaming)"
+                            } else {
+                                ""
+                            }
                         ));
                         self.chat_pending = true;
 
@@ -2890,7 +3044,9 @@ impl App {
                                 info!("Chat thread started for query: {}", query_clone);
 
                                 let result = match tokio::runtime::Runtime::new() {
-                                    Ok(rt) => rt.block_on(backend_clone.process_command(&query_clone)),
+                                    Ok(rt) => {
+                                        rt.block_on(backend_clone.process_command(&query_clone))
+                                    }
                                     Err(e) => Err(forge_chat::ChatError::ApiError(format!(
                                         "Runtime error: {}",
                                         e
@@ -2927,7 +3083,8 @@ impl App {
                             let alert_id = alerts[idx].id;
                             let alert_title = alerts[idx].title.clone();
                             self.data_manager.alert_manager.acknowledge(alert_id);
-                            self.status_message = Some(format!("Alert acknowledged: {}", alert_title));
+                            self.status_message =
+                                Some(format!("Alert acknowledged: {}", alert_title));
                         }
                     } else {
                         // Show alert detail overlay
@@ -3008,6 +3165,12 @@ impl App {
             }
             AppEvent::AcknowledgeAllAlerts => {
                 self.acknowledge_all_alerts();
+            }
+            AppEvent::AssignBead => {
+                self.handle_assign_bead();
+            }
+            AppEvent::UnassignBead => {
+                self.handle_unassign_bead();
             }
             AppEvent::None => {}
         }
@@ -3173,7 +3336,10 @@ impl App {
             self.send_server_client_request(ServerClientRequest::KillWorker {
                 worker_id: worker_id.to_string(),
             });
-            info!("Sent KillWorker request to server for worker: {}", worker_id);
+            info!(
+                "Sent KillWorker request to server for worker: {}",
+                worker_id
+            );
         }
 
         // First check if session exists (to handle already-dead workers gracefully)
@@ -3616,6 +3782,124 @@ impl App {
         self.mark_dirty();
     }
 
+    /// Handle bead assignment (assign selected bead to current user).
+    fn handle_assign_bead(&mut self) {
+        // Get the aggregated bead data
+        let data = self
+            .data_manager
+            .bead_manager
+            .get_filtered_aggregated_data(self.priority_filter);
+
+        // Build a flattened list of all beads with their section info
+        let mut all_beads: Vec<(String, &crate::bead::Bead, &str)> = Vec::new();
+
+        // Add in-progress beads
+        for (ws, bead) in &data.in_progress {
+            all_beads.push((ws.clone(), bead, "In Progress"));
+        }
+
+        // Add ready beads
+        for (ws, bead) in &data.ready {
+            all_beads.push((ws.clone(), bead, "Ready"));
+        }
+
+        // Add blocked beads
+        for (ws, bead) in &data.blocked {
+            all_beads.push((ws.clone(), bead, "Blocked"));
+        }
+
+        // Check if we have beads and a valid selection
+        if all_beads.is_empty() {
+            self.status_message = Some("No tasks available to assign".to_string());
+            self.mark_dirty();
+            return;
+        }
+
+        let idx = self.selected_task_index.min(all_beads.len() - 1);
+        let (_workspace, bead, _section) = &all_beads[idx];
+        let bead_id = bead.id.clone();
+        let current_user = self.current_user_id();
+
+        // Check if connected to server - send request instead of local assignment
+        if self.is_connected_to_server() {
+            self.send_server_client_request(ServerClientRequest::AssignBead {
+                bead_id: bead_id.clone(),
+                to: current_user.clone(),
+            });
+            self.status_message = Some(format!(
+                "Requested assignment of {} to {}",
+                bead_id, current_user
+            ));
+        } else {
+            // Standalone mode: show error (local assignment not implemented)
+            self.status_message = Some(
+                "Bead assignment requires server connection (not available in standalone mode)"
+                    .to_string(),
+            );
+        }
+        self.mark_dirty();
+    }
+
+    /// Handle bead unassignment (unassign selected bead).
+    fn handle_unassign_bead(&mut self) {
+        // Get the aggregated bead data
+        let data = self
+            .data_manager
+            .bead_manager
+            .get_filtered_aggregated_data(self.priority_filter);
+
+        // Build a flattened list of all beads with their section info
+        let mut all_beads: Vec<(String, &crate::bead::Bead, &str)> = Vec::new();
+
+        // Add in-progress beads
+        for (ws, bead) in &data.in_progress {
+            all_beads.push((ws.clone(), bead, "In Progress"));
+        }
+
+        // Add ready beads
+        for (ws, bead) in &data.ready {
+            all_beads.push((ws.clone(), bead, "Ready"));
+        }
+
+        // Add blocked beads
+        for (ws, bead) in &data.blocked {
+            all_beads.push((ws.clone(), bead, "Blocked"));
+        }
+
+        // Check if we have beads and a valid selection
+        if all_beads.is_empty() {
+            self.status_message = Some("No tasks available to unassign".to_string());
+            self.mark_dirty();
+            return;
+        }
+
+        let idx = self.selected_task_index.min(all_beads.len() - 1);
+        let (_workspace, bead, _section) = &all_beads[idx];
+        let bead_id = bead.id.clone();
+
+        // Check if bead is actually assigned
+        if bead.assignee.is_none() {
+            self.status_message = Some(format!("{} is not assigned", bead_id));
+            self.mark_dirty();
+            return;
+        }
+
+        // Check if connected to server - send request instead of local unassignment
+        if self.is_connected_to_server() {
+            self.send_server_client_request(ServerClientRequest::UnassignBead {
+                bead_id: bead_id.clone(),
+            });
+            self.status_message = Some(format!("Requested unassignment of {}", bead_id));
+        } else {
+            // Standalone mode: show error (local unassignment not implemented)
+            self.status_message = Some(
+                "Bead unassignment requires server connection (not available in standalone mode)"
+                    .to_string(),
+            );
+        }
+        self.mark_dirty();
+    }
+
     /// Handle kill dialog key navigation.
     fn handle_kill_dialog_key(&mut self, key: KeyEvent) {
         use crossterm::event::KeyCode;
@@ -3690,7 +3974,10 @@ impl App {
                 // Execute spawn logic
                 self.spawn_worker(executor);
             }
-            PendingAction::KillWorker { suffix: _, worker_type: _ } => {
+            PendingAction::KillWorker {
+                suffix: _,
+                worker_type: _,
+            } => {
                 // Execute kill logic - called from kill dialog after confirmation
                 self.kill_selected_worker();
             }
@@ -3823,15 +4110,21 @@ impl App {
                             match item.input_type.validate(&self.config_menu_input) {
                                 Ok(validated) => {
                                     // Apply the change to config
-                                    if self.apply_menu_item_change(menu_type, item.label, &validated) {
+                                    if self
+                                        .apply_menu_item_change(menu_type, item.label, &validated)
+                                    {
                                         // Save config to file
                                         match self.forge_config.save() {
                                             Ok(()) => {
-                                                self.status_message = Some(format!("Saved: {} = {}", item.label, validated));
+                                                self.status_message = Some(format!(
+                                                    "Saved: {} = {}",
+                                                    item.label, validated
+                                                ));
                                                 // Hot-reload will be triggered by ConfigWatcher
                                             }
                                             Err(e) => {
-                                                self.status_message = Some(format!("Error saving config: {}", e));
+                                                self.status_message =
+                                                    Some(format!("Error saving config: {}", e));
                                             }
                                         }
                                     }
@@ -3891,16 +4184,17 @@ impl App {
                 self.config_menu_input.pop();
                 self.mark_dirty();
             }
-            KeyCode::Up if !self.config_menu_editing
-                && self.config_menu_selected > 0 => {
-                    self.config_menu_selected -= 1;
-                    self.mark_dirty();
-                }
-            KeyCode::Down if !self.config_menu_editing
-                && self.config_menu_selected < item_count.saturating_sub(1) => {
-                    self.config_menu_selected += 1;
-                    self.mark_dirty();
-                }
+            KeyCode::Up if !self.config_menu_editing && self.config_menu_selected > 0 => {
+                self.config_menu_selected -= 1;
+                self.mark_dirty();
+            }
+            KeyCode::Down
+                if !self.config_menu_editing
+                    && self.config_menu_selected < item_count.saturating_sub(1) =>
+            {
+                self.config_menu_selected += 1;
+                self.mark_dirty();
+            }
             _ => {}
         }
     }
@@ -3917,11 +4211,14 @@ impl App {
             }
             crate::config_menu::ConfigInputType::Float => {
                 // Remove currency symbol and extract number
-                value.trim_start_matches('$').split_whitespace().next().unwrap_or(value).to_string()
+                value
+                    .trim_start_matches('$')
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or(value)
+                    .to_string()
             }
-            crate::config_menu::ConfigInputType::Text => {
-                value.to_string()
-            }
+            crate::config_menu::ConfigInputType::Text => value.to_string(),
             crate::config_menu::ConfigInputType::Select { .. } => {
                 // For select, return the current value as-is
                 value.to_string()
@@ -3932,7 +4229,12 @@ impl App {
     /// Apply a config change from a menu item to the appropriate field.
     ///
     /// Returns true if the change was applied, false if the field wasn't recognized.
-    fn apply_menu_item_change(&mut self, menu_type: ConfigMenuType, label: &str, value: &str) -> bool {
+    fn apply_menu_item_change(
+        &mut self,
+        menu_type: ConfigMenuType,
+        label: &str,
+        value: &str,
+    ) -> bool {
         match menu_type {
             ConfigMenuType::Settings => {
                 match label {
@@ -4013,41 +4315,39 @@ impl App {
                     _ => {}
                 }
             }
-            ConfigMenuType::Worker => {
-                match label {
-                    "Max Workers" => {
-                        if let Ok(v) = value.parse::<u64>() {
-                            self.forge_config.workers.max_workers = v.max(1);
-                            return true;
-                        }
-                    }
-                    "Default Model" => {
-                        self.forge_config.workers.default_model = value.to_lowercase();
+            ConfigMenuType::Worker => match label {
+                "Max Workers" => {
+                    if let Ok(v) = value.parse::<u64>() {
+                        self.forge_config.workers.max_workers = v.max(1);
                         return true;
                     }
-                    "Worker Timeout" => {
-                        if let Ok(v) = value.trim_end_matches(" min").parse::<i64>() {
-                            self.forge_config.auto_recovery.stuck_task_timeout_mins = v;
-                            return true;
-                        }
-                    }
-                    "Auto-Recovery" => {
-                        self.forge_config.auto_recovery.enabled = value == "enabled";
-                        return true;
-                    }
-                    "Dead Worker Policy" => {
-                        self.forge_config.auto_recovery.dead_worker_policy = value.to_string();
-                        return true;
-                    }
-                    "Max Restart Attempts" => {
-                        if let Ok(v) = value.parse::<u8>() {
-                            self.forge_config.auto_recovery.max_restart_attempts = v;
-                            return true;
-                        }
-                    }
-                    _ => {}
                 }
-            }
+                "Default Model" => {
+                    self.forge_config.workers.default_model = value.to_lowercase();
+                    return true;
+                }
+                "Worker Timeout" => {
+                    if let Ok(v) = value.trim_end_matches(" min").parse::<i64>() {
+                        self.forge_config.auto_recovery.stuck_task_timeout_mins = v;
+                        return true;
+                    }
+                }
+                "Auto-Recovery" => {
+                    self.forge_config.auto_recovery.enabled = value == "enabled";
+                    return true;
+                }
+                "Dead Worker Policy" => {
+                    self.forge_config.auto_recovery.dead_worker_policy = value.to_string();
+                    return true;
+                }
+                "Max Restart Attempts" => {
+                    if let Ok(v) = value.parse::<u8>() {
+                        self.forge_config.auto_recovery.max_restart_attempts = v;
+                        return true;
+                    }
+                }
+                _ => {}
+            },
         }
         false
     }
@@ -4141,7 +4441,7 @@ impl App {
             };
 
             rt.block_on(async {
-                use forge_core::self_update::{check_for_update, perform_update, UpdateStatus};
+                use forge_core::self_update::{UpdateStatus, check_for_update, perform_update};
 
                 // Check for updates
                 let status = match check_for_update(&current_version).await {
@@ -4167,13 +4467,18 @@ impl App {
                         expected_checksum,
                     } => {
                         // Perform the update without progress callback (download is typically fast)
-                        let result = perform_update(&download_url, asset_size, &expected_checksum, None).await;
+                        let result =
+                            perform_update(&download_url, asset_size, &expected_checksum, None)
+                                .await;
 
                         match result {
-                            Ok(forge_core::self_update::UpdateResult::Success { old_version, new_version }) => {
+                            Ok(forge_core::self_update::UpdateResult::Success {
+                                old_version,
+                                new_version,
+                            }) => {
                                 let _ = tx_result.send(UpdateResult::Success {
                                     old_version,
-                                    new_version,  // Use the version from the result
+                                    new_version, // Use the version from the result
                                 });
                             }
                             Ok(forge_core::self_update::UpdateResult::AlreadyUpToDate) => {
@@ -4183,10 +4488,8 @@ impl App {
                                 let _ = tx_result.send(UpdateResult::Failed(err));
                             }
                             Err(e) => {
-                                let _ = tx_result.send(UpdateResult::Failed(format!(
-                                    "Update failed: {}",
-                                    e
-                                )));
+                                let _ = tx_result
+                                    .send(UpdateResult::Failed(format!("Update failed: {}", e)));
                             }
                         }
                     }
@@ -4226,8 +4529,10 @@ impl App {
                         self.should_quit = true;
                     }
                     UpdateResult::AlreadyUpToDate => {
-                        self.status_message =
-                            Some(format!("Already running latest version v{}", env!("CARGO_PKG_VERSION")));
+                        self.status_message = Some(format!(
+                            "Already running latest version v{}",
+                            env!("CARGO_PKG_VERSION")
+                        ));
                     }
                     UpdateResult::Failed(err) => {
                         self.status_message = Some(format!("Update failed: {}", err));
@@ -4299,7 +4604,10 @@ impl App {
     pub fn run_with_client(config: ClientConfig) -> AppResult<()> {
         use tokio::runtime::Runtime;
 
-        info!("Starting FORGE in client mode, connecting to {}", config.server_url);
+        info!(
+            "Starting FORGE in client mode, connecting to {}",
+            config.server_url
+        );
 
         // Create tokio runtime for async WebSocket client
         let rt = Runtime::new()
@@ -4316,7 +4624,14 @@ impl App {
 
         // Spawn background task for WebSocket client
         rt.spawn(async move {
-            Self::run_client_background_task(server_url, user_id, password, request_rx, response_tx).await;
+            Self::run_client_background_task(
+                server_url,
+                user_id,
+                password,
+                request_rx,
+                response_tx,
+            )
+            .await;
         });
 
         // Create app with client mode enabled
@@ -4416,36 +4731,53 @@ impl App {
         tokio::spawn(async move {
             while let Ok(server_msg) = state_rx.recv().await {
                 let tui_msg = match server_msg {
-                    ServerMessage::Welcome { session, server_info: _ } => {
-                        ServerClientMessage::Connected {
-                            session,
-                            server_url: server_url_clone.clone(),
-                        }
-                    }
-                    ServerMessage::StateUpdate(update) => {
-                        ServerClientMessage::StateUpdate {
-                            workers: update.workers,
-                            beads: update.beads,
-                            costs: update.costs,
-                            sessions: update.sessions,
-                        }
-                    }
-                    ServerMessage::UserJoined { user, display_name, role } => {
-                        ServerClientMessage::UserJoined { user, display_name, role }
-                    }
-                    ServerMessage::UserLeft { user } => {
-                        ServerClientMessage::UserLeft { user }
-                    }
-                    ServerMessage::BeadAssigned { bead_id, assigned_to, assigned_by } => {
-                        ServerClientMessage::BeadAssigned { bead_id, assigned_to, assigned_by }
-                    }
-                    ServerMessage::ChatMessage { from, message, timestamp } => {
-                        ServerClientMessage::ChatMessage { from, message, timestamp }
-                    }
+                    ServerMessage::Welcome {
+                        session,
+                        server_info: _,
+                    } => ServerClientMessage::Connected {
+                        session,
+                        server_url: server_url_clone.clone(),
+                    },
+                    ServerMessage::StateUpdate(update) => ServerClientMessage::StateUpdate {
+                        workers: update.workers,
+                        beads: update.beads,
+                        costs: update.costs,
+                        sessions: update.sessions,
+                    },
+                    ServerMessage::UserJoined {
+                        user,
+                        display_name,
+                        role,
+                    } => ServerClientMessage::UserJoined {
+                        user,
+                        display_name,
+                        role,
+                    },
+                    ServerMessage::UserLeft { user } => ServerClientMessage::UserLeft { user },
+                    ServerMessage::BeadAssigned {
+                        bead_id,
+                        assigned_to,
+                        assigned_by,
+                    } => ServerClientMessage::BeadAssigned {
+                        bead_id,
+                        assigned_to,
+                        assigned_by,
+                    },
+                    ServerMessage::ChatMessage {
+                        from,
+                        message,
+                        timestamp,
+                    } => ServerClientMessage::ChatMessage {
+                        from,
+                        message,
+                        timestamp,
+                    },
                     ServerMessage::Error { message } => {
                         ServerClientMessage::ConnectionError { message }
                     }
-                    ServerMessage::Ping | ServerMessage::WorkerChanged { .. } | ServerMessage::BeadChanged { .. } => {
+                    ServerMessage::Ping
+                    | ServerMessage::WorkerChanged { .. }
+                    | ServerMessage::BeadChanged { .. } => {
                         // These are handled internally or don't need TUI notification
                         continue;
                     }
@@ -4491,7 +4823,10 @@ impl App {
     }
 
     /// The inner event loop with frame-rate limiting and server client support.
-    fn run_loop_with_client(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> AppResult<()> {
+    fn run_loop_with_client(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    ) -> AppResult<()> {
         // Memory update interval (every 60 frames = ~1 second at 60fps)
         let mut memory_update_counter: u32 = 0;
         const MEMORY_UPDATE_INTERVAL: u32 = 60;
@@ -4586,7 +4921,8 @@ impl App {
             let event_loop_us = frame_elapsed.as_micros() as u64 - render_us;
 
             // Record frame performance metrics
-            self.data_manager.record_frame_perf(event_loop_us, render_us);
+            self.data_manager
+                .record_frame_perf(event_loop_us, render_us);
 
             // Periodically update memory usage
             memory_update_counter += 1;
@@ -4632,7 +4968,10 @@ impl App {
     /// Handle a message from the server client.
     fn handle_server_client_message(&mut self, msg: ServerClientMessage) {
         match msg {
-            ServerClientMessage::Connected { session, server_url } => {
+            ServerClientMessage::Connected {
+                session,
+                server_url,
+            } => {
                 self.is_server_connected = true;
                 self.user_session = Some(session.clone());
                 self.server_url = Some(server_url.clone());
@@ -4641,25 +4980,44 @@ impl App {
                     server_url, session.display_name, session.role
                 ));
             }
-            ServerClientMessage::StateUpdate { workers, beads, costs, sessions } => {
+            ServerClientMessage::StateUpdate {
+                workers,
+                beads,
+                costs,
+                sessions,
+            } => {
                 // Update data manager with server state
-                self.data_manager.update_from_server_state(workers, beads, costs, sessions);
+                self.data_manager
+                    .update_from_server_state(workers, beads, costs, sessions);
             }
-            ServerClientMessage::UserJoined { user, display_name, role } => {
-                self.sessions_panel.add_user(user, display_name.clone(), role);
+            ServerClientMessage::UserJoined {
+                user,
+                display_name,
+                role,
+            } => {
+                self.sessions_panel
+                    .add_user(user, display_name.clone(), role);
                 self.status_message = Some(format!("{} ({}) joined", display_name, role));
             }
             ServerClientMessage::UserLeft { user } => {
                 self.sessions_panel.remove_user(&user);
                 self.status_message = Some(format!("{} left", user));
             }
-            ServerClientMessage::BeadAssigned { bead_id, assigned_to, assigned_by } => {
+            ServerClientMessage::BeadAssigned {
+                bead_id,
+                assigned_to,
+                assigned_by,
+            } => {
                 self.status_message = Some(format!(
                     "Bead {} assigned to {} by {}",
                     bead_id, assigned_to, assigned_by
                 ));
             }
-            ServerClientMessage::ChatMessage { from, message, timestamp: _ } => {
+            ServerClientMessage::ChatMessage {
+                from,
+                message,
+                timestamp: _,
+            } => {
                 // Add chat message from another user
                 self.chat_history.push(ChatExchange {
                     user_query: format!("[{}] {}", from, message),
@@ -4697,7 +5055,10 @@ impl App {
     }
 
     /// The inner event loop with frame-rate limiting and optimized polling.
-    fn run_inner(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> AppResult<()> {
+    fn run_inner(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    ) -> AppResult<()> {
         // Memory update interval (every 60 frames = ~1 second at 60fps)
         let mut memory_update_counter: u32 = 0;
         const MEMORY_UPDATE_INTERVAL: u32 = 60;
@@ -4796,7 +5157,8 @@ impl App {
             let event_loop_us = frame_elapsed.as_micros() as u64 - render_us;
 
             // Record frame performance metrics
-            self.data_manager.record_frame_perf(event_loop_us, render_us);
+            self.data_manager
+                .record_frame_perf(event_loop_us, render_us);
 
             // Periodically update memory usage
             memory_update_counter += 1;
@@ -4980,7 +5342,13 @@ impl App {
         };
 
         // Calculate spacing to right-align timestamp, dimensions, alert badge, error indicator, and status
-        let right_content_len = now.len() + 2 + dimensions.len() + 2 + alert_text.len() + error_text.len() + status_text.len();
+        let right_content_len = now.len()
+            + 2
+            + dimensions.len()
+            + 2
+            + alert_text.len()
+            + error_text.len()
+            + status_text.len();
         let spacing = area
             .width
             .saturating_sub(title_len as u16 + right_content_len as u16 + 2)
@@ -5002,18 +5370,27 @@ impl App {
 
         // Add error indicator if there are unacknowledged errors
         if !error_text.is_empty() {
-            header_spans.push(Span::styled(&error_text, Style::default().fg(theme.colors.status_error).add_modifier(Modifier::BOLD)));
+            header_spans.push(Span::styled(
+                &error_text,
+                Style::default()
+                    .fg(theme.colors.status_error)
+                    .add_modifier(Modifier::BOLD),
+            ));
         }
 
         // Add alert badge if there are alerts
         if alert_badge.should_display() {
-            header_spans.push(Span::styled(&alert_text, Style::default().fg(alert_color).add_modifier(Modifier::BOLD)));
+            header_spans.push(Span::styled(
+                &alert_text,
+                Style::default()
+                    .fg(alert_color)
+                    .add_modifier(Modifier::BOLD),
+            ));
         }
 
         header_spans.push(Span::styled(status_text, Style::default().fg(status_color)));
 
-        let header = Paragraph::new(Line::from(header_spans))
-        .block(
+        let header = Paragraph::new(Line::from(header_spans)).block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(theme.colors.border_dim)),
@@ -5142,7 +5519,10 @@ impl App {
             .split(columns[2]);
 
         // Left column: Workers + Subscriptions
-        let worker_summary = self.data_manager.worker_data.format_worker_pool_summary_with_paused(self.paused_workers.len());
+        let worker_summary = self
+            .data_manager
+            .worker_data
+            .format_worker_pool_summary_with_paused(self.paused_workers.len());
         self.draw_panel(
             frame,
             left_panels[0],
@@ -5212,7 +5592,10 @@ impl App {
             .split(chunks[0]);
 
         // Use real worker data
-        let worker_summary = self.data_manager.worker_data.format_worker_pool_summary_with_paused(self.paused_workers.len());
+        let worker_summary = self
+            .data_manager
+            .worker_data
+            .format_worker_pool_summary_with_paused(self.paused_workers.len());
 
         self.draw_panel(
             frame,
@@ -5277,7 +5660,10 @@ impl App {
             .split(area);
 
         // Worker Pool (primary focus)
-        let worker_summary = self.data_manager.worker_data.format_worker_pool_summary_with_paused(self.paused_workers.len());
+        let worker_summary = self
+            .data_manager
+            .worker_data
+            .format_worker_pool_summary_with_paused(self.paused_workers.len());
         self.draw_panel(
             frame,
             chunks[0],
@@ -5394,7 +5780,10 @@ impl App {
 
         // Update panel title with search indicator
         let title = if self.task_search_mode && !self.task_search_query.is_empty() {
-            format!("Task Queue & Bead Management [Search: \"{}\"]", self.task_search_query)
+            format!(
+                "Task Queue & Bead Management [Search: \"{}\"]",
+                self.task_search_query
+            )
         } else if self.task_search_mode {
             "Task Queue & Bead Management [Search active]".to_string()
         } else {
@@ -5508,9 +5897,7 @@ impl App {
             let badge = self.data_manager.alert_badge();
             let header = format!(
                 "Active Alerts: {} critical | {} warning | {} total",
-                badge.critical,
-                badge.warning,
-                badge.total
+                badge.critical, badge.warning, badge.total
             );
             list_lines.push(Line::styled(
                 header,
@@ -5851,7 +6238,9 @@ impl App {
                         lines.push(Line::raw("")); // Blank line
                         lines.push(Line::styled(
                             "  💡 Suggested Action:",
-                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
                         ));
                         for guidance_line in guidance.lines() {
                             lines.push(Line::styled(
@@ -5921,7 +6310,9 @@ impl App {
                     // Simple adaptive confirmation box - no fixed width borders
                     lines.push(Line::styled(
                         "  ⚠️  CONFIRMATION REQUIRED",
-                        Style::default().fg(level_color).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(level_color)
+                            .add_modifier(Modifier::BOLD),
                     ));
                     lines.push(Line::styled(
                         format!("  ─ {}", confirmation.title),
@@ -5978,7 +6369,9 @@ impl App {
 
                     lines.push(Line::styled(
                         "  → Type 'yes' to confirm or 'no' to cancel",
-                        Style::default().fg(level_color).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(level_color)
+                            .add_modifier(Modifier::BOLD),
                     ));
                 }
 
@@ -6074,10 +6467,18 @@ impl App {
         // Account for text wrapping: each logical Line may occupy multiple visual rows.
         let inner_width = chunks[0].width.saturating_sub(2); // subtract left/right borders
         let total_visual_lines: u16 = if inner_width > 0 {
-            history_text.lines.iter().map(|line| {
-                let w = line.width() as u16;
-                if w == 0 { 1u16 } else { w.div_ceil(inner_width) }
-            }).sum()
+            history_text
+                .lines
+                .iter()
+                .map(|line| {
+                    let w = line.width() as u16;
+                    if w == 0 {
+                        1u16
+                    } else {
+                        w.div_ceil(inner_width)
+                    }
+                })
+                .sum()
         } else {
             history_text.lines.len() as u16
         };
@@ -6165,7 +6566,6 @@ impl App {
         self.sessions_panel.draw(frame, area, layout_mode, focused);
     }
 
-
     /// Draw a panel with optional highlight.
     fn draw_panel(&self, frame: &mut Frame, area: Rect, title: &str, content: &str, focused: bool) {
         let theme = self.theme_manager.current();
@@ -6212,7 +6612,10 @@ impl App {
                     .borders(Borders::ALL)
                     .border_type(border_type)
                     .border_style(border_style)
-                    .title(Span::styled(format!(" {} {} ", focus_icon, title), title_style)),
+                    .title(Span::styled(
+                        format!(" {} {} ", focus_icon, title),
+                        title_style,
+                    )),
             )
             .wrap(Wrap { trim: false });
 
@@ -6421,10 +6824,16 @@ Press any key to close this help.";
         let (title, message, _action_text) = match &self.pending_action {
             Some(PendingAction::SpawnWorker(executor)) => (
                 " Spawn Worker ",
-                format!("Are you sure you want to spawn a {} worker?", executor.name()),
+                format!(
+                    "Are you sure you want to spawn a {} worker?",
+                    executor.name()
+                ),
                 "spawn",
             ),
-            Some(PendingAction::KillWorker { suffix, worker_type }) => (
+            Some(PendingAction::KillWorker {
+                suffix,
+                worker_type,
+            }) => (
                 " Kill Worker ",
                 format!(
                     "Are you sure you want to kill worker {} ({})?",
@@ -6494,20 +6903,37 @@ Press any key to close this help.";
         // Instructions with [y] Yes / [n] No / [Esc] Cancel format
         lines.push(Line::from(vec![
             Span::styled("[", Style::default().fg(theme.colors.text_dim)),
-            Span::styled("y", Style::default().fg(theme.colors.hotkey).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "y",
+                Style::default()
+                    .fg(theme.colors.hotkey)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("] Yes  ", Style::default().fg(theme.colors.text_dim)),
             Span::styled("[", Style::default().fg(theme.colors.text_dim)),
-            Span::styled("n", Style::default().fg(theme.colors.hotkey).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "n",
+                Style::default()
+                    .fg(theme.colors.hotkey)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("] No  ", Style::default().fg(theme.colors.text_dim)),
             Span::styled("[", Style::default().fg(theme.colors.text_dim)),
-            Span::styled("Esc", Style::default().fg(theme.colors.hotkey).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Esc",
+                Style::default()
+                    .fg(theme.colors.hotkey)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("] Cancel", Style::default().fg(theme.colors.text_dim)),
         ]));
 
         // Determine border color based on action type
         let border_color = match &self.pending_action {
-            Some(PendingAction::PauseWorker { .. }) | Some(PendingAction::PauseAllWorkers { .. }) => Color::Yellow,
-            Some(PendingAction::ResumeWorker { .. }) | Some(PendingAction::ResumeAllWorkers { .. }) => Color::Green,
+            Some(PendingAction::PauseWorker { .. })
+            | Some(PendingAction::PauseAllWorkers { .. }) => Color::Yellow,
+            Some(PendingAction::ResumeWorker { .. })
+            | Some(PendingAction::ResumeAllWorkers { .. }) => Color::Green,
             Some(PendingAction::KillWorker { .. }) => Color::Red,
             Some(PendingAction::SpawnWorker(_)) => Color::Cyan,
             None => theme.colors.border_dim,
@@ -6520,7 +6946,9 @@ Press any key to close this help.";
                     .border_style(Style::default().fg(border_color))
                     .title(Span::styled(
                         title,
-                        Style::default().fg(border_color).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(border_color)
+                            .add_modifier(Modifier::BOLD),
                     ))
                     .style(Style::default().bg(Color::Black)),
             )
@@ -6798,7 +7226,10 @@ Press any key to close this help.";
         };
 
         // Get error message or use default
-        let error_detail = self.network_error_message.as_deref().unwrap_or("Network unreachable");
+        let error_detail = self
+            .network_error_message
+            .as_deref()
+            .unwrap_or("Network unreachable");
 
         let banner_text = format!("📡 {}{} | Press 'r' to retry", error_detail, duration_text);
         let banner = Paragraph::new(banner_text)
@@ -6895,7 +7326,11 @@ Press any key to close this help.";
                 Span::raw("    "),
                 Span::styled("Status: ", Style::default().fg(theme.colors.text_dim)),
                 Span::styled(
-                    if alert.acknowledged { "Acknowledged" } else { "Active" },
+                    if alert.acknowledged {
+                        "Acknowledged"
+                    } else {
+                        "Active"
+                    },
                     Style::default().fg(if alert.acknowledged {
                         Color::DarkGray
                     } else {
@@ -6907,7 +7342,10 @@ Press any key to close this help.";
             // Alert type
             lines.push(Line::from(vec![
                 Span::styled("Type: ", Style::default().fg(theme.colors.text_dim)),
-                Span::styled(alert.alert_type.title(), Style::default().fg(theme.colors.text)),
+                Span::styled(
+                    alert.alert_type.title(),
+                    Style::default().fg(theme.colors.text),
+                ),
             ]));
 
             // Worker ID
@@ -6965,14 +7403,30 @@ Press any key to close this help.";
 
             // Suggested action based on alert type
             let suggested_action = match alert.alert_type {
-                AlertType::WorkerCrashed => "Check worker logs, verify process health, consider restarting worker",
-                AlertType::WorkerZombie => "Kill zombie process, investigate parent process, restart worker",
-                AlertType::WorkerStale => "Check if worker is stuck, verify network connectivity, restart if needed",
-                AlertType::TaskStuck => "Review current task, check for deadlocks, consider timeout/kill",
-                AlertType::MemoryHigh => "Check for memory leaks, restart worker, monitor resource usage",
-                AlertType::WorkerUnresponsive => "Verify network, check process health, restart if unresponsive",
-                AlertType::AutoRestartTriggered => "Monitor restart progress, check logs for failure patterns",
-                AlertType::RecoveryExhausted => "Manual intervention required - check system logs and worker health",
+                AlertType::WorkerCrashed => {
+                    "Check worker logs, verify process health, consider restarting worker"
+                }
+                AlertType::WorkerZombie => {
+                    "Kill zombie process, investigate parent process, restart worker"
+                }
+                AlertType::WorkerStale => {
+                    "Check if worker is stuck, verify network connectivity, restart if needed"
+                }
+                AlertType::TaskStuck => {
+                    "Review current task, check for deadlocks, consider timeout/kill"
+                }
+                AlertType::MemoryHigh => {
+                    "Check for memory leaks, restart worker, monitor resource usage"
+                }
+                AlertType::WorkerUnresponsive => {
+                    "Verify network, check process health, restart if unresponsive"
+                }
+                AlertType::AutoRestartTriggered => {
+                    "Monitor restart progress, check logs for failure patterns"
+                }
+                AlertType::RecoveryExhausted => {
+                    "Manual intervention required - check system logs and worker health"
+                }
                 AlertType::WorkerRecovered => "No action needed - worker has recovered",
                 AlertType::WorkerSpawned => "Monitor new worker - verify it starts correctly",
             };
@@ -7008,7 +7462,10 @@ Press any key to close this help.";
                 "Resolved - worker has recovered"
             };
             lines.push(Line::from(vec![
-                Span::styled("Recovery Status: ", Style::default().fg(theme.colors.text_dim)),
+                Span::styled(
+                    "Recovery Status: ",
+                    Style::default().fg(theme.colors.text_dim),
+                ),
                 Span::styled(
                     recovery_status,
                     Style::default().fg(if alert.is_active {
@@ -7117,10 +7574,7 @@ Press any key to close this help.";
             progress_percent
         );
 
-        let content = format!(
-            "\n  {}\n\n  {}\n  ",
-            status_text, progress_bar
-        );
+        let content = format!("\n  {}\n\n  {}\n  ", status_text, progress_bar);
 
         let overlay = Paragraph::new(content)
             .style(
