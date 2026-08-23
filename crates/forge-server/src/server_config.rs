@@ -305,4 +305,349 @@ mod tests {
         assert_eq!(tls.verify, false);
         assert_eq!(tls.min_version, "TLSv1.3");
     }
+
+    #[test]
+    fn test_partial_tls_config_cert_only_rejected() {
+        // When only certificate is provided, TLS config should be None
+        let yaml = ServerYamlConfig {
+            server: Some(ServerSection {
+                bind_address: None,
+                port: None,
+                tls: Some(TlsSection {
+                    enabled: Some(true),
+                    cert_path: Some("/path/to/cert.pem".to_string()),
+                    key_path: None, // Missing key
+                    verify: Some(true),
+                    min_version: Some("TLSv1.2".to_string()),
+                }),
+            }),
+        };
+
+        let server_config: ServerConfig = yaml.into();
+        // Partial configuration is rejected - TLS should be None
+        assert!(server_config.tls.is_none(), "TLS config should be None when only cert is provided");
+    }
+
+    #[test]
+    fn test_partial_tls_config_key_only_rejected() {
+        // When only private key is provided, TLS config should be None
+        let yaml = ServerYamlConfig {
+            server: Some(ServerSection {
+                bind_address: None,
+                port: None,
+                tls: Some(TlsSection {
+                    enabled: Some(true),
+                    cert_path: None, // Missing cert
+                    key_path: Some("/path/to/key.pem".to_string()),
+                    verify: Some(true),
+                    min_version: Some("TLSv1.2".to_string()),
+                }),
+            }),
+        };
+
+        let server_config: ServerConfig = yaml.into();
+        // Partial configuration is rejected - TLS should be None
+        assert!(server_config.tls.is_none(), "TLS config should be None when only key is provided");
+    }
+
+    #[test]
+    fn test_tls_disabled_when_no_cert_or_key() {
+        // When neither cert nor key is provided, TLS should be disabled (None)
+        let yaml = ServerYamlConfig {
+            server: Some(ServerSection {
+                bind_address: None,
+                port: None,
+                tls: Some(TlsSection {
+                    enabled: Some(true), // Even if enabled is true
+                    cert_path: None,    // No cert provided
+                    key_path: None,     // No key provided
+                    verify: Some(true),
+                    min_version: Some("TLSv1.2".to_string()),
+                }),
+            }),
+        };
+
+        let server_config: ServerConfig = yaml.into();
+        assert!(server_config.tls.is_none(), "TLS config should be None when no cert or key is provided");
+    }
+
+    #[test]
+    fn test_tls_disabled_when_tls_section_absent() {
+        // When TLS section is completely absent, server should work without TLS
+        let yaml = ServerYamlConfig {
+            server: Some(ServerSection {
+                bind_address: Some("0.0.0.0".to_string()),
+                port: Some(9000),
+                tls: None, // No TLS section at all
+            }),
+        };
+
+        let server_config: ServerConfig = yaml.into();
+        assert_eq!(server_config.bind_address, "0.0.0.0");
+        assert_eq!(server_config.port, 9000);
+        assert!(server_config.tls.is_none(), "TLS config should be None when TLS section is absent");
+    }
+
+    #[test]
+    fn test_tls_enabled_by_valid_config() {
+        // When both cert and key are provided, TLS should be enabled
+        let yaml = ServerYamlConfig {
+            server: Some(ServerSection {
+                bind_address: None,
+                port: None,
+                tls: Some(TlsSection {
+                    enabled: Some(true),
+                    cert_path: Some("/valid/cert.pem".to_string()),
+                    key_path: Some("/valid/key.pem".to_string()),
+                    verify: Some(true),
+                    min_version: Some("TLSv1.2".to_string()),
+                }),
+            }),
+        };
+
+        let server_config: ServerConfig = yaml.into();
+        assert!(server_config.tls.is_some(), "TLS config should be Some when both cert and key are provided");
+
+        let tls = server_config.tls.unwrap();
+        assert_eq!(tls.cert_path, "/valid/cert.pem");
+        assert_eq!(tls.key_path, "/valid/key.pem");
+        assert_eq!(tls.verify, true);
+        assert_eq!(tls.min_version, "TLSv1.2");
+    }
+
+    #[test]
+    fn test_tls_defaults_when_verify_and_min_version_not_provided() {
+        // When cert and key are provided but verify/min_version are not, defaults should be used
+        let yaml = ServerYamlConfig {
+            server: Some(ServerSection {
+                bind_address: None,
+                port: None,
+                tls: Some(TlsSection {
+                    enabled: Some(true),
+                    cert_path: Some("/path/to/cert.pem".to_string()),
+                    key_path: Some("/path/to/key.pem".to_string()),
+                    verify: None,       // Should default to true
+                    min_version: None,  // Should default to "TLSv1.2"
+                }),
+            }),
+        };
+
+        let server_config: ServerConfig = yaml.into();
+        assert!(server_config.tls.is_some());
+
+        let tls = server_config.tls.unwrap();
+        assert_eq!(tls.verify, true, "verify should default to true");
+        assert_eq!(tls.min_version, "TLSv1.2", "min_version should default to TLSv1.2");
+    }
+
+    #[test]
+    fn test_merge_cli_tls_enabled_without_cert_key_rejected() {
+        // When TLS is enabled via CLI but cert/key are not provided, should not enable TLS
+        let yaml = ServerYamlConfig {
+            server: Some(ServerSection {
+                bind_address: Some("127.0.0.1".to_string()),
+                port: Some(8080),
+                tls: None, // No TLS in YAML
+            }),
+        };
+
+        let merged = merge_config_with_cli_overrides(
+            Some(yaml),
+            None,
+            None,
+            Some(true),  // TLS enabled via CLI
+            None,        // But no cert provided
+            None,        // And no key provided
+            None,
+            None,
+        );
+
+        // Should not enable TLS without both cert and key
+        assert!(merged.tls.is_none(), "TLS should not be enabled without both cert and key");
+    }
+
+    #[test]
+    fn test_merge_cli_partial_cert_only_rejected() {
+        // When only cert is provided via CLI, TLS should not be enabled
+        let yaml = ServerYamlConfig {
+            server: None,
+        };
+
+        let merged = merge_config_with_cli_overrides(
+            Some(yaml),
+            None,
+            None,
+            None,
+            Some("/path/to/cert.pem".to_string()), // Cert provided
+            None,                                  // But no key
+            None,
+            None,
+        );
+
+        // Partial config rejected
+        assert!(merged.tls.is_none(), "TLS should not be enabled with only cert provided");
+    }
+
+    #[test]
+    fn test_merge_cli_partial_key_only_rejected() {
+        // When only key is provided via CLI, TLS should not be enabled
+        let yaml = ServerYamlConfig {
+            server: None,
+        };
+
+        let merged = merge_config_with_cli_overrides(
+            Some(yaml),
+            None,
+            None,
+            None,
+            None,                                  // No cert
+            Some("/path/to/key.pem".to_string()),  // Key provided
+            None,
+            None,
+        );
+
+        // Partial config rejected
+        assert!(merged.tls.is_none(), "TLS should not be enabled with only key provided");
+    }
+
+    #[test]
+    fn test_merge_cli_valid_tls_config() {
+        // When both cert and key are provided via CLI, TLS should be enabled
+        let yaml = ServerYamlConfig {
+            server: Some(ServerSection {
+                bind_address: Some("127.0.0.1".to_string()),
+                port: Some(8080),
+                tls: None,
+            }),
+        };
+
+        let merged = merge_config_with_cli_overrides(
+            Some(yaml),
+            None,
+            None,
+            None,
+            Some("/cli/cert.pem".to_string()),
+            Some("/cli/key.pem".to_string()),
+            Some(false), // Don't verify
+            Some("TLSv1.3".to_string()),
+        );
+
+        assert!(merged.tls.is_some(), "TLS should be enabled when both cert and key are provided via CLI");
+
+        let tls = merged.tls.unwrap();
+        assert_eq!(tls.cert_path, "/cli/cert.pem");
+        assert_eq!(tls.key_path, "/cli/key.pem");
+        assert_eq!(tls.verify, false);
+        assert_eq!(tls.min_version, "TLSv1.3");
+    }
+
+    #[test]
+    fn test_merge_cli_tls_disabled_overrides_yaml() {
+        // When TLS is explicitly disabled via CLI, it should override YAML TLS config
+        let yaml = ServerYamlConfig {
+            server: Some(ServerSection {
+                bind_address: None,
+                port: None,
+                tls: Some(TlsSection {
+                    enabled: Some(true),
+                    cert_path: Some("/yaml/cert.pem".to_string()),
+                    key_path: Some("/yaml/key.pem".to_string()),
+                    verify: Some(true),
+                    min_version: Some("TLSv1.2".to_string()),
+                }),
+            }),
+        };
+
+        let merged = merge_config_with_cli_overrides(
+            Some(yaml),
+            None,
+            None,
+            Some(false), // TLS explicitly disabled via CLI
+            None,
+            None,
+            None,
+            None,
+        );
+
+        // CLI disable should override YAML
+        assert!(merged.tls.is_none(), "CLI TLS disable should override YAML TLS config");
+    }
+
+    #[test]
+    fn test_merge_cli_tls_enabled_with_yaml_defaults() {
+        // When TLS is enabled via CLI with cert/key, verify/min_version should use defaults if not provided
+        let yaml = ServerYamlConfig {
+            server: None,
+        };
+
+        let merged = merge_config_with_cli_overrides(
+            Some(yaml),
+            None,
+            None,
+            None, // No explicit TLS enabled flag
+            Some("/cert.pem".to_string()),
+            Some("/key.pem".to_string()),
+            None, // verify not provided - should use default
+            None, // min_version not provided - should use default
+        );
+
+        assert!(merged.tls.is_some());
+        let tls = merged.tls.unwrap();
+        assert_eq!(tls.verify, true, "verify should default to true");
+        assert_eq!(tls.min_version, "TLSv1.2", "min_version should default to TLSv1.2");
+    }
+
+    #[test]
+    fn test_yaml_tls_with_defaults_used_when_cli_override_partial() {
+        // When CLI provides cert/key but not verify/min_version, should use YAML values
+        let yaml = ServerYamlConfig {
+            server: Some(ServerSection {
+                bind_address: None,
+                port: None,
+                tls: Some(TlsSection {
+                    enabled: Some(true),
+                    cert_path: Some("/yaml/cert.pem".to_string()),
+                    key_path: Some("/yaml/key.pem".to_string()),
+                    verify: Some(false),
+                    min_version: Some("TLSv1.3".to_string()),
+                }),
+            }),
+        };
+
+        let merged = merge_config_with_cli_overrides(
+            Some(yaml),
+            None,
+            None,
+            None,
+            Some("/cli/cert.pem".to_string()),
+            Some("/cli/key.pem".to_string()),
+            None, // Don't override verify
+            None, // Don't override min_version
+        );
+
+        assert!(merged.tls.is_some());
+        let tls = merged.tls.unwrap();
+        // Should use YAML defaults for verify and min_version
+        assert_eq!(tls.verify, false, "Should use YAML verify value");
+        assert_eq!(tls.min_version, "TLSv1.3", "Should use YAML min_version value");
+    }
+
+    #[test]
+    fn test_no_yaml_config_with_defaults() {
+        // When no YAML config is provided, should use all defaults
+        let merged = merge_config_with_cli_overrides(
+            None, // No YAML config
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(merged.bind_address, "127.0.0.1");
+        assert_eq!(merged.port, 8080);
+        assert!(merged.tls.is_none(), "TLS should be disabled by default");
+    }
 }

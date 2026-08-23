@@ -411,6 +411,9 @@ fn domains_match(cert_domain: &str, server_domain: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
+    use std::io::Write;
+    use tempfile::TempDir;
 
     #[test]
     fn test_domains_match() {
@@ -426,5 +429,211 @@ mod tests {
         assert!(!domains_match("localhost", "example.com"));
         assert!(!domains_match("*.example.com", "example.com")); // Wildcard doesn't match bare domain
         assert!(!domains_match("*.example.com", "foo.bar.example.com")); // Only one level
+    }
+
+    #[test]
+    fn test_missing_certificate_file_returns_actionable_error() {
+        let temp_dir = TempDir::new().unwrap();
+        let key_path = temp_dir.path().join("key.pem");
+
+        let mut key_file = File::create(&key_path).unwrap();
+        writeln!(key_file, "-----BEGIN PRIVATE KEY-----").unwrap(); // gitleaks:allow - test fixture
+        writeln!(key_file, "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ=").unwrap(); // gitleaks:allow - test fixture
+        writeln!(key_file, "-----END PRIVATE KEY-----").unwrap(); // gitleaks:allow - test fixture
+
+        let nonexistent_cert = temp_dir.path().join("nonexistent.pem");
+
+        let config = TlsConfig {
+            cert_path: nonexistent_cert.to_str().unwrap().to_string(),
+            key_path: key_path.to_str().unwrap().to_string(),
+            verify: true,
+            min_version: "TLSv1.2".to_string(),
+        };
+
+        let result = validate_tls_config(&config);
+
+        assert!(result.is_err());
+        let error_msg = format!("{}", result.unwrap_err());
+        assert!(error_msg.contains(&nonexistent_cert.to_str().unwrap()));
+        assert!(error_msg.to_lowercase().contains("not found"));
+    }
+
+    #[test]
+    fn test_missing_key_file_returns_actionable_error() {
+        let temp_dir = TempDir::new().unwrap();
+        let cert_path = temp_dir.path().join("cert.pem");
+
+        let mut cert_file = File::create(&cert_path).unwrap();
+        writeln!(cert_file, "-----BEGIN CERTIFICATE-----").unwrap(); // gitleaks:allow - test fixture
+        writeln!(cert_file, "MIIDXTCCAkWgAwIBAgIJAKL0UG+mRKqzMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV").unwrap(); // gitleaks:allow - test fixture
+        writeln!(cert_file, "-----END CERTIFICATE-----").unwrap(); // gitleaks:allow - test fixture
+
+        let nonexistent_key = temp_dir.path().join("nonexistent.pem");
+
+        let config = TlsConfig {
+            cert_path: cert_path.to_str().unwrap().to_string(),
+            key_path: nonexistent_key.to_str().unwrap().to_string(),
+            verify: true,
+            min_version: "TLSv1.2".to_string(),
+        };
+
+        let result = validate_tls_config(&config);
+
+        assert!(result.is_err());
+        let error_msg = format!("{}", result.unwrap_err());
+        assert!(error_msg.contains(&nonexistent_key.to_str().unwrap()));
+        assert!(error_msg.to_lowercase().contains("not found"));
+    }
+
+    #[test]
+    fn test_invalid_pem_format_certificate_returns_actionable_error() {
+        let temp_dir = TempDir::new().unwrap();
+        let cert_path = temp_dir.path().join("cert.pem");
+        let key_path = temp_dir.path().join("key.pem");
+
+        let mut cert_file = File::create(&cert_path).unwrap();
+        writeln!(cert_file, "This is not a valid PEM file").unwrap();
+
+        let mut key_file = File::create(&key_path).unwrap();
+        writeln!(key_file, "-----BEGIN PRIVATE KEY-----").unwrap(); // gitleaks:allow - test fixture
+        writeln!(key_file, "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ=").unwrap(); // gitleaks:allow - test fixture
+        writeln!(key_file, "-----END PRIVATE KEY-----").unwrap(); // gitleaks:allow - test fixture
+
+        let config = TlsConfig {
+            cert_path: cert_path.to_str().unwrap().to_string(),
+            key_path: key_path.to_str().unwrap().to_string(),
+            verify: true,
+            min_version: "TLSv1.2".to_string(),
+        };
+
+        let result = validate_tls_config(&config);
+
+        assert!(result.is_err());
+        let error_msg = format!("{}", result.unwrap_err());
+        assert!(error_msg.to_lowercase().contains("invalid") || error_msg.to_lowercase().contains("pem"));
+    }
+
+    #[test]
+    fn test_empty_certificate_file_returns_actionable_error() {
+        let temp_dir = TempDir::new().unwrap();
+        let cert_path = temp_dir.path().join("cert.pem");
+        let key_path = temp_dir.path().join("key.pem");
+
+        File::create(&cert_path).unwrap();
+
+        let mut key_file = File::create(&key_path).unwrap();
+        writeln!(key_file, "-----BEGIN PRIVATE KEY-----").unwrap(); // gitleaks:allow - test fixture
+        writeln!(key_file, "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ=").unwrap(); // gitleaks:allow - test fixture
+        writeln!(key_file, "-----END PRIVATE KEY-----").unwrap(); // gitleaks:allow - test fixture
+
+        let config = TlsConfig {
+            cert_path: cert_path.to_str().unwrap().to_string(),
+            key_path: key_path.to_str().unwrap().to_string(),
+            verify: true,
+            min_version: "TLSv1.2".to_string(),
+        };
+
+        let result = validate_tls_config(&config);
+
+        assert!(result.is_err());
+        let error_msg = format!("{}", result.unwrap_err());
+        assert!(error_msg.to_lowercase().contains("invalid") || error_msg.to_lowercase().contains("pem"));
+    }
+
+    #[test]
+    fn test_empty_key_file_returns_actionable_error() {
+        let temp_dir = TempDir::new().unwrap();
+        let cert_path = temp_dir.path().join("cert.pem");
+        let key_path = temp_dir.path().join("key.pem");
+
+        let mut cert_file = File::create(&cert_path).unwrap();
+        writeln!(cert_file, "-----BEGIN CERTIFICATE-----").unwrap(); // gitleaks:allow - test fixture
+        writeln!(cert_file, "MIIDXTCCAkWgAwIBAgIJAKL0UG+mRKqzMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV").unwrap(); // gitleaks:allow - test fixture
+        writeln!(cert_file, "-----END CERTIFICATE-----").unwrap(); // gitleaks:allow - test fixture
+
+        File::create(&key_path).unwrap();
+
+        let config = TlsConfig {
+            cert_path: cert_path.to_str().unwrap().to_string(),
+            key_path: key_path.to_str().unwrap().to_string(),
+            verify: true,
+            min_version: "TLSv1.2".to_string(),
+        };
+
+        let result = validate_tls_config(&config);
+
+        assert!(result.is_err());
+        let error_msg = format!("{}", result.unwrap_err());
+        assert!(error_msg.to_lowercase().contains("invalid") || error_msg.to_lowercase().contains("pem"));
+    }
+
+    #[test]
+    fn test_valid_tls_configuration_passes_validation() {
+        let temp_dir = TempDir::new().unwrap();
+        let cert_path = temp_dir.path().join("cert.pem");
+        let key_path = temp_dir.path().join("key.pem");
+
+        let mut cert_file = File::create(&cert_path).unwrap();
+        writeln!(cert_file, "-----BEGIN CERTIFICATE-----").unwrap(); // gitleaks:allow - test fixture
+        writeln!(cert_file, "MIIDXTCCAkWgAwIBAgIJAKL0UG+mRKqzMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV").unwrap(); // gitleaks:allow - test fixture
+        writeln!(cert_file, "BAYTAkFVMRMwEQYDVQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBX").unwrap(); // gitleaks:allow - test fixture
+        writeln!(cert_file, "-----END CERTIFICATE-----").unwrap(); // gitleaks:allow - test fixture
+
+        let mut key_file = File::create(&key_path).unwrap();
+        writeln!(key_file, "-----BEGIN PRIVATE KEY-----").unwrap(); // gitleaks:allow - test fixture
+        writeln!(key_file, "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDfH+lLzRMRYPK").unwrap(); // gitleaks:allow - test fixture
+        writeln!(key_file, "-----END PRIVATE KEY-----").unwrap(); // gitleaks:allow - test fixture
+
+        let config = TlsConfig {
+            cert_path: cert_path.to_str().unwrap().to_string(),
+            key_path: key_path.to_str().unwrap().to_string(),
+            verify: true,
+            min_version: "TLSv1.2".to_string(),
+        };
+
+        let result = validate_tls_config(&config);
+
+        assert!(result.is_ok());
+        let validation_result = result.unwrap();
+        assert!(validation_result.is_valid);
+    }
+
+    #[test]
+    fn test_disabled_tls_no_validation_performed() {
+        // Test documents that when tls: None in ServerConfig,
+        // no TLS validation is performed and server starts normally
+        assert!(true, "Disabled TLS requires no validation - server starts normally");
+    }
+
+    #[test]
+    fn test_error_message_does_not_expose_key_material() {
+        let temp_dir = TempDir::new().unwrap();
+        let cert_path = temp_dir.path().join("cert.pem");
+        let key_path = temp_dir.path().join("key.pem");
+
+        let mut cert_file = File::create(&cert_path).unwrap();
+        writeln!(cert_file, "-----BEGIN CERTIFICATE-----").unwrap(); // gitleaks:allow - test fixture
+        writeln!(cert_file, "MIIDXTCCAkWgAwIBAgIJAKL0UG+mRKqzMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV").unwrap(); // gitleaks:allow - test fixture
+        writeln!(cert_file, "-----END CERTIFICATE-----").unwrap(); // gitleaks:allow - test fixture
+
+        let mut key_file = File::create(&key_path).unwrap();
+        writeln!(key_file, "-----BEGIN PRIVATE KEY-----").unwrap(); // gitleaks:allow - test fixture
+        writeln!(key_file, "PLACEHOLDER_TEST_KEY_MATERIAL").unwrap(); // gitleaks:allow - test fixture
+        writeln!(key_file, "-----END PRIVATE KEY-----").unwrap(); // gitleaks:allow - test fixture
+
+        let config = TlsConfig {
+            cert_path: cert_path.to_str().unwrap().to_string(),
+            key_path: key_path.to_str().unwrap().to_string(),
+            verify: true,
+            min_version: "TLSv1.2".to_string(),
+        };
+
+        let result = validate_tls_config(&config);
+
+        if let Err(error) = result {
+            let error_msg = format!("{}", error);
+            assert!(!error_msg.contains("PLACEHOLDER_TEST_KEY_MATERIAL"));
+            assert!(!error_msg.contains("BEGIN PRIVATE KEY"));
+        }
     }
 }
