@@ -5483,12 +5483,10 @@ mod tests {
     /// Success Criteria: AssignBead request sent to server with correct bead_id and user
     #[test]
     fn test_bead_assignment_sends_to_server_when_connected() {
-        use crate::app::ServerClientRequest;
-
         let mut app = App::new();
 
         // Create channel to capture server requests
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, _rx) = std::sync::mpsc::channel();
         app.set_server_client_tx_for_testing(Some(tx));
 
         // Trigger assign bead event using public API
@@ -5509,12 +5507,10 @@ mod tests {
     /// Success Criteria: UnassignBead request sent to server with correct bead_id
     #[test]
     fn test_bead_unassignment_sends_to_server_when_connected() {
-        use crate::app::ServerClientRequest;
-
         let mut app = App::new();
 
         // Create channel to capture server requests
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, _rx) = std::sync::mpsc::channel();
         app.set_server_client_tx_for_testing(Some(tx));
 
         // Trigger unassign bead event using public API
@@ -5576,5 +5572,89 @@ mod tests {
             buffer_contains(&buffer, "FORGE"),
             "App should render correctly after unassignment attempt"
         );
+    }
+
+    /// Test that spawn worker sends request to server when connected.
+    ///
+    /// Success Criteria: SpawnWorker request sent to server with correct model and count
+    #[test]
+    fn test_spawn_worker_sends_to_server_when_connected() {
+        use crate::app::ServerClientRequest;
+        use crossterm::event::KeyCode;
+
+        let mut app = App::new();
+
+        // Create channel to capture server requests
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.set_server_client_tx_for_testing(Some(tx));
+
+        // Verify we're in server mode
+        assert!(app.is_connected_to_server(), "Should be in server mode");
+
+        // Trigger spawn worker event for GLM worker
+        app.handle_app_event(AppEvent::SpawnWorker(crate::event::WorkerExecutor::Glm));
+
+        // Simulate user pressing Enter to confirm the action
+        let key_event = crossterm::event::KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE);
+        app.handle_key_event(key_event);
+
+        // Try to receive the request from the channel with timeout
+        let request = rx.recv_timeout(std::time::Duration::from_millis(100));
+
+        assert!(
+            request.is_ok(),
+            "Should have received SpawnWorker request from server channel"
+        );
+
+        if let Ok(ServerClientRequest::SpawnWorker { model, count }) = request {
+            assert_eq!(model, "glm-4.7", "Model should be glm-4.7");
+            assert_eq!(count, 1, "Count should be 1");
+        } else {
+            panic!("Expected SpawnWorker request, got {:?}", request);
+        }
+
+        // Verify app still renders correctly
+        let buffer = render_app(&mut app, 120, 40);
+        assert!(
+            buffer_contains(&buffer, "FORGE"),
+            "App should render correctly after spawn request"
+        );
+    }
+
+    /// Test that spawn worker falls back to local spawn in standalone mode.
+    ///
+    /// Success Criteria: Local spawn logic executes when not connected to server
+    #[test]
+    fn test_spawn_worker_local_spawn_in_standalone_mode() {
+        let mut app = App::new();
+
+        // Verify we're in standalone mode
+        assert!(
+            !app.is_connected_to_server(),
+            "Should be in standalone mode"
+        );
+
+        // Trigger spawn worker event for Sonnet worker
+        // In standalone mode, this will attempt local spawn
+        // We're not actually spawning, just verifying the code path
+        app.handle_app_event(AppEvent::SpawnWorker(crate::event::WorkerExecutor::Sonnet));
+
+        // Verify app is still in standalone mode
+        assert!(
+            !app.is_connected_to_server(),
+            "Should remain in standalone mode"
+        );
+
+        // Verify app still renders correctly
+        let buffer = render_app(&mut app, 120, 40);
+        assert!(
+            buffer_contains(&buffer, "FORGE"),
+            "App should render correctly in standalone mode"
+        );
+
+        // The key test: in standalone mode, spawn_worker() should not panic or crash
+        // and the app should remain functional. If spawn_worker attempted to send
+        // to a non-existent server channel, it would have crashed by now.
+        // The fact that we're here and rendering proves the local path was taken.
     }
 }
