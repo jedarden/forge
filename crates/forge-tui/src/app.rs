@@ -4873,6 +4873,7 @@ impl App {
             server_url,
             user_id,
             password,
+            tls: None,
         });
 
         // Subscribe to state updates BEFORE connecting
@@ -5153,10 +5154,25 @@ impl App {
             } => {
                 // Update data manager with server state
                 self.data_manager
-                    .update_from_server_state(workers, beads, costs, sessions);
+                    .update_from_server_state(workers, beads, costs, sessions.clone());
 
                 // Update sessions panel with current users
-                self.sessions_panel.set_sessions(sessions);
+                // Convert SessionSummary to UserSession format expected by sessions_panel
+                let user_sessions: Vec<forge_core::UserSession> = sessions
+                    .into_iter()
+                    .map(|s| forge_core::UserSession {
+                        session_id: format!("session-{}", s.user_id),
+                        user_id: s.user_id,
+                        display_name: s.display_name,
+                        role: s.role,
+                        status: forge_core::SessionStatus::Active,
+                        connected_at: s.connected_at,
+                        last_activity: s.connected_at, // Use connected_at as fallback
+                        current_view: s.current_view,
+                        client_info: None,
+                    })
+                    .collect();
+                self.sessions_panel.set_sessions(user_sessions);
             }
             ServerClientMessage::UserJoined {
                 user,

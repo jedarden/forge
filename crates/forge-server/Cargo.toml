@@ -14,7 +14,9 @@ forge-config = { path = "../forge-config" }
 
 # Async runtime
 tokio = { workspace = true, features = ["full"] }
-tokio-tungstenite = "0.26"
+tokio-tungstenite = { version = "0.26", features = ["connect", "native-tls"] }
+native-tls = "0.2"
+tokio-native-tls = "0.3"
 
 # Serialization
 serde = { workspace = true }
