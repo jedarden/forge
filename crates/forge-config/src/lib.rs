@@ -375,16 +375,15 @@ impl ForgeConfig {
             ));
         }
 
-        if let Some(thresholds) = self.calibrated_thresholds {
-            if thresholds.budget == 0
+        if let Some(thresholds) = self.calibrated_thresholds
+            && (thresholds.budget == 0
                 || thresholds.budget >= thresholds.standard
-                || thresholds.standard >= 100
-            {
-                warnings.push(format!(
-                    "calibrated_thresholds must satisfy 0 < budget < standard < 100, got {} and {}",
-                    thresholds.budget, thresholds.standard
-                ));
-            }
+                || thresholds.standard >= 100)
+        {
+            warnings.push(format!(
+                "calibrated_thresholds must satisfy 0 < budget < standard < 100, got {} and {}",
+                thresholds.budget, thresholds.standard
+            ));
         }
 
         // Validate theme name if specified

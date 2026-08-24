@@ -82,14 +82,14 @@ impl WorkerLauncher {
         // Persist the prediction before any launcher work. A failed launch still
         // represents an assignment attempt, and successful launches will have
         // their later API-call rows correlated by bead_id.
-        if let (Some(db), Some(assignment)) = (&self.cost_db, request.task_assignment.as_ref()) {
-            if let Err(error) = db.insert_task_assignment(assignment) {
-                warn!(
-                    bead_id = %assignment.bead_id,
-                    error = %error,
-                    "Failed to persist task assignment prediction"
-                );
-            }
+        if let (Some(db), Some(assignment)) = (&self.cost_db, request.task_assignment.as_ref())
+            && let Err(error) = db.insert_task_assignment(assignment)
+        {
+            warn!(
+                bead_id = %assignment.bead_id,
+                error = %error,
+                "Failed to persist task assignment prediction"
+            );
         }
 
         let config = &request.config;

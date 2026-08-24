@@ -351,7 +351,11 @@ impl AuditFilter {
     }
 
     /// Set entity filter.
-    pub fn with_entity(mut self, entity_type: impl Into<String>, entity_id: impl Into<String>) -> Self {
+    pub fn with_entity(
+        mut self,
+        entity_type: impl Into<String>,
+        entity_id: impl Into<String>,
+    ) -> Self {
         self.entity_type = Some(entity_type.into());
         self.entity_id = Some(entity_id.into());
         self
@@ -465,25 +469,25 @@ impl AuditLogger {
 
         // Ensure parent directory exists
         if let Some(parent) = db_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| ForgeError::io("create_dir_all", parent, e))?;
+            fs::create_dir_all(parent).map_err(|e| ForgeError::io("create_dir_all", parent, e))?;
         }
 
-        let conn = Connection::open(&db_path)
-            .map_err(|e| ForgeError::Audit { message: format!("failed to open database: {}", e) })?;
+        let conn = Connection::open(&db_path).map_err(|e| ForgeError::Audit {
+            message: format!("failed to open database: {}", e),
+        })?;
 
         // Enable WAL mode for better concurrent access
         // Returns the new mode, so we need to use query_row
-        conn.query_row("PRAGMA journal_mode=WAL", [], |row| {
-            row.get::<_, String>(0)
-        })
-        .map_err(|e| ForgeError::Audit { message: format!("failed to enable WAL: {}", e) })?;
+        conn.query_row("PRAGMA journal_mode=WAL", [], |row| row.get::<_, String>(0))
+            .map_err(|e| ForgeError::Audit {
+                message: format!("failed to enable WAL: {}", e),
+            })?;
 
         // Set a busy timeout for concurrent access
-        conn.query_row("PRAGMA busy_timeout=5000", [], |row| {
-            row.get::<_, i64>(0)
-        })
-        .map_err(|e| ForgeError::Audit { message: format!("failed to set busy timeout: {}", e) })?;
+        conn.query_row("PRAGMA busy_timeout=5000", [], |row| row.get::<_, i64>(0))
+            .map_err(|e| ForgeError::Audit {
+                message: format!("failed to set busy timeout: {}", e),
+            })?;
 
         let mut logger = Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -532,9 +536,10 @@ impl AuditLogger {
 
     /// Run database migrations.
     fn migrate(&mut self) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| {
-            ForgeError::audit_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ForgeError::audit_error(format!("failed to acquire lock: {}", e)))?;
 
         // Create schema version table
         conn.execute(
@@ -542,7 +547,8 @@ impl AuditLogger {
                 version INTEGER PRIMARY KEY
             )",
             [],
-        ).map_err(|e| ForgeError::audit_error(format!("failed to create schema table: {}", e)))?;
+        )
+        .map_err(|e| ForgeError::audit_error(format!("failed to create schema table: {}", e)))?;
 
         // Get current version
         let current_version: i32 = conn
@@ -576,52 +582,77 @@ impl AuditLogger {
                     severity TEXT NOT NULL DEFAULT 'info'
                 )",
                 [],
-            ).map_err(|e| ForgeError::audit_error(format!("failed to create audit_logs table: {}", e)))?;
+            )
+            .map_err(|e| {
+                ForgeError::audit_error(format!("failed to create audit_logs table: {}", e))
+            })?;
 
             // Create indexes for efficient queries
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp
                  ON audit_logs(timestamp DESC)",
                 [],
-            ).map_err(|e| ForgeError::audit_error(format!("failed to create timestamp index: {}", e)))?;
+            )
+            .map_err(|e| {
+                ForgeError::audit_error(format!("failed to create timestamp index: {}", e))
+            })?;
 
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_audit_logs_event_type
                  ON audit_logs(event_type)",
                 [],
-            ).map_err(|e| ForgeError::audit_error(format!("failed to create event_type index: {}", e)))?;
+            )
+            .map_err(|e| {
+                ForgeError::audit_error(format!("failed to create event_type index: {}", e))
+            })?;
 
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_audit_logs_actor
                  ON audit_logs(actor)",
                 [],
-            ).map_err(|e| ForgeError::audit_error(format!("failed to create actor index: {}", e)))?;
+            )
+            .map_err(|e| ForgeError::audit_error(format!("failed to create actor index: {}", e)))?;
 
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_audit_logs_entity
                  ON audit_logs(entity_type, entity_id)",
                 [],
-            ).map_err(|e| ForgeError::audit_error(format!("failed to create entity index: {}", e)))?;
+            )
+            .map_err(|e| {
+                ForgeError::audit_error(format!("failed to create entity index: {}", e))
+            })?;
 
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_audit_logs_severity
                  ON audit_logs(severity)",
                 [],
-            ).map_err(|e| ForgeError::audit_error(format!("failed to create severity index: {}", e)))?;
+            )
+            .map_err(|e| {
+                ForgeError::audit_error(format!("failed to create severity index: {}", e))
+            })?;
 
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_audit_logs_session_id
                  ON audit_logs(session_id)",
                 [],
-            ).map_err(|e| ForgeError::audit_error(format!("failed to create session_id index: {}", e)))?;
+            )
+            .map_err(|e| {
+                ForgeError::audit_error(format!("failed to create session_id index: {}", e))
+            })?;
 
             // Record schema version
             conn.execute(
                 "INSERT OR REPLACE INTO audit_schema_version (version) VALUES (?)",
                 params![AUDIT_SCHEMA_VERSION],
-            ).map_err(|e| ForgeError::audit_error(format!("failed to record schema version: {}", e)))?;
+            )
+            .map_err(|e| {
+                ForgeError::audit_error(format!("failed to record schema version: {}", e))
+            })?;
 
-            info!("Audit database initialized at schema version {}", AUDIT_SCHEMA_VERSION);
+            info!(
+                "Audit database initialized at schema version {}",
+                AUDIT_SCHEMA_VERSION
+            );
         }
 
         Ok(())
@@ -629,9 +660,10 @@ impl AuditLogger {
 
     /// Log an audit event.
     pub fn log(&self, event: AuditEvent) -> Result<i64> {
-        let conn = self.conn.lock().map_err(|e| {
-            ForgeError::audit_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ForgeError::audit_error(format!("failed to acquire lock: {}", e)))?;
 
         debug!(
             event_type = %event.event_type,
@@ -666,9 +698,10 @@ impl AuditLogger {
 
     /// Query audit logs with optional filters.
     pub fn query(&self, filter: &AuditFilter) -> Result<Vec<AuditEvent>> {
-        let conn = self.conn.lock().map_err(|e| {
-            ForgeError::audit_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ForgeError::audit_error(format!("failed to acquire lock: {}", e)))?;
 
         let (where_clause, params) = filter.build_where_clause();
         let limit = filter.limit.unwrap_or(MAX_QUERY_RESULTS);
@@ -715,14 +748,10 @@ impl AuditLogger {
 
                 Ok(AuditEvent {
                     timestamp: parse_timestamp(ts_str).map_err(|e| {
-                        rusqlite::Error::ToSqlConversionFailure(
-                            Box::new(ParseError(e))
-                        )
+                        rusqlite::Error::ToSqlConversionFailure(Box::new(ParseError(e)))
                     })?,
                     event_type: parse_event_type(event_type_str).map_err(|e| {
-                        rusqlite::Error::ToSqlConversionFailure(
-                            Box::new(ParseError(e))
-                        )
+                        rusqlite::Error::ToSqlConversionFailure(Box::new(ParseError(e)))
                     })?,
                     actor: row.get(2)?,
                     session_id: row.get(3)?,
@@ -732,9 +761,7 @@ impl AuditLogger {
                     new_value: row.get(7)?,
                     metadata: row.get(8)?,
                     severity: parse_severity(severity_str).map_err(|e| {
-                        rusqlite::Error::ToSqlConversionFailure(
-                            Box::new(ParseError(e))
-                        )
+                        rusqlite::Error::ToSqlConversionFailure(Box::new(ParseError(e)))
                     })?,
                 })
             })
@@ -747,26 +774,26 @@ impl AuditLogger {
 
     /// Get a count of audit logs matching the filter.
     pub fn count(&self, filter: &AuditFilter) -> Result<i64> {
-        let conn = self.conn.lock().map_err(|e| {
-            ForgeError::audit_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ForgeError::audit_error(format!("failed to acquire lock: {}", e)))?;
 
         let (where_clause, params) = filter.build_where_clause();
 
-        let sql = format!(
-            "SELECT COUNT(*) FROM audit_logs {}",
-            where_clause
-        );
+        let sql = format!("SELECT COUNT(*) FROM audit_logs {}", where_clause);
 
-        let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| ForgeError::audit_error(format!("failed to prepare count query: {}", e)))?;
+        let mut stmt = conn.prepare(&sql).map_err(|e| {
+            ForgeError::audit_error(format!("failed to prepare count query: {}", e))
+        })?;
 
         let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
         let count: i64 = stmt
             .query_row(param_refs.as_slice(), |row| row.get(0))
-            .map_err(|e| ForgeError::audit_error(format!("failed to execute count query: {}", e)))?;
+            .map_err(|e| {
+                ForgeError::audit_error(format!("failed to execute count query: {}", e))
+            })?;
 
         Ok(count)
     }
@@ -796,9 +823,10 @@ impl AuditLogger {
             "Applying audit log retention"
         );
 
-        let conn = self.conn.lock().map_err(|e| {
-            ForgeError::audit_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ForgeError::audit_error(format!("failed to acquire lock: {}", e)))?;
 
         let affected = conn
             .execute(
@@ -844,24 +872,31 @@ impl AuditLogger {
             .map_err(|e| ForgeError::audit_error(format!("failed to create CSV writer: {}", e)))?;
 
         // Write header
-        wtr.write_record(&[
-            "timestamp", "event_type", "actor", "entity_type", "entity_id",
-            "old_value", "new_value", "metadata", "severity",
+        wtr.write_record([
+            "timestamp",
+            "event_type",
+            "actor",
+            "entity_type",
+            "entity_id",
+            "old_value",
+            "new_value",
+            "metadata",
+            "severity",
         ])
         .map_err(|e| ForgeError::audit_error(format!("failed to write CSV header: {}", e)))?;
 
         // Write records
         for event in &events {
-            wtr.write_record(&[
+            wtr.write_record([
                 event.timestamp.to_rfc3339().as_str(),
-                &event.event_type.to_string(),
-                &event.actor,
-                &event.entity_type,
-                &event.entity_id,
+                event.event_type.to_string().as_str(),
+                event.actor.as_str(),
+                event.entity_type.as_str(),
+                event.entity_id.as_str(),
                 event.old_value.as_deref().unwrap_or(""),
                 event.new_value.as_deref().unwrap_or(""),
                 event.metadata.as_deref().unwrap_or(""),
-                &event.severity.to_string(),
+                event.severity.to_string().as_str(),
             ])
             .map_err(|e| ForgeError::audit_error(format!("failed to write CSV record: {}", e)))?;
         }
@@ -880,58 +915,54 @@ impl AuditLogger {
 
     /// Get statistics about the audit log.
     pub fn stats(&self) -> Result<AuditStats> {
-        let conn = self.conn.lock().map_err(|e| {
-            ForgeError::audit_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ForgeError::audit_error(format!("failed to acquire lock: {}", e)))?;
 
         let total_events: i64 = conn
             .query_row("SELECT COUNT(*) FROM audit_logs", [], |row| row.get(0))
             .unwrap_or(0);
 
         let oldest_event: Option<String> = conn
-            .query_row(
-                "SELECT MIN(timestamp) FROM audit_logs",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT MIN(timestamp) FROM audit_logs", [], |row| {
+                row.get(0)
+            })
             .unwrap_or(None);
 
         let newest_event: Option<String> = conn
-            .query_row(
-                "SELECT MAX(timestamp) FROM audit_logs",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT MAX(timestamp) FROM audit_logs", [], |row| {
+                row.get(0)
+            })
             .unwrap_or(None);
 
         // Count by event type
         let mut type_counts = std::collections::HashMap::new();
         let mut stmt = conn
-            .prepare(
-                "SELECT event_type, COUNT(*) as count FROM audit_logs GROUP BY event_type"
-            )
-            .map_err(|e| ForgeError::audit_error(format!("failed to prepare stats query: {}", e)))?;
+            .prepare("SELECT event_type, COUNT(*) as count FROM audit_logs GROUP BY event_type")
+            .map_err(|e| {
+                ForgeError::audit_error(format!("failed to prepare stats query: {}", e))
+            })?;
 
         let rows = stmt
             .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?
-                ))
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
             })
-            .map_err(|e| ForgeError::audit_error(format!("failed to execute stats query: {}", e)))?;
+            .map_err(|e| {
+                ForgeError::audit_error(format!("failed to execute stats query: {}", e))
+            })?;
 
-        for row in rows {
-            if let Ok((event_type, count)) = row {
-                type_counts.insert(event_type, count);
-            }
+        for (event_type, count) in rows.flatten() {
+            type_counts.insert(event_type, count);
         }
 
         Ok(AuditStats {
             total_events,
-            oldest_timestamp: oldest_event.and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+            oldest_timestamp: oldest_event
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
                 .map(|dt| dt.with_timezone(&Utc)),
-            newest_timestamp: newest_event.and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+            newest_timestamp: newest_event
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
                 .map(|dt| dt.with_timezone(&Utc)),
             event_type_counts: type_counts,
         })
@@ -939,9 +970,10 @@ impl AuditLogger {
 
     /// Vacuum the database to reclaim space.
     pub fn vacuum(&self) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| {
-            ForgeError::audit_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ForgeError::audit_error(format!("failed to acquire lock: {}", e)))?;
 
         info!("Vacuuming audit database");
 
@@ -972,13 +1004,9 @@ mod tests {
 
     #[test]
     fn test_audit_event_creation() {
-        let event = AuditEvent::worker_lifecycle(
-            EventType::WorkerSpawn,
-            "worker-1",
-            "user"
-        )
-        .with_new_value(r#"{"status":"active"}"#)
-        .with_severity(Severity::Info);
+        let event = AuditEvent::worker_lifecycle(EventType::WorkerSpawn, "worker-1", "user")
+            .with_new_value(r#"{"status":"active"}"#)
+            .with_severity(Severity::Info);
 
         assert_eq!(event.event_type, EventType::WorkerSpawn);
         assert_eq!(event.actor, "user");
@@ -995,17 +1023,12 @@ mod tests {
         let logger = AuditLogger::open(&db_path).unwrap();
 
         // Log an event
-        let event = AuditEvent::worker_lifecycle(
-            EventType::WorkerSpawn,
-            "worker-test",
-            "test"
-        );
+        let event = AuditEvent::worker_lifecycle(EventType::WorkerSpawn, "worker-test", "test");
         let id = logger.log(event).unwrap();
         assert!(id > 0);
 
         // Query it back
-        let filter = AuditFilter::new()
-            .with_entity("worker", "worker-test");
+        let filter = AuditFilter::new().with_entity("worker", "worker-test");
         let results = logger.query(&filter).unwrap();
 
         assert_eq!(results.len(), 1);
@@ -1017,8 +1040,12 @@ mod tests {
     fn test_filter_building() {
         let filter = AuditFilter::new()
             .with_time_range(
-                DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z").unwrap().with_timezone(&Utc),
-                DateTime::parse_from_rfc3339("2024-12-31T23:59:59Z").unwrap().with_timezone(&Utc),
+                DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
+                    .unwrap()
+                    .with_timezone(&Utc),
+                DateTime::parse_from_rfc3339("2024-12-31T23:59:59Z")
+                    .unwrap()
+                    .with_timezone(&Utc),
             )
             .with_actor("user")
             .with_entity("worker", "worker-1");
@@ -1073,26 +1100,51 @@ mod tests {
         let logger = AuditLogger::open(&db_path).unwrap();
 
         // Log some events
-        logger.log(AuditEvent::worker_lifecycle(EventType::WorkerSpawn, "w1", "u1")).unwrap();
-        logger.log(AuditEvent::worker_lifecycle(EventType::WorkerSpawn, "w2", "u1")).unwrap();
-        logger.log(AuditEvent::worker_lifecycle(EventType::WorkerKill, "w1", "u1")).unwrap();
+        logger
+            .log(AuditEvent::worker_lifecycle(
+                EventType::WorkerSpawn,
+                "w1",
+                "u1",
+            ))
+            .unwrap();
+        logger
+            .log(AuditEvent::worker_lifecycle(
+                EventType::WorkerSpawn,
+                "w2",
+                "u1",
+            ))
+            .unwrap();
+        logger
+            .log(AuditEvent::worker_lifecycle(
+                EventType::WorkerKill,
+                "w1",
+                "u1",
+            ))
+            .unwrap();
 
         let stats = logger.stats().unwrap();
         assert_eq!(stats.total_events, 3);
         assert!(stats.oldest_timestamp.is_some());
         assert!(stats.newest_timestamp.is_some());
-        assert_eq!(stats.event_type_counts.get("worker_spawn").map(|v| *v as usize), Some(2));
-        assert_eq!(stats.event_type_counts.get("worker_kill").map(|v| *v as usize), Some(1));
+        assert_eq!(
+            stats
+                .event_type_counts
+                .get("worker_spawn")
+                .map(|v| *v as usize),
+            Some(2)
+        );
+        assert_eq!(
+            stats
+                .event_type_counts
+                .get("worker_kill")
+                .map(|v| *v as usize),
+            Some(1)
+        );
     }
 
     #[test]
     fn test_bead_status_change_helper() {
-        let event = AuditEvent::bead_status_change(
-            "bd-123",
-            "open",
-            "in_progress",
-            "worker-1"
-        );
+        let event = AuditEvent::bead_status_change("bd-123", "open", "in_progress", "worker-1");
 
         assert_eq!(event.event_type, EventType::BeadStatusChange);
         assert_eq!(event.entity_id, "bd-123");
@@ -1103,12 +1155,7 @@ mod tests {
 
     #[test]
     fn test_config_change_helper() {
-        let event = AuditEvent::config_change(
-            "max_workers",
-            "5",
-            "10",
-            "user"
-        );
+        let event = AuditEvent::config_change("max_workers", "5", "10", "user");
 
         assert_eq!(event.event_type, EventType::ConfigChange);
         assert_eq!(event.entity_id, "max_workers");
