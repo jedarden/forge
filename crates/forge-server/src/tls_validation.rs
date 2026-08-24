@@ -10,12 +10,12 @@
 
 use super::ServerError;
 use crate::websocket::TlsConfig;
+use base64::{Engine as _, engine::general_purpose};
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
 use std::time::Duration;
-use tracing::{info, warn, debug, error};
-use base64::{Engine as _, engine::general_purpose};
+use tracing::{debug, error, info, warn};
 use x509_parser::prelude::*;
 
 /// TLS certificate validation result.
@@ -101,7 +101,10 @@ pub fn validate_tls_config(config: &TlsConfig) -> Result<TlsValidationResult, Se
             let msg = format!("Failed to read certificate file: {}", e);
             error!("{}", msg);
             result.errors.push(msg);
-            return Err(ServerError::CertificateLoadError(config.cert_path.clone(), e.to_string()));
+            return Err(ServerError::CertificateLoadError(
+                config.cert_path.clone(),
+                e.to_string(),
+            ));
         }
     };
 
@@ -112,7 +115,10 @@ pub fn validate_tls_config(config: &TlsConfig) -> Result<TlsValidationResult, Se
             let msg = format!("Failed to read private key file: {}", e);
             error!("{}", msg);
             result.errors.push(msg);
-            return Err(ServerError::PrivateKeyLoadError(config.key_path.clone(), e.to_string()));
+            return Err(ServerError::PrivateKeyLoadError(
+                config.key_path.clone(),
+                e.to_string(),
+            ));
         }
     };
 
@@ -182,16 +188,25 @@ pub fn validate_tls_config(config: &TlsConfig) -> Result<TlsValidationResult, Se
             let days_remaining = duration.whole_days();
 
             result.days_until_expiry = Some(days_remaining);
-            info!("Certificate expires: {} ({} days from now)", expires_at_str, days_remaining);
+            info!(
+                "Certificate expires: {} ({} days from now)",
+                expires_at_str, days_remaining
+            );
 
             // Check expiry
             if days_remaining < 0 {
                 let msg = format!("Certificate expired {} days ago", days_remaining.abs());
                 error!("{}", msg);
                 result.errors.push(msg);
-                return Err(ServerError::ExpiredCertificate(expires_at_str, days_remaining.abs()));
+                return Err(ServerError::ExpiredCertificate(
+                    expires_at_str,
+                    days_remaining.abs(),
+                ));
             } else if days_remaining < 30 {
-                let msg = format!("Certificate expires in {} days (< 30 day warning)", days_remaining);
+                let msg = format!(
+                    "Certificate expires in {} days (< 30 day warning)",
+                    days_remaining
+                );
                 warn!("{}", msg);
                 result.warnings.push(msg);
             }
@@ -211,15 +226,22 @@ pub fn validate_tls_config(config: &TlsConfig) -> Result<TlsValidationResult, Se
 
     // Log chain information
     if cert_chain.len() > 1 {
-        info!("Certificate chain contains {} intermediate certificate(s)", cert_chain.len() - 1);
+        info!(
+            "Certificate chain contains {} intermediate certificate(s)",
+            cert_chain.len() - 1
+        );
     }
 
     // Note: Full key matching validation would require more complex crypto operations
     // For now, we validate that both files are present and have valid PEM format
     debug!("Certificate and key files loaded successfully");
 
-    info!("TLS configuration validation complete: valid={}, warnings={}, errors={}",
-          result.is_valid, result.warnings.len(), result.errors.len());
+    info!(
+        "TLS configuration validation complete: valid={}, warnings={}, errors={}",
+        result.is_valid,
+        result.warnings.len(),
+        result.errors.len()
+    );
 
     Ok(result)
 }
@@ -245,9 +267,10 @@ fn parse_certificate_chain(pem_data: &str) -> Result<Vec<Vec<u8>>, ServerError> 
                 match base64_decode(&current_cert) {
                     Ok(der) => certs.push(der),
                     Err(e) => {
-                        return Err(ServerError::InvalidPemFormat(
-                            format!("Failed to decode certificate base64: {}", e)
-                        ));
+                        return Err(ServerError::InvalidPemFormat(format!(
+                            "Failed to decode certificate base64: {}",
+                            e
+                        )));
                     }
                 }
             }
@@ -258,7 +281,7 @@ fn parse_certificate_chain(pem_data: &str) -> Result<Vec<Vec<u8>>, ServerError> 
 
     if certs.is_empty() {
         return Err(ServerError::InvalidPemFormat(
-            "No valid certificates found in PEM data".to_string()
+            "No valid certificates found in PEM data".to_string(),
         ));
     }
 
@@ -267,8 +290,8 @@ fn parse_certificate_chain(pem_data: &str) -> Result<Vec<Vec<u8>>, ServerError> 
 
 /// Simple base64 decode (replacement for base64 crate if not available).
 fn base64_decode(input: &[u8]) -> Result<Vec<u8>, String> {
-    let input_str = String::from_utf8(input.to_vec())
-        .map_err(|e| format!("Invalid UTF-8: {}", e))?;
+    let input_str =
+        String::from_utf8(input.to_vec()).map_err(|e| format!("Invalid UTF-8: {}", e))?;
 
     match general_purpose::STANDARD.decode(&input_str) {
         Ok(data) => Ok(data),
@@ -277,10 +300,12 @@ fn base64_decode(input: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 /// Parse X.509 certificate and extract details.
-fn parse_x509_certificate(der_data: &[u8]) -> Result<X509Certificate, ServerError> {
+fn parse_x509_certificate(der_data: &[u8]) -> Result<X509Certificate<'_>, ServerError> {
     X509Certificate::from_der(der_data)
         .map(|(_remaining, cert)| cert)
-        .map_err(|e| ServerError::CertificateChainError(format!("Failed to parse X.509 certificate: {}", e)))
+        .map_err(|e| {
+            ServerError::CertificateChainError(format!("Failed to parse X.509 certificate: {}", e))
+        })
 }
 
 /// Read file with timeout to avoid hangs on network mounts.
@@ -288,33 +313,35 @@ fn read_file_with_timeout(path: &str, timeout: Duration) -> Result<String, Serve
     let start = std::time::Instant::now();
 
     // Open file
-    let file = File::open(path)
-        .map_err(|e| {
-            if start.elapsed() > timeout {
-                ServerError::Io(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    format!("Timed out reading file after {:?}", timeout)
-                ))
-            } else {
-                ServerError::Io(e)
-            }
-        })?;
+    let file = File::open(path).map_err(|e| {
+        if start.elapsed() > timeout {
+            ServerError::Io(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("Timed out reading file after {:?}", timeout),
+            ))
+        } else {
+            ServerError::Io(e)
+        }
+    })?;
 
     // Read with size limit to avoid memory issues
-    let metadata = file.metadata()
-        .map_err(ServerError::Io)?;
+    let metadata = file.metadata().map_err(ServerError::Io)?;
 
     let file_size = metadata.len();
 
     // Warn on large files (> 1MB)
     if file_size > 1_000_000 {
-        warn!("Certificate file is large ({} bytes), this may indicate an issue", file_size);
+        warn!(
+            "Certificate file is large ({} bytes), this may indicate an issue",
+            file_size
+        );
     }
 
     let mut reader = BufReader::new(file);
     let mut contents = String::new();
 
-    reader.read_to_string(&mut contents)
+    reader
+        .read_to_string(&mut contents)
         .map_err(ServerError::Io)?;
 
     Ok(contents)
@@ -357,8 +384,11 @@ pub fn log_tls_config_details(config: &TlsConfig, validation_result: &TlsValidat
     if validation_result.warnings.is_empty() && validation_result.errors.is_empty() {
         info!("TLS configuration: VALID");
     } else {
-        warn!("TLS configuration has {} warning(s), {} error(s)",
-              validation_result.warnings.len(), validation_result.errors.len());
+        warn!(
+            "TLS configuration has {} warning(s), {} error(s)",
+            validation_result.warnings.len(),
+            validation_result.errors.len()
+        );
     }
 
     info!("===============================");
@@ -375,9 +405,10 @@ pub fn validate_domain_match(
     server_domain: &str,
 ) -> Result<(), ServerError> {
     // Check if server domain matches any certificate domain
-    let matches = validation_result.domains.iter().any(|cert_domain| {
-        domains_match(cert_domain, server_domain)
-    });
+    let matches = validation_result
+        .domains
+        .iter()
+        .any(|cert_domain| domains_match(cert_domain, server_domain));
 
     if !matches {
         let cert_domains = validation_result.domains.join(", ");
@@ -387,7 +418,10 @@ pub fn validate_domain_match(
         });
     }
 
-    debug!("Server domain '{}' matches certificate domains", server_domain);
+    debug!(
+        "Server domain '{}' matches certificate domains",
+        server_domain
+    );
     Ok(())
 }
 
@@ -438,7 +472,11 @@ mod tests {
 
         let mut key_file = File::create(&key_path).unwrap();
         writeln!(key_file, "-----BEGIN PRIVATE KEY-----").unwrap(); // gitleaks:allow - test fixture
-        writeln!(key_file, "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ=").unwrap(); // gitleaks:allow - test fixture
+        writeln!(
+            key_file,
+            "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ="
+        )
+        .unwrap(); // gitleaks:allow - test fixture
         writeln!(key_file, "-----END PRIVATE KEY-----").unwrap(); // gitleaks:allow - test fixture
 
         let nonexistent_cert = temp_dir.path().join("nonexistent.pem");
@@ -465,7 +503,11 @@ mod tests {
 
         let mut cert_file = File::create(&cert_path).unwrap();
         writeln!(cert_file, "-----BEGIN CERTIFICATE-----").unwrap(); // gitleaks:allow - test fixture
-        writeln!(cert_file, "MIIDXTCCAkWgAwIBAgIJAKL0UG+mRKqzMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV").unwrap(); // gitleaks:allow - test fixture
+        writeln!(
+            cert_file,
+            "MIIDXTCCAkWgAwIBAgIJAKL0UG+mRKqzMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV"
+        )
+        .unwrap(); // gitleaks:allow - test fixture
         writeln!(cert_file, "-----END CERTIFICATE-----").unwrap(); // gitleaks:allow - test fixture
 
         let nonexistent_key = temp_dir.path().join("nonexistent.pem");
@@ -496,7 +538,11 @@ mod tests {
 
         let mut key_file = File::create(&key_path).unwrap();
         writeln!(key_file, "-----BEGIN PRIVATE KEY-----").unwrap(); // gitleaks:allow - test fixture
-        writeln!(key_file, "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ=").unwrap(); // gitleaks:allow - test fixture
+        writeln!(
+            key_file,
+            "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ="
+        )
+        .unwrap(); // gitleaks:allow - test fixture
         writeln!(key_file, "-----END PRIVATE KEY-----").unwrap(); // gitleaks:allow - test fixture
 
         let config = TlsConfig {
@@ -510,7 +556,10 @@ mod tests {
 
         assert!(result.is_err());
         let error_msg = format!("{}", result.unwrap_err());
-        assert!(error_msg.to_lowercase().contains("invalid") || error_msg.to_lowercase().contains("pem"));
+        assert!(
+            error_msg.to_lowercase().contains("invalid")
+                || error_msg.to_lowercase().contains("pem")
+        );
     }
 
     #[test]
@@ -523,7 +572,11 @@ mod tests {
 
         let mut key_file = File::create(&key_path).unwrap();
         writeln!(key_file, "-----BEGIN PRIVATE KEY-----").unwrap(); // gitleaks:allow - test fixture
-        writeln!(key_file, "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ=").unwrap(); // gitleaks:allow - test fixture
+        writeln!(
+            key_file,
+            "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ="
+        )
+        .unwrap(); // gitleaks:allow - test fixture
         writeln!(key_file, "-----END PRIVATE KEY-----").unwrap(); // gitleaks:allow - test fixture
 
         let config = TlsConfig {
@@ -537,7 +590,10 @@ mod tests {
 
         assert!(result.is_err());
         let error_msg = format!("{}", result.unwrap_err());
-        assert!(error_msg.to_lowercase().contains("invalid") || error_msg.to_lowercase().contains("pem"));
+        assert!(
+            error_msg.to_lowercase().contains("invalid")
+                || error_msg.to_lowercase().contains("pem")
+        );
     }
 
     #[test]
@@ -548,7 +604,11 @@ mod tests {
 
         let mut cert_file = File::create(&cert_path).unwrap();
         writeln!(cert_file, "-----BEGIN CERTIFICATE-----").unwrap(); // gitleaks:allow - test fixture
-        writeln!(cert_file, "MIIDXTCCAkWgAwIBAgIJAKL0UG+mRKqzMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV").unwrap(); // gitleaks:allow - test fixture
+        writeln!(
+            cert_file,
+            "MIIDXTCCAkWgAwIBAgIJAKL0UG+mRKqzMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV"
+        )
+        .unwrap(); // gitleaks:allow - test fixture
         writeln!(cert_file, "-----END CERTIFICATE-----").unwrap(); // gitleaks:allow - test fixture
 
         File::create(&key_path).unwrap();
@@ -564,7 +624,10 @@ mod tests {
 
         assert!(result.is_err());
         let error_msg = format!("{}", result.unwrap_err());
-        assert!(error_msg.to_lowercase().contains("invalid") || error_msg.to_lowercase().contains("pem"));
+        assert!(
+            error_msg.to_lowercase().contains("invalid")
+                || error_msg.to_lowercase().contains("pem")
+        );
     }
 
     #[test]
@@ -575,13 +638,25 @@ mod tests {
 
         let mut cert_file = File::create(&cert_path).unwrap();
         writeln!(cert_file, "-----BEGIN CERTIFICATE-----").unwrap(); // gitleaks:allow - test fixture
-        writeln!(cert_file, "MIIDXTCCAkWgAwIBAgIJAKL0UG+mRKqzMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV").unwrap(); // gitleaks:allow - test fixture
-        writeln!(cert_file, "BAYTAkFVMRMwEQYDVQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBX").unwrap(); // gitleaks:allow - test fixture
+        writeln!(
+            cert_file,
+            "MIIDXTCCAkWgAwIBAgIJAKL0UG+mRKqzMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV"
+        )
+        .unwrap(); // gitleaks:allow - test fixture
+        writeln!(
+            cert_file,
+            "BAYTAkFVMRMwEQYDVQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBX"
+        )
+        .unwrap(); // gitleaks:allow - test fixture
         writeln!(cert_file, "-----END CERTIFICATE-----").unwrap(); // gitleaks:allow - test fixture
 
         let mut key_file = File::create(&key_path).unwrap();
         writeln!(key_file, "-----BEGIN PRIVATE KEY-----").unwrap(); // gitleaks:allow - test fixture
-        writeln!(key_file, "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDfH+lLzRMRYPK").unwrap(); // gitleaks:allow - test fixture
+        writeln!(
+            key_file,
+            "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDfH+lLzRMRYPK"
+        )
+        .unwrap(); // gitleaks:allow - test fixture
         writeln!(key_file, "-----END PRIVATE KEY-----").unwrap(); // gitleaks:allow - test fixture
 
         let config = TlsConfig {
@@ -602,7 +677,10 @@ mod tests {
     fn test_disabled_tls_no_validation_performed() {
         // Test documents that when tls: None in ServerConfig,
         // no TLS validation is performed and server starts normally
-        assert!(true, "Disabled TLS requires no validation - server starts normally");
+        assert!(
+            true,
+            "Disabled TLS requires no validation - server starts normally"
+        );
     }
 
     #[test]
@@ -613,7 +691,11 @@ mod tests {
 
         let mut cert_file = File::create(&cert_path).unwrap();
         writeln!(cert_file, "-----BEGIN CERTIFICATE-----").unwrap(); // gitleaks:allow - test fixture
-        writeln!(cert_file, "MIIDXTCCAkWgAwIBAgIJAKL0UG+mRKqzMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV").unwrap(); // gitleaks:allow - test fixture
+        writeln!(
+            cert_file,
+            "MIIDXTCCAkWgAwIBAgIJAKL0UG+mRKqzMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV"
+        )
+        .unwrap(); // gitleaks:allow - test fixture
         writeln!(cert_file, "-----END CERTIFICATE-----").unwrap(); // gitleaks:allow - test fixture
 
         let mut key_file = File::create(&key_path).unwrap();

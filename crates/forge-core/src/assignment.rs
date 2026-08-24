@@ -233,16 +233,13 @@ impl AssignmentManager {
         let to_user = to_user.into();
         let by_user = by_user.into();
 
-        let mut assignments = self.assignments.lock().map_err(|e| {
-            ForgeError::assignment_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let mut assignments = self
+            .assignments
+            .lock()
+            .map_err(|e| ForgeError::assignment_error(format!("failed to acquire lock: {}", e)))?;
 
-        let assignment = BeadAssignment::assigned(
-            bead_id.clone(),
-            to_user.clone(),
-            by_user.clone(),
-            priority,
-        );
+        let assignment =
+            BeadAssignment::assigned(bead_id.clone(), to_user.clone(), by_user.clone(), priority);
 
         assignments.insert(bead_id.clone(), assignment.clone());
 
@@ -267,9 +264,10 @@ impl AssignmentManager {
         let bead_id = bead_id.into();
         let by_user = by_user.into();
 
-        let mut assignments = self.assignments.lock().map_err(|e| {
-            ForgeError::assignment_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let mut assignments = self
+            .assignments
+            .lock()
+            .map_err(|e| ForgeError::assignment_error(format!("failed to acquire lock: {}", e)))?;
 
         if let Some(assignment) = assignments.get_mut(&bead_id) {
             assignment.unassign();
@@ -303,9 +301,10 @@ impl AssignmentManager {
         let bead_id = bead_id.into();
         let user_id = user_id.into();
 
-        let mut assignments = self.assignments.lock().map_err(|e| {
-            ForgeError::assignment_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let mut assignments = self
+            .assignments
+            .lock()
+            .map_err(|e| ForgeError::assignment_error(format!("failed to acquire lock: {}", e)))?;
 
         if let Some(assignment) = assignments.get_mut(&bead_id) {
             assignment.mark_in_progress(&user_id);
@@ -341,9 +340,10 @@ impl AssignmentManager {
     pub fn mark_completed(&self, bead_id: impl Into<String>) -> Result<()> {
         let bead_id = bead_id.into();
 
-        let mut assignments = self.assignments.lock().map_err(|e| {
-            ForgeError::assignment_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let mut assignments = self
+            .assignments
+            .lock()
+            .map_err(|e| ForgeError::assignment_error(format!("failed to acquire lock: {}", e)))?;
 
         if let Some(assignment) = assignments.get_mut(&bead_id) {
             assignment.mark_completed();
@@ -369,27 +369,30 @@ impl AssignmentManager {
 
     /// Get assignment for a specific bead.
     pub fn get_assignment(&self, bead_id: &str) -> Result<Option<BeadAssignment>> {
-        let assignments = self.assignments.lock().map_err(|e| {
-            ForgeError::assignment_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let assignments = self
+            .assignments
+            .lock()
+            .map_err(|e| ForgeError::assignment_error(format!("failed to acquire lock: {}", e)))?;
 
         Ok(assignments.get(bead_id).cloned())
     }
 
     /// Get all assignments.
     pub fn get_all_assignments(&self) -> Result<Vec<BeadAssignment>> {
-        let assignments = self.assignments.lock().map_err(|e| {
-            ForgeError::assignment_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let assignments = self
+            .assignments
+            .lock()
+            .map_err(|e| ForgeError::assignment_error(format!("failed to acquire lock: {}", e)))?;
 
         Ok(assignments.values().cloned().collect())
     }
 
     /// Get assignments for a specific user.
     pub fn get_user_assignments(&self, user_id: &str) -> Result<Vec<BeadAssignment>> {
-        let assignments = self.assignments.lock().map_err(|e| {
-            ForgeError::assignment_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let assignments = self
+            .assignments
+            .lock()
+            .map_err(|e| ForgeError::assignment_error(format!("failed to acquire lock: {}", e)))?;
 
         let user_assignments: Vec<_> = assignments
             .values()
@@ -402,9 +405,10 @@ impl AssignmentManager {
 
     /// Get unassigned beads sorted by priority.
     pub fn get_unassigned(&self) -> Result<Vec<BeadAssignment>> {
-        let assignments = self.assignments.lock().map_err(|e| {
-            ForgeError::assignment_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let assignments = self
+            .assignments
+            .lock()
+            .map_err(|e| ForgeError::assignment_error(format!("failed to acquire lock: {}", e)))?;
 
         let mut unassigned: Vec<_> = assignments
             .values()
@@ -413,16 +417,17 @@ impl AssignmentManager {
             .collect();
 
         // Sort by priority (descending)
-        unassigned.sort_by(|a, b| b.priority.score().cmp(&a.priority.score()));
+        unassigned.sort_by_key(|b| std::cmp::Reverse(b.priority.score()));
 
         Ok(unassigned)
     }
 
     /// Get assignments by status.
     pub fn get_by_status(&self, status: AssignmentStatus) -> Result<Vec<BeadAssignment>> {
-        let assignments = self.assignments.lock().map_err(|e| {
-            ForgeError::assignment_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let assignments = self
+            .assignments
+            .lock()
+            .map_err(|e| ForgeError::assignment_error(format!("failed to acquire lock: {}", e)))?;
 
         let filtered: Vec<_> = assignments
             .values()
@@ -441,9 +446,10 @@ impl AssignmentManager {
     ) -> Result<()> {
         let bead_id = bead_id.into();
 
-        let mut assignments = self.assignments.lock().map_err(|e| {
-            ForgeError::assignment_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let mut assignments = self
+            .assignments
+            .lock()
+            .map_err(|e| ForgeError::assignment_error(format!("failed to acquire lock: {}", e)))?;
 
         if let Some(assignment) = assignments.get_mut(&bead_id) {
             assignment.priority = priority;
@@ -472,9 +478,10 @@ impl AssignmentManager {
     pub fn remove_assignment(&self, bead_id: impl Into<String>) -> Result<()> {
         let bead_id = bead_id.into();
 
-        let mut assignments = self.assignments.lock().map_err(|e| {
-            ForgeError::assignment_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let mut assignments = self
+            .assignments
+            .lock()
+            .map_err(|e| ForgeError::assignment_error(format!("failed to acquire lock: {}", e)))?;
 
         assignments.remove(&bead_id);
 
@@ -490,15 +497,12 @@ impl AssignmentManager {
 
     /// Load assignments from storage file.
     fn load(&mut self) -> Result<()> {
-        let path = self.storage_path.as_ref().ok_or_else(|| {
-            ForgeError::assignment_error("no storage path configured")
-        })?;
+        let path = self
+            .storage_path
+            .as_ref()
+            .ok_or_else(|| ForgeError::assignment_error("no storage path configured"))?;
 
-        let content = fs::read_to_string(path).map_err(|e| ForgeError::io(
-            "read",
-            path,
-            e,
-        ))?;
+        let content = fs::read_to_string(path).map_err(|e| ForgeError::io("read", path, e))?;
 
         let loaded: HashMap<String, BeadAssignment> =
             serde_yaml::from_str(&content).map_err(|e| ForgeError::YamlParse {
@@ -506,9 +510,10 @@ impl AssignmentManager {
                 message: e.to_string(),
             })?;
 
-        let mut assignments = self.assignments.lock().map_err(|e| {
-            ForgeError::assignment_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let mut assignments = self
+            .assignments
+            .lock()
+            .map_err(|e| ForgeError::assignment_error(format!("failed to acquire lock: {}", e)))?;
 
         *assignments = loaded;
 
@@ -522,14 +527,9 @@ impl AssignmentManager {
     }
 
     /// Save assignments to storage file (inner version that doesn't need mut self).
-    fn save_inner(
-        &self,
-        assignments: &HashMap<String, BeadAssignment>,
-        path: &Path,
-    ) -> Result<()> {
+    fn save_inner(&self, assignments: &HashMap<String, BeadAssignment>, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| ForgeError::io("create_dir_all", parent, e))?;
+            fs::create_dir_all(parent).map_err(|e| ForgeError::io("create_dir_all", parent, e))?;
         }
 
         let yaml = serde_yaml::to_string(assignments).map_err(|e| ForgeError::YamlParse {
@@ -537,8 +537,7 @@ impl AssignmentManager {
             message: e.to_string(),
         })?;
 
-        fs::write(path, yaml)
-            .map_err(|e| ForgeError::io("write", path, e))?;
+        fs::write(path, yaml).map_err(|e| ForgeError::io("write", path, e))?;
 
         debug!(
             path = %path.display(),
@@ -551,9 +550,10 @@ impl AssignmentManager {
 
     /// Force save assignments to storage.
     pub fn save(&self) -> Result<()> {
-        let assignments = self.assignments.lock().map_err(|e| {
-            ForgeError::assignment_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let assignments = self
+            .assignments
+            .lock()
+            .map_err(|e| ForgeError::assignment_error(format!("failed to acquire lock: {}", e)))?;
 
         if let Some(ref path) = self.storage_path {
             self.save_inner(&assignments, path)?;
@@ -564,9 +564,10 @@ impl AssignmentManager {
 
     /// Get assignment statistics.
     pub fn stats(&self) -> Result<AssignmentStats> {
-        let assignments = self.assignments.lock().map_err(|e| {
-            ForgeError::assignment_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let assignments = self
+            .assignments
+            .lock()
+            .map_err(|e| ForgeError::assignment_error(format!("failed to acquire lock: {}", e)))?;
 
         let mut stats = AssignmentStats::default();
 
@@ -634,12 +635,8 @@ mod tests {
 
     #[test]
     fn test_bead_assignment_assigned() {
-        let assignment = BeadAssignment::assigned(
-            "bd-123",
-            "user1",
-            "admin",
-            AssignmentPriority::High,
-        );
+        let assignment =
+            BeadAssignment::assigned("bd-123", "user1", "admin", AssignmentPriority::High);
 
         assert_eq!(assignment.bead_id, "bd-123");
         assert!(assignment.is_assigned_to("user1"));
@@ -668,12 +665,9 @@ mod tests {
     fn test_assignment_manager() {
         let manager = AssignmentManager::new();
 
-        manager.assign(
-            "bd-1",
-            "user1",
-            "admin",
-            AssignmentPriority::Normal,
-        ).unwrap();
+        manager
+            .assign("bd-1", "user1", "admin", AssignmentPriority::Normal)
+            .unwrap();
 
         let assignment = manager.get_assignment("bd-1").unwrap().unwrap();
         assert!(assignment.is_assigned_to("user1"));
@@ -690,12 +684,9 @@ mod tests {
         let storage_path = dir.path().join("assignments.yaml");
 
         let manager1 = AssignmentManager::with_storage(&storage_path).unwrap();
-        manager1.assign(
-            "bd-1",
-            "user1",
-            "admin",
-            AssignmentPriority::Critical,
-        ).unwrap();
+        manager1
+            .assign("bd-1", "user1", "admin", AssignmentPriority::Critical)
+            .unwrap();
 
         // Create a new manager and verify data persists
         let manager2 = AssignmentManager::with_storage(&storage_path).unwrap();
@@ -709,9 +700,15 @@ mod tests {
     fn test_get_user_assignments() {
         let manager = AssignmentManager::new();
 
-        manager.assign("bd-1", "user1", "admin", AssignmentPriority::Normal).unwrap();
-        manager.assign("bd-2", "user2", "admin", AssignmentPriority::Normal).unwrap();
-        manager.assign("bd-3", "user1", "admin", AssignmentPriority::Normal).unwrap();
+        manager
+            .assign("bd-1", "user1", "admin", AssignmentPriority::Normal)
+            .unwrap();
+        manager
+            .assign("bd-2", "user2", "admin", AssignmentPriority::Normal)
+            .unwrap();
+        manager
+            .assign("bd-3", "user1", "admin", AssignmentPriority::Normal)
+            .unwrap();
 
         let user1_assignments = manager.get_user_assignments("user1").unwrap();
         assert_eq!(user1_assignments.len(), 2);
@@ -724,9 +721,15 @@ mod tests {
     fn test_get_unassigned() {
         let manager = AssignmentManager::new();
 
-        manager.assign("bd-1", "user1", "admin", AssignmentPriority::Normal).unwrap();
-        manager.assign("bd-2", "user2", "admin", AssignmentPriority::Normal).unwrap();
-        manager.assign("bd-3", "user3", "admin", AssignmentPriority::Critical).unwrap();
+        manager
+            .assign("bd-1", "user1", "admin", AssignmentPriority::Normal)
+            .unwrap();
+        manager
+            .assign("bd-2", "user2", "admin", AssignmentPriority::Normal)
+            .unwrap();
+        manager
+            .assign("bd-3", "user3", "admin", AssignmentPriority::Critical)
+            .unwrap();
 
         // Unassign bd-2
         manager.unassign("bd-2", "admin").unwrap();
@@ -740,8 +743,12 @@ mod tests {
     fn test_assignment_stats() {
         let manager = AssignmentManager::new();
 
-        manager.assign("bd-1", "user1", "admin", AssignmentPriority::Normal).unwrap();
-        manager.assign("bd-2", "user2", "admin", AssignmentPriority::Normal).unwrap();
+        manager
+            .assign("bd-1", "user1", "admin", AssignmentPriority::Normal)
+            .unwrap();
+        manager
+            .assign("bd-2", "user2", "admin", AssignmentPriority::Normal)
+            .unwrap();
 
         let mut stats = manager.stats().unwrap();
         assert_eq!(stats.total, 2);
@@ -757,20 +764,50 @@ mod tests {
 
     #[test]
     fn test_priority_from_str() {
-        assert_eq!("critical".parse::<AssignmentPriority>().unwrap(), AssignmentPriority::Critical);
-        assert_eq!("high".parse::<AssignmentPriority>().unwrap(), AssignmentPriority::High);
-        assert_eq!("normal".parse::<AssignmentPriority>().unwrap(), AssignmentPriority::Normal);
-        assert_eq!("low".parse::<AssignmentPriority>().unwrap(), AssignmentPriority::Low);
+        assert_eq!(
+            "critical".parse::<AssignmentPriority>().unwrap(),
+            AssignmentPriority::Critical
+        );
+        assert_eq!(
+            "high".parse::<AssignmentPriority>().unwrap(),
+            AssignmentPriority::High
+        );
+        assert_eq!(
+            "normal".parse::<AssignmentPriority>().unwrap(),
+            AssignmentPriority::Normal
+        );
+        assert_eq!(
+            "low".parse::<AssignmentPriority>().unwrap(),
+            AssignmentPriority::Low
+        );
         assert!("unknown".parse::<AssignmentPriority>().is_err());
     }
 
     #[test]
     fn test_status_from_str() {
-        assert_eq!("unassigned".parse::<AssignmentStatus>().unwrap(), AssignmentStatus::Unassigned);
-        assert_eq!("assigned".parse::<AssignmentStatus>().unwrap(), AssignmentStatus::Assigned);
-        assert_eq!("in-progress".parse::<AssignmentStatus>().unwrap(), AssignmentStatus::InProgress);
-        assert_eq!("in_progress".parse::<AssignmentStatus>().unwrap(), AssignmentStatus::InProgress);
-        assert_eq!("completed".parse::<AssignmentStatus>().unwrap(), AssignmentStatus::Completed);
-        assert_eq!("blocked".parse::<AssignmentStatus>().unwrap(), AssignmentStatus::Blocked);
+        assert_eq!(
+            "unassigned".parse::<AssignmentStatus>().unwrap(),
+            AssignmentStatus::Unassigned
+        );
+        assert_eq!(
+            "assigned".parse::<AssignmentStatus>().unwrap(),
+            AssignmentStatus::Assigned
+        );
+        assert_eq!(
+            "in-progress".parse::<AssignmentStatus>().unwrap(),
+            AssignmentStatus::InProgress
+        );
+        assert_eq!(
+            "in_progress".parse::<AssignmentStatus>().unwrap(),
+            AssignmentStatus::InProgress
+        );
+        assert_eq!(
+            "completed".parse::<AssignmentStatus>().unwrap(),
+            AssignmentStatus::Completed
+        );
+        assert_eq!(
+            "blocked".parse::<AssignmentStatus>().unwrap(),
+            AssignmentStatus::Blocked
+        );
     }
 }
