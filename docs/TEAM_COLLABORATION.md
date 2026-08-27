@@ -232,7 +232,7 @@ server:
 
 For production use:
 1. **Replace SimpleAuth**: The default auth provider uses hardcoded passwords. Integrate with your existing auth system (OAuth, LDAP, etc.)
-2. **Use TLS/WSS**: Encrypt WebSocket connections in production
+2. **Use TLS/WSS**: Encrypt WebSocket connections in production. See [TLS Setup Guide](TLS_SETUP.md) for comprehensive TLS/WSS configuration including Let's Encrypt setup, reverse proxy configuration, and troubleshooting.
 3. **Network Security**: Use firewall rules to restrict access
 4. **Audit Logging**: Ensure audit logs are enabled for compliance
 
