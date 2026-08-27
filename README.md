@@ -290,3 +290,9 @@ MIT
 - **Resource** — optimize subscription and API usage
 - **Generation** — spawn workers dynamically based on demand
 - **Engine** — reliable, continuous automation
+
+---
+
+Part of [jedarden.com](https://jedarden.com) · Read the write-up: [jedarden.com/projects/forge/](https://jedarden.com/projects/forge/)
+
+*This GitHub repo is a read-only mirror of git.ardenone.com/jedarden/forge — issues and PRs are welcome here either way.*
