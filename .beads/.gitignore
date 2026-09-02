@@ -12,3 +12,10 @@
 
 # Journals
 *.journal
+
+# Runtime directories — worker transcripts can carry raw tool output.
+# Forgejo's pre-receive gate rejects .beads/traces/** outright.
+# The durable bead record is checkpoint/.
+traces/
+diagnostics/
+receipts/
