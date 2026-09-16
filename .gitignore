@@ -52,3 +52,21 @@ config.local.yaml
 .tmp/
 .cache/
 *.tmp
+
+# Local NEEDLE and bead runtime state
+.needle-predispatch-sha
+.beads/events.jsonl
+.beads/heartbeats.jsonl
+.beads/diagnostics/
+.beads/logs/
+.beads/traces/
+.beads/receipts/
+.beads/*.db
+.beads/*.db-shm
+.beads/*.db-wal
+.beads/*.db.backup.*
+.beads/*.lock
+.beads/*.tmp
+.beads/*.temp
+.beads/*.journal
+.br_recovery/
