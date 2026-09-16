@@ -77,16 +77,17 @@ run_fast_lane() {
     EXIT_CODE=1
   fi
 
-  # Clippy
+  # Clippy (--workspace: the root Cargo.toml is itself a package; without this
+  # flag only the root `forge` package is linted, never the member crates)
   echo "Running clippy..."
-  if ! cargo clippy --all-targets -- -D warnings; then
+  if ! cargo clippy --workspace --all-targets -- -D warnings; then
     FAILURES+=("cargo clippy failed")
     EXIT_CODE=1
   fi
 
   # Compilation check
   echo "Running cargo check..."
-  if ! cargo check --all-targets; then
+  if ! cargo check --workspace --all-targets; then
     FAILURES+=("cargo check failed")
     EXIT_CODE=1
   fi
@@ -96,9 +97,10 @@ run_fast_lane() {
 run_slow_lane() {
   echo "=== Running slow lane checks ==="
 
-  # Unit tests
+  # Unit tests (--workspace: without this flag only the root `forge` package's
+  # tests run, never the member crates')
   echo "Running cargo test..."
-  if ! cargo test; then
+  if ! cargo test --workspace; then
     FAILURES+=("cargo test failed")
     EXIT_CODE=1
   fi

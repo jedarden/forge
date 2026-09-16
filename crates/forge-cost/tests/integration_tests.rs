@@ -428,7 +428,7 @@ fn test_large_batch_insert() {
         .map(|i| {
             ApiCall::new(
                 Utc::now(),
-                &format!("worker-{}", i % 50),
+                format!("worker-{}", i % 50),
                 if i % 4 == 0 {
                     "claude-opus"
                 } else if i % 4 == 1 {
@@ -761,7 +761,7 @@ fn test_concurrent_database_operations() {
                     .map(|_i| {
                         ApiCall::new(
                             Utc::now(),
-                            &format!("worker-thread-{}", thread_id),
+                            format!("worker-thread-{}", thread_id),
                             "claude-sonnet",
                             100,
                             50,

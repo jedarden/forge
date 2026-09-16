@@ -1223,7 +1223,7 @@ mod tests {
         let needing_attention = query.get_subscriptions_needing_attention().unwrap();
 
         // Under-utilized should need attention
-        assert!(needing_attention.len() >= 1);
+        assert!(!needing_attention.is_empty());
         assert!(needing_attention.iter().any(|s| s.name == "Under Utilized"));
     }
 

@@ -103,7 +103,10 @@ async fn test_ws_compatibility_preserved() {
 
     // Verify client connected and authenticated
     let state = client.get_state().await;
-    assert!(state.authenticated, "Client should authenticate successfully over WS");
+    assert!(
+        state.authenticated,
+        "Client should authenticate successfully over WS"
+    );
     assert!(state.session.is_some(), "Client should have a session");
 
     // Verify authentication flow is preserved
@@ -221,10 +224,7 @@ async fn test_self_signed_certificate_rejected_by_default() {
     let client_clone = client.clone();
 
     // Attempt connection - should fail due to self-signed cert
-    let connection_result = tokio::spawn(async move {
-        let result = client_clone.connect_and_run().await;
-        result
-    });
+    let connection_result = tokio::spawn(async move { client_clone.connect_and_run().await });
 
     // Wait for connection attempt
     let result = timeout(Duration::from_secs(3), connection_result).await;
@@ -238,7 +238,9 @@ async fn test_self_signed_certificate_rejected_by_default() {
             // Expected - connection failed with certificate error
             let error_msg = e.to_string();
             assert!(
-                error_msg.contains("TLS") || error_msg.contains("certificate") || error_msg.contains("handshake"),
+                error_msg.contains("TLS")
+                    || error_msg.contains("certificate")
+                    || error_msg.contains("handshake"),
                 "Error should mention TLS/certificate/handshake issue: {}",
                 error_msg
             );
@@ -288,17 +290,17 @@ async fn test_certificate_verification_can_be_disabled_for_development() {
     let client_clone = client.clone();
 
     // Attempt connection with verification disabled - should succeed
-    let connection_result = tokio::spawn(async move {
-        let result = client_clone.connect_and_run().await;
-        result
-    });
+    let connection_result = tokio::spawn(async move { client_clone.connect_and_run().await });
 
     // Wait for connection
     sleep(Duration::from_millis(2000)).await;
 
     // Verify client connected successfully
     let state = client.get_state().await;
-    assert!(state.authenticated, "Client should authenticate when verification is disabled");
+    assert!(
+        state.authenticated,
+        "Client should authenticate when verification is disabled"
+    );
 
     // Verify the dangerous setting was actually used
     assert!(!client_config.tls.unwrap().danger_verify_certificate);
@@ -314,8 +316,14 @@ async fn test_client_tls_config_default_verification_enabled() {
     let tls_config = ClientTlsConfig::new();
 
     // Default should have verification enabled
-    assert!(tls_config.danger_verify_certificate, "Default should verify certificates");
-    assert!(tls_config.ca_bundle_path.is_none(), "Default should not have custom CA bundle");
+    assert!(
+        tls_config.danger_verify_certificate,
+        "Default should verify certificates"
+    );
+    assert!(
+        tls_config.ca_bundle_path.is_none(),
+        "Default should not have custom CA bundle"
+    );
 }
 
 /// Test ClientTlsConfig with verification explicitly disabled.
@@ -323,8 +331,14 @@ async fn test_client_tls_config_default_verification_enabled() {
 async fn test_client_tls_config_disable_verification() {
     let tls_config = ClientTlsConfig::new().danger_disable_verification();
 
-    assert!(!tls_config.danger_verify_certificate, "Verification should be disabled");
-    assert!(tls_config.ca_bundle_path.is_none(), "Should not have custom CA bundle");
+    assert!(
+        !tls_config.danger_verify_certificate,
+        "Verification should be disabled"
+    );
+    assert!(
+        tls_config.ca_bundle_path.is_none(),
+        "Should not have custom CA bundle"
+    );
 }
 
 /// Test ClientTlsConfig with custom CA bundle path.
@@ -338,8 +352,15 @@ async fn test_client_tls_config_with_ca_bundle() {
 
     let tls_config = ClientTlsConfig::new().with_ca_bundle(ca_bundle_path.clone());
 
-    assert!(tls_config.danger_verify_certificate, "Should still verify certificates");
-    assert_eq!(tls_config.ca_bundle_path, Some(ca_bundle_path), "Should have custom CA bundle");
+    assert!(
+        tls_config.danger_verify_certificate,
+        "Should still verify certificates"
+    );
+    assert_eq!(
+        tls_config.ca_bundle_path,
+        Some(ca_bundle_path),
+        "Should have custom CA bundle"
+    );
 }
 
 /// Test that invalid URL schemes are rejected.
@@ -357,7 +378,10 @@ async fn test_invalid_url_scheme_rejected() {
     // Attempt connection should fail with clear error
     let result = client.connect_and_run().await;
 
-    assert!(result.is_err(), "Connection should fail with invalid URL scheme");
+    assert!(
+        result.is_err(),
+        "Connection should fail with invalid URL scheme"
+    );
     let error_msg = result.unwrap_err().to_string();
     assert!(
         error_msg.contains("Invalid WebSocket URL scheme") || error_msg.contains("scheme"),
@@ -472,7 +496,10 @@ async fn test_message_flow_preserved_over_wss() {
 
     // Verify client is still connected and authenticated
     let final_state = client.get_state().await;
-    assert!(final_state.authenticated, "Client should remain authenticated");
+    assert!(
+        final_state.authenticated,
+        "Client should remain authenticated"
+    );
 
     server.stop().await;
 }

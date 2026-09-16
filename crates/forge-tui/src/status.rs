@@ -722,14 +722,16 @@ mod tests {
     #[test]
     #[serial(file_watcher)]
     fn test_worker_counts() {
-        let mut counts = WorkerCounts::default();
-        counts.active = 5;
-        counts.idle = 3;
-        counts.starting = 1;
-        counts.failed = 2;
-        counts.stopped = 1;
-        counts.error = 1;
-        counts.total = 13;
+        let counts = WorkerCounts {
+            active: 5,
+            idle: 3,
+            starting: 1,
+            failed: 2,
+            stopped: 1,
+            error: 1,
+            total: 13,
+            ..WorkerCounts::default()
+        };
 
         assert_eq!(counts.healthy(), 9); // 5 + 3 + 1
         assert_eq!(counts.unhealthy(), 4); // 2 + 1 + 1

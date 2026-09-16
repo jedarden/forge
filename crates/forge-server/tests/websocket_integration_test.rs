@@ -2,17 +2,17 @@
 //!
 //! Tests real-time WebSocket communication, state broadcasting, and message relay.
 
+use forge_core::{BeadStatus, Priority, UserRole, WorkerStatus};
 use forge_server::{
+    auth::{AuthProvider, TestAuthProvider},
+    client::{ClientConfig, ForgeClient},
+    protocol::{BeadState, ClientMessage, CostState, ServerMessage, WorkerState},
     websocket::{ForgeServer, ServerConfig},
-    client::{ForgeClient, ClientConfig},
-    protocol::{ServerMessage, WorkerState, BeadState, CostState, ClientMessage},
-    auth::{TestAuthProvider, AuthProvider},
 };
-use forge_core::{WorkerStatus, BeadStatus, Priority, UserRole};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::{sleep, timeout};
 use tokio::sync::Mutex;
+use tokio::time::{sleep, timeout};
 
 /// Helper function to create a test auth provider for testing.
 /// Uses TestAuthProvider with predefined test users and tokens.
@@ -103,7 +103,7 @@ fn create_test_config(port: u16) -> ServerConfig {
     ServerConfig {
         bind_address: "127.0.0.1".to_string(),
         port,
-        tls: None,  // No TLS for basic tests
+        tls: None, // No TLS for basic tests
     }
 }
 
@@ -199,6 +199,7 @@ async fn test_websocket_connect_disconnect_cycle() {
         server_url: "ws://127.0.0.1:8081/ws".to_string(),
         user_id: "viewer".to_string(),
         password: get_test_token("viewer"),
+        tls: None,
     };
 
     let client = ForgeClient::new(client_config.clone());
@@ -216,14 +217,30 @@ async fn test_websocket_connect_disconnect_cycle() {
     assert!(state.session.is_some(), "Client should have a session");
 
     let session = state.session.unwrap();
-    assert_eq!(session.user_id, "viewer", "Session should have correct user ID");
-    assert_eq!(session.role, UserRole::Viewer, "Viewer user should have Viewer role");
+    assert_eq!(
+        session.user_id, "viewer",
+        "Session should have correct user ID"
+    );
+    assert_eq!(
+        session.role,
+        UserRole::Viewer,
+        "Viewer user should have Viewer role"
+    );
 
     // Verify server info
-    assert!(state.server_info.is_some(), "Client should have server info");
+    assert!(
+        state.server_info.is_some(),
+        "Client should have server info"
+    );
     let server_info = state.server_info.unwrap();
-    assert!(!server_info.server_version.is_empty(), "Server version should not be empty");
-    assert_eq!(server_info.connected_users, 1, "Should report 1 connected user");
+    assert!(
+        !server_info.server_version.is_empty(),
+        "Server version should not be empty"
+    );
+    assert_eq!(
+        server_info.connected_users, 1,
+        "Should report 1 connected user"
+    );
 
     // Verify session is registered in server
     let session_count = server.session_registry().manager().session_count().await;
@@ -231,7 +248,10 @@ async fn test_websocket_connect_disconnect_cycle() {
 
     // Test client can send messages
     let sync_result = client.send_direct(ClientMessage::SyncState).await;
-    assert!(sync_result.is_ok(), "Client should be able to send SyncState message");
+    assert!(
+        sync_result.is_ok(),
+        "Client should be able to send SyncState message"
+    );
 
     // Stop server to trigger disconnection
     server.stop().await;
@@ -239,14 +259,20 @@ async fn test_websocket_connect_disconnect_cycle() {
     // Wait for server to stop
     let _ = timeout(Duration::from_secs(2), server_handle).await;
     let running_after_stop = server.is_running().await;
-    assert!(!running_after_stop, "Server should not be running after stop");
+    assert!(
+        !running_after_stop,
+        "Server should not be running after stop"
+    );
 
     // Wait for client to disconnect
     sleep(Duration::from_millis(500)).await;
 
     // Verify session was cleaned up
     let session_count_after = server.session_registry().manager().session_count().await;
-    assert_eq!(session_count_after, 0, "Server should have 0 sessions after disconnect");
+    assert_eq!(
+        session_count_after, 0,
+        "Server should have 0 sessions after disconnect"
+    );
 
     // Verify client connection is closed
     let _state_after = client.get_state().await;
@@ -254,7 +280,10 @@ async fn test_websocket_connect_disconnect_cycle() {
 
     // Try to send message - should fail
     let send_result = client.send_direct(ClientMessage::SyncState).await;
-    assert!(send_result.is_err(), "Sending message after disconnect should fail");
+    assert!(
+        send_result.is_err(),
+        "Sending message after disconnect should fail"
+    );
 
     // Test reconnection with new server instance
     let config2 = create_test_config(8081);
@@ -280,7 +309,10 @@ async fn test_websocket_connect_disconnect_cycle() {
     sleep(Duration::from_millis(500)).await;
 
     let state2 = client2.get_state().await;
-    assert!(state2.authenticated, "Reconnected client should be authenticated");
+    assert!(
+        state2.authenticated,
+        "Reconnected client should be authenticated"
+    );
 
     server2.stop().await;
 }
@@ -309,6 +341,7 @@ async fn test_state_broadcast() {
             server_url: "ws://127.0.0.1:8082/ws".to_string(),
             user_id: format!("user{}", i),
             password: "testpass".to_string(),
+            tls: None,
         };
 
         let tracked_client = TrackedClient::new(client_config).await;
@@ -387,12 +420,14 @@ async fn test_state_broadcast() {
                 i
             );
             assert_eq!(
-                update.workers[0].status, WorkerStatus::Active,
+                update.workers[0].status,
+                WorkerStatus::Active,
                 "Client {}: worker 1 should be Active",
                 i
             );
             assert_eq!(
-                update.workers[0].current_task, Some("bead-1".to_string()),
+                update.workers[0].current_task,
+                Some("bead-1".to_string()),
                 "Client {}: worker 1 should have correct task",
                 i
             );
@@ -404,7 +439,8 @@ async fn test_state_broadcast() {
                 i
             );
             assert_eq!(
-                update.workers[1].status, WorkerStatus::Idle,
+                update.workers[1].status,
+                WorkerStatus::Idle,
                 "Client {}: worker 2 should be Idle",
                 i
             );
@@ -418,9 +454,10 @@ async fn test_state_broadcast() {
 
     // Verify StateUpdate messages were received
     for (i, tracked) in tracked_clients.iter().enumerate() {
-        let state_update_count = tracked.tracker().count_messages(|msg| {
-            matches!(msg, ServerMessage::StateUpdate(_))
-        }).await;
+        let state_update_count = tracked
+            .tracker()
+            .count_messages(|msg| matches!(msg, ServerMessage::StateUpdate(_)))
+            .await;
 
         assert_eq!(
             state_update_count, 1,
@@ -430,29 +467,38 @@ async fn test_state_broadcast() {
     }
 
     // Broadcast multiple state updates in sequence
-    let worker_states_2 = vec![
-        WorkerState {
-            worker_id: "worker-1".to_string(),
-            model: "claude-sonnet-5".to_string(),
-            status: WorkerStatus::Idle,
-            current_task: None,
-            started_at: Some(chrono::Utc::now()),
-        },
-    ];
+    let worker_states_2 = vec![WorkerState {
+        worker_id: "worker-1".to_string(),
+        model: "claude-sonnet-5".to_string(),
+        status: WorkerStatus::Idle,
+        current_task: None,
+        started_at: Some(chrono::Utc::now()),
+    }];
 
     server.update_workers(worker_states_2).await;
 
     // Wait for second update
     assert!(
-        tracked_clients[0].tracker().wait_for_message_count(2, 2000).await,
+        tracked_clients[0]
+            .tracker()
+            .wait_for_message_count(2, 2000)
+            .await,
         "Client should receive second state update"
     );
 
     // Verify the second update
     let state = tracked_clients[0].client().get_state().await;
     if let Some(update) = &state.state_update {
-        assert_eq!(update.workers.len(), 1, "Should have 1 worker after second update");
-        assert_eq!(update.workers[0].status, WorkerStatus::Idle, "Worker should be Idle");
+        assert_eq!(
+            update.workers.len(),
+            1,
+            "Should have 1 worker after second update"
+        );
+        assert_eq!(
+            update.workers[0].status,
+            WorkerStatus::Idle,
+            "Worker should be Idle"
+        );
     }
 
     server.stop().await;
@@ -482,12 +528,14 @@ async fn test_message_relay() {
         server_url: "ws://127.0.0.1:8083/ws".to_string(),
         user_id: "admin".to_string(),
         password: get_test_token("admin").to_string(),
+        tls: None,
     };
 
     let client2_config = ClientConfig {
         server_url: "ws://127.0.0.1:8083/ws".to_string(),
         user_id: "operator".to_string(),
         password: get_test_token("operator").to_string(),
+        tls: None,
     };
 
     let tracked1 = TrackedClient::new(client1_config).await;
@@ -522,13 +570,22 @@ async fn test_message_relay() {
     );
 
     // Verify Client 2 received the correct assignment notification
-    let assignment_msg = tracked2.tracker().find_message(|msg| {
-        matches!(msg, ServerMessage::BeadAssigned { .. })
-    }).await;
+    let assignment_msg = tracked2
+        .tracker()
+        .find_message(|msg| matches!(msg, ServerMessage::BeadAssigned { .. }))
+        .await;
 
-    assert!(assignment_msg.is_some(), "Client 2 should receive BeadAssigned message");
+    assert!(
+        assignment_msg.is_some(),
+        "Client 2 should receive BeadAssigned message"
+    );
 
-    if let Some(ServerMessage::BeadAssigned { bead_id, assigned_to, assigned_by }) = assignment_msg {
+    if let Some(ServerMessage::BeadAssigned {
+        bead_id,
+        assigned_to,
+        assigned_by,
+    }) = assignment_msg
+    {
         assert_eq!(bead_id, "bead-1", "Should have correct bead ID");
         assert_eq!(assigned_to, "operator", "Should be assigned to operator");
         assert_eq!(assigned_by, "admin", "Should be assigned by admin");
@@ -556,7 +613,10 @@ async fn test_message_relay() {
 
     // Verify Client 2 received notification (might be implicit through state update)
     let msg_count = tracked2.tracker().count().await;
-    assert!(msg_count > 0, "Client 2 should receive some message after unassignment");
+    assert!(
+        msg_count > 0,
+        "Client 2 should receive some message after unassignment"
+    );
 
     // Test multiple message relays in sequence
     tracked1.tracker().clear().await;
@@ -574,11 +634,15 @@ async fn test_message_relay() {
     );
 
     // Verify all assignments were received
-    let assignment_count = tracked2.tracker().count_messages(|msg| {
-        matches!(msg, ServerMessage::BeadAssigned { .. })
-    }).await;
+    let assignment_count = tracked2
+        .tracker()
+        .count_messages(|msg| matches!(msg, ServerMessage::BeadAssigned { .. }))
+        .await;
 
-    assert_eq!(assignment_count, 3, "Should receive 3 BeadAssigned messages");
+    assert_eq!(
+        assignment_count, 3,
+        "Should receive 3 BeadAssigned messages"
+    );
 
     server.stop().await;
 }
@@ -608,6 +672,7 @@ async fn test_comprehensive_state_update_broadcast() {
             server_url: "ws://127.0.0.1:8094/ws".to_string(),
             user_id: format!("viewer{}", i),
             password: "testpass".to_string(),
+            tls: None,
         };
 
         let tracked = TrackedClient::new(config).await;
@@ -629,29 +694,25 @@ async fn test_comprehensive_state_update_broadcast() {
     }
 
     // Update workers
-    let workers = vec![
-        WorkerState {
-            worker_id: "worker-alpha".to_string(),
-            model: "claude-sonnet-5".to_string(),
-            status: WorkerStatus::Active,
-            current_task: Some("task-1".to_string()),
-            started_at: Some(chrono::Utc::now()),
-        },
-    ];
+    let workers = vec![WorkerState {
+        worker_id: "worker-alpha".to_string(),
+        model: "claude-sonnet-5".to_string(),
+        status: WorkerStatus::Active,
+        current_task: Some("task-1".to_string()),
+        started_at: Some(chrono::Utc::now()),
+    }];
 
     server.update_workers(workers).await;
 
     // Update beads
-    let beads = vec![
-        BeadState {
-            bead_id: "bead-1".to_string(),
-            title: "Fix authentication".to_string(),
-            status: BeadStatus::InProgress,
-            priority: Priority::P1,
-            assigned_to: Some("operator".to_string()),
-            created_at: chrono::Utc::now(),
-        },
-    ];
+    let beads = vec![BeadState {
+        bead_id: "bead-1".to_string(),
+        title: "Fix authentication".to_string(),
+        status: BeadStatus::InProgress,
+        priority: Priority::P1,
+        assigned_to: Some("operator".to_string()),
+        created_at: chrono::Utc::now(),
+    }];
 
     server.update_beads(beads).await;
 
@@ -685,19 +746,38 @@ async fn test_comprehensive_state_update_broadcast() {
         if let Some(update) = &state.state_update {
             // Verify workers
             assert_eq!(update.workers.len(), 1, "Client {} should have 1 worker", i);
-            assert_eq!(update.workers[0].worker_id, "worker-alpha", "Worker ID should match");
+            assert_eq!(
+                update.workers[0].worker_id, "worker-alpha",
+                "Worker ID should match"
+            );
 
             // Verify beads
             assert_eq!(update.beads.len(), 1, "Client {} should have 1 bead", i);
-            assert_eq!(update.beads[0].status, BeadStatus::InProgress, "Bead status should match");
+            assert_eq!(
+                update.beads[0].status,
+                BeadStatus::InProgress,
+                "Bead status should match"
+            );
 
             // Verify costs
-            assert!((update.costs.today_cost - 12.50).abs() < 0.01, "Today cost should match");
-            assert!((update.costs.week_cost - 85.25).abs() < 0.01, "Week cost should match");
-            assert!((update.costs.month_cost - 342.75).abs() < 0.01, "Month cost should match");
+            assert!(
+                (update.costs.today_cost - 12.50).abs() < 0.01,
+                "Today cost should match"
+            );
+            assert!(
+                (update.costs.week_cost - 85.25).abs() < 0.01,
+                "Week cost should match"
+            );
+            assert!(
+                (update.costs.month_cost - 342.75).abs() < 0.01,
+                "Month cost should match"
+            );
 
             // Verify sessions
-            assert!(update.sessions.len() >= 3, "Should have at least 3 sessions");
+            assert!(
+                update.sessions.len() >= 3,
+                "Should have at least 3 sessions"
+            );
         }
     }
 
@@ -725,6 +805,7 @@ async fn test_user_join_leave_broadcast() {
         server_url: "ws://127.0.0.1:8084/ws".to_string(),
         user_id: "user1".to_string(),
         password: "testpass".to_string(),
+        tls: None,
     };
 
     let client1 = ForgeClient::new(client1_config);
@@ -746,6 +827,7 @@ async fn test_user_join_leave_broadcast() {
         server_url: "ws://127.0.0.1:8084/ws".to_string(),
         user_id: "user2".to_string(),
         password: "testpass".to_string(),
+        tls: None,
     };
 
     let client2 = ForgeClient::new(client2_config);
@@ -793,6 +875,7 @@ async fn test_bead_assignment_operations() {
         server_url: "ws://127.0.0.1:8085/ws".to_string(),
         user_id: "admin".to_string(),
         password: get_test_token("admin").to_string(),
+        tls: None,
     };
 
     let client = ForgeClient::new(client_config);
@@ -840,6 +923,7 @@ async fn test_worker_status_change_broadcast() {
         server_url: "ws://127.0.0.1:8086/ws".to_string(),
         user_id: "viewer".to_string(),
         password: get_test_token("viewer").to_string(),
+        tls: None,
     };
 
     let client = ForgeClient::new(client_config);
@@ -852,15 +936,13 @@ async fn test_worker_status_change_broadcast() {
     sleep(Duration::from_millis(500)).await;
 
     // Update worker states
-    let worker_states = vec![
-        WorkerState {
-            worker_id: "worker-1".to_string(),
-            model: "claude-opus-5".to_string(),
-            status: WorkerStatus::Active,
-            current_task: Some("bead-1".to_string()),
-            started_at: Some(chrono::Utc::now()),
-        },
-    ];
+    let worker_states = vec![WorkerState {
+        worker_id: "worker-1".to_string(),
+        model: "claude-opus-5".to_string(),
+        status: WorkerStatus::Active,
+        current_task: Some("bead-1".to_string()),
+        started_at: Some(chrono::Utc::now()),
+    }];
 
     server.update_workers(worker_states).await;
 
@@ -900,6 +982,7 @@ async fn test_bead_status_change_broadcast() {
         server_url: "ws://127.0.0.1:8087/ws".to_string(),
         user_id: "operator".to_string(),
         password: get_test_token("operator").to_string(),
+        tls: None,
     };
 
     let client = ForgeClient::new(client_config);
@@ -912,16 +995,14 @@ async fn test_bead_status_change_broadcast() {
     sleep(Duration::from_millis(500)).await;
 
     // Update bead states
-    let bead_states = vec![
-        BeadState {
-            bead_id: "bead-1".to_string(),
-            title: "Test Bead".to_string(),
-            status: BeadStatus::InProgress,
-            priority: Priority::P1,
-            assigned_to: Some("operator".to_string()),
-            created_at: chrono::Utc::now(),
-        },
-    ];
+    let bead_states = vec![BeadState {
+        bead_id: "bead-1".to_string(),
+        title: "Test Bead".to_string(),
+        status: BeadStatus::InProgress,
+        priority: Priority::P1,
+        assigned_to: Some("operator".to_string()),
+        created_at: chrono::Utc::now(),
+    }];
 
     server.update_beads(bead_states).await;
 
@@ -961,6 +1042,7 @@ async fn test_cost_state_broadcast() {
         server_url: "ws://127.0.0.1:8088/ws".to_string(),
         user_id: "viewer".to_string(),
         password: get_test_token("viewer").to_string(),
+        tls: None,
     };
 
     let client = ForgeClient::new(client_config);
@@ -1021,12 +1103,14 @@ async fn test_chat_message_relay() {
         server_url: "ws://127.0.0.1:8089/ws".to_string(),
         user_id: "admin".to_string(),
         password: get_test_token("admin").to_string(),
+        tls: None,
     };
 
     let client2_config = ClientConfig {
         server_url: "ws://127.0.0.1:8089/ws".to_string(),
         user_id: "operator".to_string(),
         password: get_test_token("operator").to_string(),
+        tls: None,
     };
 
     let tracked1 = TrackedClient::new(client1_config).await;
@@ -1069,17 +1153,26 @@ async fn test_chat_message_relay() {
     );
 
     // Verify client 2 received the chat message
-    let chat_msg = tracked2.tracker().find_message(|msg| {
-        matches!(msg, ServerMessage::ChatMessage { .. })
-    }).await;
+    let chat_msg = tracked2
+        .tracker()
+        .find_message(|msg| matches!(msg, ServerMessage::ChatMessage { .. }))
+        .await;
 
     assert!(chat_msg.is_some(), "Client 2 should receive ChatMessage");
 
-    if let Some(ServerMessage::ChatMessage { from, message, timestamp }) = chat_msg {
+    if let Some(ServerMessage::ChatMessage {
+        from,
+        message,
+        timestamp,
+    }) = chat_msg
+    {
         assert_eq!(from, "admin", "Message should be from admin");
         assert_eq!(message, test_message, "Message content should match");
         let formatted_time = timestamp.format("%Y-%m-%d %H:%M:%S").to_string();
-        assert!(!formatted_time.is_empty(), "Timestamp should be valid and format to string");
+        assert!(
+            !formatted_time.is_empty(),
+            "Timestamp should be valid and format to string"
+        );
     } else {
         panic!("Message should be ChatMessage variant");
     }
@@ -1088,11 +1181,7 @@ async fn test_chat_message_relay() {
     tracked1.tracker().clear().await;
     tracked2.tracker().clear().await;
 
-    let messages = vec![
-        "First message",
-        "Second message",
-        "Third message",
-    ];
+    let messages = ["First message", "Second message", "Third message"];
 
     for msg in messages.iter() {
         tracked1.client().send_chat(*msg).await;
@@ -1106,9 +1195,10 @@ async fn test_chat_message_relay() {
     );
 
     // Verify message count
-    let chat_count = tracked2.tracker().count_messages(|msg| {
-        matches!(msg, ServerMessage::ChatMessage { .. })
-    }).await;
+    let chat_count = tracked2
+        .tracker()
+        .count_messages(|msg| matches!(msg, ServerMessage::ChatMessage { .. }))
+        .await;
 
     assert_eq!(chat_count, 3, "Should receive exactly 3 chat messages");
 
@@ -1116,8 +1206,14 @@ async fn test_chat_message_relay() {
     let state1 = tracked1.client().get_state().await;
     let state2 = tracked2.client().get_state().await;
 
-    assert!(state1.authenticated, "Client 1 should still be authenticated");
-    assert!(state2.authenticated, "Client 2 should still be authenticated");
+    assert!(
+        state1.authenticated,
+        "Client 1 should still be authenticated"
+    );
+    assert!(
+        state2.authenticated,
+        "Client 2 should still be authenticated"
+    );
 
     server.stop().await;
 }
@@ -1145,6 +1241,7 @@ async fn test_multiple_concurrent_connections() {
             server_url: "ws://127.0.0.1:8090/ws".to_string(),
             user_id: format!("user{}", i),
             password: "testpass".to_string(),
+            tls: None,
         };
 
         let client = ForgeClient::new(client_config);
@@ -1161,15 +1258,13 @@ async fn test_multiple_concurrent_connections() {
     sleep(Duration::from_millis(1000)).await;
 
     // Broadcast a state update
-    let worker_states = vec![
-        WorkerState {
-            worker_id: "worker-test".to_string(),
-            model: "claude-sonnet-5".to_string(),
-            status: WorkerStatus::Idle,
-            current_task: None,
-            started_at: Some(chrono::Utc::now()),
-        },
-    ];
+    let worker_states = vec![WorkerState {
+        worker_id: "worker-test".to_string(),
+        model: "claude-sonnet-5".to_string(),
+        status: WorkerStatus::Idle,
+        current_task: None,
+        started_at: Some(chrono::Utc::now()),
+    }];
 
     server.update_workers(worker_states).await;
 
@@ -1179,11 +1274,7 @@ async fn test_multiple_concurrent_connections() {
     // Verify all clients are authenticated and received the update
     for (i, client) in clients.iter().enumerate() {
         let state = client.get_state().await;
-        assert!(
-            state.authenticated,
-            "Client {} should be authenticated",
-            i
-        );
+        assert!(state.authenticated, "Client {} should be authenticated", i);
         assert!(
             state.state_update.is_some(),
             "Client {} should have received state update",
@@ -1215,6 +1306,7 @@ async fn test_ping_pong_keepalive() {
         server_url: "ws://127.0.0.1:8091/ws".to_string(),
         user_id: "viewer".to_string(),
         password: get_test_token("viewer").to_string(),
+        tls: None,
     };
 
     let client = ForgeClient::new(client_config);
@@ -1254,6 +1346,7 @@ async fn test_authentication_failure() {
         server_url: "ws://127.0.0.1:8092/ws".to_string(),
         user_id: "admin".to_string(),
         password: "wrongpassword".to_string(),
+        tls: None,
     };
 
     let client = ForgeClient::new(client_config);
@@ -1267,7 +1360,10 @@ async fn test_authentication_failure() {
 
     // Verify authentication failed (not authenticated)
     let state = client.get_state().await;
-    assert!(!state.authenticated, "Client should not be authenticated with wrong password");
+    assert!(
+        !state.authenticated,
+        "Client should not be authenticated with wrong password"
+    );
 
     server.stop().await;
 }
@@ -1297,6 +1393,7 @@ async fn test_concurrent_client_operations() {
             server_url: "ws://127.0.0.1:8095/ws".to_string(),
             user_id: format!("admin{}", i),
             password: get_test_token("admin").to_string(),
+            tls: None,
         };
 
         let tracked = TrackedClient::new(config).await;
@@ -1322,7 +1419,9 @@ async fn test_concurrent_client_operations() {
     for (i, tracked) in clients.iter().enumerate() {
         let client = tracked.client().clone();
         let handle = tokio::spawn(async move {
-            client.assign_bead(format!("bead-{}", i), format!("operator{}", i % 2)).await;
+            client
+                .assign_bead(format!("bead-{}", i), format!("operator{}", i % 2))
+                .await;
         });
         handles.push(handle);
     }
@@ -1343,21 +1442,36 @@ async fn test_concurrent_client_operations() {
             i
         );
 
-        let assignment_count = tracked.tracker().count_messages(|msg| {
-            matches!(msg, ServerMessage::BeadAssigned { .. })
-        }).await;
+        let assignment_count = tracked
+            .tracker()
+            .count_messages(|msg| matches!(msg, ServerMessage::BeadAssigned { .. }))
+            .await;
 
-        assert_eq!(assignment_count, 4, "Client {} should receive 4 BeadAssigned messages", i);
+        assert_eq!(
+            assignment_count, 4,
+            "Client {} should receive 4 BeadAssigned messages",
+            i
+        );
     }
 
     // Now update workers and verify all clients receive the update
-    let workers: Vec<WorkerState> = (0..5).map(|i| WorkerState {
-        worker_id: format!("worker-{}", i),
-        model: "claude-sonnet-5".to_string(),
-        status: if i % 2 == 0 { WorkerStatus::Active } else { WorkerStatus::Idle },
-        current_task: if i % 2 == 0 { Some(format!("bead-{}", i)) } else { None },
-        started_at: Some(chrono::Utc::now()),
-    }).collect();
+    let workers: Vec<WorkerState> = (0..5)
+        .map(|i| WorkerState {
+            worker_id: format!("worker-{}", i),
+            model: "claude-sonnet-5".to_string(),
+            status: if i % 2 == 0 {
+                WorkerStatus::Active
+            } else {
+                WorkerStatus::Idle
+            },
+            current_task: if i % 2 == 0 {
+                Some(format!("bead-{}", i))
+            } else {
+                None
+            },
+            started_at: Some(chrono::Utc::now()),
+        })
+        .collect();
 
     server.update_workers(workers).await;
 
@@ -1371,7 +1485,12 @@ async fn test_concurrent_client_operations() {
         );
 
         if let Some(update) = &state.state_update {
-            assert_eq!(update.workers.len(), 5, "Client {} should have 5 workers", i);
+            assert_eq!(
+                update.workers.len(),
+                5,
+                "Client {} should have 5 workers",
+                i
+            );
         }
     }
 
@@ -1401,6 +1520,7 @@ async fn test_message_ordering() {
         server_url: "ws://127.0.0.1:8096/ws".to_string(),
         user_id: "admin".to_string(),
         password: get_test_token("admin").to_string(),
+        tls: None,
     };
 
     let tracked = TrackedClient::new(config).await;
@@ -1439,7 +1559,10 @@ async fn test_message_ordering() {
         }
     }
 
-    assert_eq!(received_beads, bead_ids, "Messages should be received in order sent");
+    assert_eq!(
+        received_beads, bead_ids,
+        "Messages should be received in order sent"
+    );
 
     server.stop().await;
 }
@@ -1467,6 +1590,7 @@ async fn test_rapid_state_updates() {
         server_url: "ws://127.0.0.1:8097/ws".to_string(),
         user_id: "admin".to_string(),
         password: get_test_token("admin").to_string(),
+        tls: None,
     };
 
     let tracked = TrackedClient::new(config).await;
@@ -1487,8 +1611,16 @@ async fn test_rapid_state_updates() {
         let workers = vec![WorkerState {
             worker_id: format!("worker-{}", i),
             model: "claude-sonnet-5".to_string(),
-            status: if i % 2 == 0 { WorkerStatus::Active } else { WorkerStatus::Idle },
-            current_task: if i % 2 == 0 { Some(format!("task-{}", i)) } else { None },
+            status: if i % 2 == 0 {
+                WorkerStatus::Active
+            } else {
+                WorkerStatus::Idle
+            },
+            current_task: if i % 2 == 0 {
+                Some(format!("task-{}", i))
+            } else {
+                None
+            },
             started_at: Some(chrono::Utc::now()),
         }];
 
@@ -1535,6 +1667,7 @@ async fn test_error_recovery() {
         server_url: "ws://127.0.0.1:8098/ws".to_string(),
         user_id: "admin".to_string(),
         password: "wrongpassword".to_string(),
+        tls: None,
     };
 
     let invalid_client = ForgeClient::new(invalid_config);
@@ -1547,13 +1680,17 @@ async fn test_error_recovery() {
 
     // Verify authentication failed
     let invalid_state = invalid_client.get_state().await;
-    assert!(!invalid_state.authenticated, "Client with wrong password should not authenticate");
+    assert!(
+        !invalid_state.authenticated,
+        "Client with wrong password should not authenticate"
+    );
 
     // Now create client with valid credentials
     let valid_config = ClientConfig {
         server_url: "ws://127.0.0.1:8098/ws".to_string(),
         user_id: "admin".to_string(),
         password: get_test_token("admin").to_string(),
+        tls: None,
     };
 
     let tracked = TrackedClient::new(valid_config).await;
@@ -1577,7 +1714,10 @@ async fn test_error_recovery() {
 
     // Test sending multiple operations to ensure stability
     for i in 0..10 {
-        tracked.client().assign_bead(format!("bead-{}", i), "operator").await;
+        tracked
+            .client()
+            .assign_bead(format!("bead-{}", i), "operator")
+            .await;
         sleep(Duration::from_millis(20)).await;
     }
 
@@ -1610,6 +1750,7 @@ async fn test_session_persistence() {
         server_url: "ws://127.0.0.1:8093/ws".to_string(),
         user_id: "admin".to_string(),
         password: get_test_token("admin").to_string(),
+        tls: None,
     };
 
     let client1 = ForgeClient::new(client_config.clone());

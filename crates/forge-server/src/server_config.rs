@@ -298,7 +298,7 @@ mod tests {
         let tls = server_config.tls.unwrap();
         assert_eq!(tls.cert_path, "/path/to/cert.pem");
         assert_eq!(tls.key_path, "/path/to/key.pem");
-        assert_eq!(tls.verify, false);
+        assert!(!tls.verify);
         assert_eq!(tls.min_version, "TLSv1.3");
     }
 
@@ -422,7 +422,7 @@ mod tests {
         let tls = server_config.tls.unwrap();
         assert_eq!(tls.cert_path, "/valid/cert.pem");
         assert_eq!(tls.key_path, "/valid/key.pem");
-        assert_eq!(tls.verify, true);
+        assert!(tls.verify);
         assert_eq!(tls.min_version, "TLSv1.2");
     }
 
@@ -447,7 +447,7 @@ mod tests {
         assert!(server_config.tls.is_some());
 
         let tls = server_config.tls.unwrap();
-        assert_eq!(tls.verify, true, "verify should default to true");
+        assert!(tls.verify, "verify should default to true");
         assert_eq!(
             tls.min_version, "TLSv1.2",
             "min_version should default to TLSv1.2"
@@ -559,7 +559,7 @@ mod tests {
         let tls = merged.tls.unwrap();
         assert_eq!(tls.cert_path, "/cli/cert.pem");
         assert_eq!(tls.key_path, "/cli/key.pem");
-        assert_eq!(tls.verify, false);
+        assert!(!tls.verify);
         assert_eq!(tls.min_version, "TLSv1.3");
     }
 
@@ -616,7 +616,7 @@ mod tests {
 
         assert!(merged.tls.is_some());
         let tls = merged.tls.unwrap();
-        assert_eq!(tls.verify, true, "verify should default to true");
+        assert!(tls.verify, "verify should default to true");
         assert_eq!(
             tls.min_version, "TLSv1.2",
             "min_version should default to TLSv1.2"
@@ -654,7 +654,7 @@ mod tests {
         assert!(merged.tls.is_some());
         let tls = merged.tls.unwrap();
         // Should use YAML defaults for verify and min_version
-        assert_eq!(tls.verify, false, "Should use YAML verify value");
+        assert!(!tls.verify, "Should use YAML verify value");
         assert_eq!(
             tls.min_version, "TLSv1.3",
             "Should use YAML min_version value"

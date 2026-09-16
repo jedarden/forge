@@ -33,11 +33,11 @@
 //! ```
 
 use chrono::{DateTime, Utc};
-use forge_cost::{ApiCall, LogParser};
 use forge_core::worker_perf::TaskEvent;
-use serde_json::Value;
+use forge_cost::{ApiCall, LogParser};
 use notify::{Event as NotifyEvent, EventKind, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, new_debouncer_opt};
+use serde_json::Value;
 
 // In tests, use PollWatcher to avoid inotify instance limits.
 // In production, use RecommendedWatcher (inotify on Linux) for efficiency.
@@ -196,13 +196,15 @@ pub fn parse_task_event(line: &str, worker_id: &str) -> Option<TaskEvent> {
     match event_type {
         // Task start event - look for tool_use or task initiation
         "tool_use" | "task_start" => {
-            let task_id = value.get("bead_id")
+            let task_id = value
+                .get("bead_id")
                 .or_else(|| value.get("task_id"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string();
 
-            let model = value.get("model")
+            let model = value
+                .get("model")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string();
@@ -216,20 +218,20 @@ pub fn parse_task_event(line: &str, worker_id: &str) -> Option<TaskEvent> {
 
         // Task completion event - result type with success/failure
         "result" => {
-            let task_id = value.get("bead_id")
+            let task_id = value
+                .get("bead_id")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string();
 
             // Check for success/failure
-            let subtype = value.get("subtype")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let subtype = value.get("subtype").and_then(|v| v.as_str()).unwrap_or("");
 
             let success = subtype == "success";
 
             // Extract duration if available
-            let duration_ms = value.get("duration_ms")
+            let duration_ms = value
+                .get("duration_ms")
                 .or_else(|| value.get("duration_api_ms"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
@@ -245,7 +247,8 @@ pub fn parse_task_event(line: &str, worker_id: &str) -> Option<TaskEvent> {
             };
 
             // Extract or calculate cost
-            let cost_usd = value.get("total_cost_usd")
+            let cost_usd = value
+                .get("total_cost_usd")
                 .and_then(|v| v.as_f64())
                 .or_else(|| {
                     // Try to calculate from usage if pricing available
@@ -314,7 +317,9 @@ pub struct LogWatcher {
 
 impl LogWatcher {
     /// Create a new log watcher with default configuration.
-    pub fn new(config: LogWatcherConfig) -> Result<(Self, mpsc::Receiver<LogWatcherEvent>), LogWatcherError> {
+    pub fn new(
+        config: LogWatcherConfig,
+    ) -> Result<(Self, mpsc::Receiver<LogWatcherEvent>), LogWatcherError> {
         // Create the log directory if it doesn't exist
         if !config.log_dir.exists() {
             std::fs::create_dir_all(&config.log_dir).map_err(|e| {
@@ -341,21 +346,21 @@ impl LogWatcher {
             new_debouncer_opt::<_, PollWatcher, _>(
                 config.debounce_duration,
                 None,
-                move |result: DebounceEventResult| {
-                    match result {
-                        Ok(events) => {
-                            for event in events {
-                                if let Err(e) = process_file_event(&event.event, &log_dir_clone, &event_tx_clone) {
-                                    let _ = event_tx_clone.send(LogWatcherEvent::Error {
-                                        message: e.to_string(),
-                                    });
-                                }
+                move |result: DebounceEventResult| match result {
+                    Ok(events) => {
+                        for event in events {
+                            if let Err(e) =
+                                process_file_event(&event.event, &log_dir_clone, &event_tx_clone)
+                            {
+                                let _ = event_tx_clone.send(LogWatcherEvent::Error {
+                                    message: e.to_string(),
+                                });
                             }
                         }
-                        Err(errors) => {
-                            for error in errors {
-                                warn!("File watcher error: {:?}", error);
-                            }
+                    }
+                    Err(errors) => {
+                        for error in errors {
+                            warn!("File watcher error: {:?}", error);
                         }
                     }
                 },
@@ -372,21 +377,21 @@ impl LogWatcher {
             new_debouncer_opt::<_, RecommendedWatcher, _>(
                 config.debounce_duration,
                 None,
-                move |result: DebounceEventResult| {
-                    match result {
-                        Ok(events) => {
-                            for event in events {
-                                if let Err(e) = process_file_event(&event.event, &log_dir_clone, &event_tx_clone) {
-                                    let _ = event_tx_clone.send(LogWatcherEvent::Error {
-                                        message: e.to_string(),
-                                    });
-                                }
+                move |result: DebounceEventResult| match result {
+                    Ok(events) => {
+                        for event in events {
+                            if let Err(e) =
+                                process_file_event(&event.event, &log_dir_clone, &event_tx_clone)
+                            {
+                                let _ = event_tx_clone.send(LogWatcherEvent::Error {
+                                    message: e.to_string(),
+                                });
                             }
                         }
-                        Err(errors) => {
-                            for error in errors {
-                                warn!("File watcher error: {:?}", error);
-                            }
+                    }
+                    Err(errors) => {
+                        for error in errors {
+                            warn!("File watcher error: {:?}", error);
                         }
                     }
                 },
@@ -399,7 +404,10 @@ impl LogWatcher {
         debouncer
             .watch(&config.log_dir, RecursiveMode::NonRecursive)
             .map_err(|e| {
-                LogWatcherError::InitError(format!("Failed to watch directory {:?}: {}", config.log_dir, e))
+                LogWatcherError::InitError(format!(
+                    "Failed to watch directory {:?}: {}",
+                    config.log_dir, e
+                ))
             })?;
 
         let watcher = Self {
@@ -633,7 +641,10 @@ fn process_file_event(
             None => continue,
         };
 
-        debug!("Processing log event {:?} for worker {}", event.kind, worker_id);
+        debug!(
+            "Processing log event {:?} for worker {}",
+            event.kind, worker_id
+        );
 
         match event.kind {
             EventKind::Create(_) => {
@@ -768,14 +779,7 @@ mod tests {
         assert_eq!(metrics.total_calls, 0);
 
         // Record a call
-        let call = ApiCall::new(
-            Utc::now(),
-            "worker-1",
-            "claude-opus",
-            1000,
-            500,
-            0.05,
-        );
+        let call = ApiCall::new(Utc::now(), "worker-1", "claude-opus", 1000, 500, 0.05);
         metrics.record_call(&call);
 
         assert!(metrics.has_data());
@@ -786,14 +790,7 @@ mod tests {
         assert_eq!(*metrics.calls_by_model.get("claude-opus").unwrap(), 1);
 
         // Record another call
-        let call2 = ApiCall::new(
-            Utc::now(),
-            "worker-2",
-            "claude-sonnet",
-            500,
-            250,
-            0.02,
-        );
+        let call2 = ApiCall::new(Utc::now(), "worker-2", "claude-sonnet", 500, 250, 0.02);
         metrics.record_call(&call2);
 
         assert_eq!(metrics.total_calls, 2);
@@ -845,7 +842,9 @@ mod tests {
         assert_eq!(watcher.tracked_file_count(), 1);
 
         // Should have FileDiscovered event
-        let discovered = events.iter().any(|e| matches!(e, LogWatcherEvent::FileDiscovered { .. }));
+        let discovered = events
+            .iter()
+            .any(|e| matches!(e, LogWatcherEvent::FileDiscovered { .. }));
         assert!(discovered);
     }
 
@@ -874,8 +873,14 @@ mod tests {
         let events = watcher.poll();
 
         // Should have at least one ApiCallParsed event on first poll
-        let parsed = events.iter().any(|e| matches!(e, LogWatcherEvent::ApiCallParsed { .. }));
-        assert!(parsed, "Expected at least one ApiCallParsed event, got: {:?}", events);
+        let parsed = events
+            .iter()
+            .any(|e| matches!(e, LogWatcherEvent::ApiCallParsed { .. }));
+        assert!(
+            parsed,
+            "Expected at least one ApiCallParsed event, got: {:?}",
+            events
+        );
     }
 
     #[test]
@@ -892,10 +897,13 @@ mod tests {
         let mut file = fs::File::create(&log_path).unwrap();
 
         writeln!(file, "not json at all").unwrap();
-        writeln!(file, "{}", r#"{"type":"system"}"#).unwrap();
+        let system_line = r#"{"type":"system"}"#;
+        writeln!(file, "{system_line}").unwrap();
         // Valid result with usage data (matching real log format)
-        writeln!(file, "{}", r#"{"type":"result","total_cost_usd":0.01,"usage":{"input_tokens":100,"output_tokens":50}}"#).unwrap();
-        writeln!(file, "{}", r#"{"malformed":"json""#).unwrap(); // Invalid JSON
+        let result_line = r#"{"type":"result","total_cost_usd":0.01,"usage":{"input_tokens":100,"output_tokens":50}}"#;
+        writeln!(file, "{result_line}").unwrap();
+        let malformed_line = r#"{"malformed":"json""#;
+        writeln!(file, "{malformed_line}").unwrap(); // Invalid JSON
         file.sync_all().unwrap();
 
         // First poll discovers file and reads content
@@ -906,7 +914,12 @@ mod tests {
             .iter()
             .filter(|e| matches!(e, LogWatcherEvent::ApiCallParsed { .. }))
             .count();
-        assert!(parsed_count >= 1, "Expected at least one parsed call, got {} events: {:?}", parsed_count, events);
+        assert!(
+            parsed_count >= 1,
+            "Expected at least one parsed call, got {} events: {:?}",
+            parsed_count,
+            events
+        );
     }
 
     #[test]
@@ -924,7 +937,7 @@ mod tests {
 
         // Write first entry (matching real log format)
         let line1 = r#"{"type":"result","total_cost_usd":0.01,"usage":{"input_tokens":100,"output_tokens":50}}"#;
-        write!(file, "{}\n", line1).unwrap();
+        writeln!(file, "{line1}").unwrap();
         file.sync_all().unwrap();
 
         // First poll discovers file and reads first entry
@@ -933,12 +946,16 @@ mod tests {
             .iter()
             .filter(|e| matches!(e, LogWatcherEvent::ApiCallParsed { .. }))
             .count();
-        assert_eq!(parsed1, 1, "Expected 1 parsed call, got {} events: {:?}", parsed1, events1);
+        assert_eq!(
+            parsed1, 1,
+            "Expected 1 parsed call, got {} events: {:?}",
+            parsed1, events1
+        );
 
         // Append second entry
         let mut file = fs::OpenOptions::new().append(true).open(&log_path).unwrap();
         let line2 = r#"{"type":"result","total_cost_usd":0.02,"usage":{"input_tokens":200,"output_tokens":100}}"#;
-        write!(file, "{}\n", line2).unwrap();
+        writeln!(file, "{line2}").unwrap();
         file.sync_all().unwrap();
 
         // Poll again - should only get new entry
@@ -947,7 +964,11 @@ mod tests {
             .iter()
             .filter(|e| matches!(e, LogWatcherEvent::ApiCallParsed { .. }))
             .count();
-        assert_eq!(parsed2, 1, "Expected 1 new parsed call, got {} events: {:?}", parsed2, events2);
+        assert_eq!(
+            parsed2, 1,
+            "Expected 1 new parsed call, got {} events: {:?}",
+            parsed2, events2
+        );
 
         // Poll again - no new content
         let events3 = watcher.poll();

@@ -490,7 +490,7 @@ mod tests {
 
         assert!(result.is_err());
         let error_msg = format!("{}", result.unwrap_err());
-        assert!(error_msg.contains(&nonexistent_cert.to_str().unwrap()));
+        assert!(error_msg.contains(nonexistent_cert.to_str().unwrap()));
         assert!(error_msg.to_lowercase().contains("not found"));
     }
 
@@ -521,7 +521,7 @@ mod tests {
 
         assert!(result.is_err());
         let error_msg = format!("{}", result.unwrap_err());
-        assert!(error_msg.contains(&nonexistent_key.to_str().unwrap()));
+        assert!(error_msg.contains(nonexistent_key.to_str().unwrap()));
         assert!(error_msg.to_lowercase().contains("not found"));
     }
 
@@ -674,11 +674,9 @@ mod tests {
     #[test]
     fn test_disabled_tls_no_validation_performed() {
         // Test documents that when tls: None in ServerConfig,
-        // no TLS validation is performed and server starts normally
-        assert!(
-            true,
-            "Disabled TLS requires no validation - server starts normally"
-        );
+        // no TLS validation is performed and server starts normally.
+        // There is nothing to assert: a disabled TLS config requires no
+        // validation, so the server starts normally by construction.
     }
 
     #[test]
