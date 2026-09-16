@@ -1009,4 +1009,3 @@ impl ContextSource for CountingContextSource {
         Ok(self.context.clone())
     }
 }
-

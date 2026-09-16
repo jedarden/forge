@@ -803,10 +803,22 @@ mod tests {
     #[test]
     fn test_opencode_config_default_aliases() {
         let config = OpencodeConfig::default();
-        assert_eq!(config.model_aliases.get("sonnet").unwrap(), "opencode/glm-5-free");
-        assert_eq!(config.model_aliases.get("opus").unwrap(), "github-copilot/claude-opus-4.6");
-        assert_eq!(config.model_aliases.get("glm").unwrap(), "opencode/glm-5-free");
-        assert_eq!(config.model_aliases.get("gpt").unwrap(), "opencode/gpt-5-nano");
+        assert_eq!(
+            config.model_aliases.get("sonnet").unwrap(),
+            "opencode/glm-5-free"
+        );
+        assert_eq!(
+            config.model_aliases.get("opus").unwrap(),
+            "github-copilot/claude-opus-4.6"
+        );
+        assert_eq!(
+            config.model_aliases.get("glm").unwrap(),
+            "opencode/glm-5-free"
+        );
+        assert_eq!(
+            config.model_aliases.get("gpt").unwrap(),
+            "opencode/gpt-5-nano"
+        );
     }
 
     #[test]
