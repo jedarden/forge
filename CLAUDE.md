@@ -76,14 +76,14 @@ tmux new-session -d -s forge-min -x 60 -y 20
 
 ```bash
 # 1. Build the project
-cd /home/coder/forge
+cd /home/coding/FORGE
 cargo build --release
 
 # 2. Create a fresh tmux session for testing
 tmux new-session -d -s forge-test -x 120 -y 40
 
 # 3. Run forge in the test session
-tmux send-keys -t forge-test "cd /home/coder/forge && ./target/release/forge --debug" Enter
+tmux send-keys -t forge-test "cd /home/coding/FORGE && ./target/release/forge --debug" Enter
 
 # 4. Attach to interact
 tmux attach -t forge-test
@@ -141,10 +141,40 @@ tmux capture-pane -t <session-name> -p
 tmux send-keys -t <session-name> "command" Enter
 ```
 
-### Creating GitHub Releases
+### Releasing
 
-**Prerequisites**:
-- All tests passing
+**There are no GitHub Actions here.** They are disabled org-wide and must never
+be re-enabled. Releases are built by the `forge-ci` Argo WorkflowTemplate in the
+`iad-ci` cluster, triggered automatically by a push of `main` to the Forgejo
+origin. Nothing is tagged or released by hand.
+
+**How the pipeline works**:
+
+1. A push of `refs/heads/main` to `git.ardenone.com/jedarden/forge` fires a
+   Forgejo webhook (`https://webhooks-ci.ardenone.com/forge`).
+2. The `forge-ci-sensor` (Argo Events, in `iad-ci`) filters that webhook to
+   `push` events on `main` only and submits a `forge-ci-*` Workflow in the
+   `argo-workflows` namespace.
+3. The workflow clones `main` from Forgejo, runs
+   `scripts/definition-of-done.sh --all` (fmt + clippy + tests — a failing DoD
+   fails the release), builds the release binary, tags `v<version>` (version
+   taken from `workspace.package.version` in `Cargo.toml`), pushes that tag to
+   **Forgejo**, and publishes the GitHub release with the binary. GitHub is the
+   public artifact mirror, not the build system.
+
+Two consequences of that design:
+
+- **Do not tag by hand.** The workflow creates `v<version>` itself; the old
+  dual-tag convention (`forge-v0.x.y` alongside `v0.x.y`) is retired. The tag
+  must live on Forgejo anyway — every mirror sync prunes refs that exist only
+  on GitHub.
+- A release ships on the **first push to `main` after a version bump**. Later
+  pushes with the same version are skipped (the workflow exits early if that
+  version is already published), and runs are serialized by a `forge-ci`
+  mutex, so repeated pushes queue instead of colliding.
+
+**Prerequisites** (before pushing the version-bump commit):
+- All tests passing, `cargo clippy` clean (forge-ci re-runs the full DoD remotely)
 - Version updated in `Cargo.toml` (workspace.version)
 - CHANGELOG.md updated with release notes
 - Binary tested in real tmux session
@@ -158,22 +188,34 @@ tmux send-keys -t <session-name> "command" Enter
 # 2. Update CHANGELOG.md
 # Add new section with release notes
 
-# 3. Commit changes
+# 3. Commit directly to main, staging precise paths (never `git add .`)
 git add Cargo.toml CHANGELOG.md
 git commit -m "chore: bump version to 0.x.y"
 
-# 4. Create git tag
-git tag -a "v0.x.y" -m "Release v0.x.y"
-git tag -a "forge-v0.x.y" -m "FORGE v0.x.y"
-
-# 5. Push to GitHub
+# 4. Push to the Forgejo origin — this triggers forge-ci. No manual tagging.
 git push origin main
-git push origin "v0.x.y"
-git push origin "forge-v0.x.y"
 
-# 6. GitHub Actions will build and publish release automatically
-# Check: https://github.com/jedarden/forge/releases
+# 5. Watch for the forge-ci run (read-only, credential-free endpoint)
+kubectl --server=http://traefik-iad-ci:8001 \
+  get workflows -n argo-workflows --sort-by=.metadata.creationTimestamp | tail -5
+
+# 6. Check the run's phase once it appears (name is forge-ci-<suffix>)
+kubectl --server=http://traefik-iad-ci:8001 \
+  get workflow forge-ci-xxxxx -n argo-workflows \
+  -o jsonpath='{.status.phase} - {.status.message}'
 ```
+
+The tag and release appear at https://github.com/jedarden/forge/releases once
+the workflow reaches `Succeeded`. For per-step detail use the Argo UI
+(https://argo-ci.ardenone.com, Google SSO, VPN only); completed-run logs are
+kept there for 30min on success / 2h on failure. To read logs with kubectl you
+must catch the pod while it is running — `podGC: OnPodCompletion` deletes pods
+the moment they finish.
+
+**If a release run fails**: fix forward on `main` and push again — every push
+re-triggers forge-ci. As a last resort a run can be submitted manually with the
+`iad-ci` kubeconfig (`workflowTemplateRef: forge-ci`) — the documented
+exception allowing `kubectl create` of an Argo Workflow in `argo-workflows`.
 
 **Release Checklist**:
 - [ ] Run `cargo test` - all tests pass
@@ -184,9 +226,10 @@ git push origin "forge-v0.x.y"
 - [ ] Test all hotkeys and view navigation
 - [ ] Update CHANGELOG.md with new features/fixes
 - [ ] Update workspace.version in Cargo.toml
-- [ ] Commit changes with descriptive message
-- [ ] Create and push git tags
-- [ ] Verify GitHub release created successfully
+- [ ] Commit to main with precise staged paths
+- [ ] Push to Forgejo origin (`git push origin main`)
+- [ ] Verify the `forge-ci-*` workflow reaches `Succeeded`
+- [ ] Verify tag + release appear at https://github.com/jedarden/forge/releases
 
 ## Key File Locations
 
@@ -244,20 +287,29 @@ git push origin "forge-v0.x.y"
 
 ## Git Workflow
 
-```bash
-# Create feature branch
-git checkout -b feature/my-feature
+Forgejo (`https://git.ardenone.com/jedarden/forge`) is the origin and source of
+truth; GitHub (`jedarden/forge`) is a read-only mirror kept current by Forgejo's
+server-side push mirror. **Push only to the Forgejo origin.**
 
-# Make changes and commit
-git add .
+```bash
+# Work directly on main — no feature branches, no PR flow
+git checkout main
+
+# Make changes, then stage precise paths
+# (never `git add .`, `git add -A`, or `git commit -a`)
+git add crates/forge-tui/src/app.rs tests/
 git commit -m "feat: add my feature"
 
-# Push to GitHub
-git push origin feature/my-feature
-
-# Create PR via GitHub web UI
-# https://github.com/jedarden/forge/compare
+# Push to Forgejo; the GitHub mirror updates automatically
+git push origin main
 ```
+
+- **Never create feature branches or PRs** — commit straight to `main` and push.
+- **Never force-push** (`--force` or `--force-with-lease`). If local and origin
+  history diverge, reconcile with a merge commit.
+- Stage explicit paths — blanket staging sweeps in unrelated working-tree state.
+- Every push to `main` triggers a `forge-ci` run (see Releasing) — keep the
+  tree green before pushing.
 
 ## Useful Commands
 
@@ -283,6 +335,5 @@ cargo +nightly udeps
 
 ## Contact
 
-- **Repository**: https://github.com/jedarden/forge
-- **Issues**: https://github.com/jedarden/forge/issues
-- **Discussions**: https://github.com/jedarden/forge/discussions
+- **Repository (origin)**: https://git.ardenone.com/jedarden/forge
+- **GitHub mirror**: https://github.com/jedarden/forge (read-only; releases published here)
