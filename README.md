@@ -206,7 +206,36 @@ cost_tracking:
 dashboard:
   refresh_interval_ms: 1000
   theme: default  # default | dark | light | cyberpunk
+
+# Live bead dispatch (opt-in; off by default)
+bead_dispatch:
+  enabled: true
+  interval_secs: 30        # how often the control loop polls the queues
+  max_in_flight: 1         # concurrent bead-driven workers (max 16)
+  refused_retry_secs: 300  # cool-down before retrying a bead claimed elsewhere
+  workspaces:
+    - ~/myproject
+  # launcher: ~/.forge/launcher.sh  # defaults to ~/.forge/launcher.sh
+  # model: sonnet                    # defaults to sonnet
 ```
+
+### Live bead dispatch
+
+By default FORGE never launches workers from a bead queue — workers are spawned
+by you, manually. The `bead_dispatch` section turns on the bead-driven control
+loop: on every `interval_secs` tick it reads the ready bead queues of the
+configured `workspaces`, picks the highest-priority unclaimed bead, claims it in
+the bead store, and launches a worker on it via the bead-aware launcher protocol
+(`--bead-ref=<bead-id>`, documented in
+[docs/BEAD_LAUNCHER_PROTOCOL.md](docs/BEAD_LAUNCHER_PROTOCOL.md)). It keeps at
+most `max_in_flight` bead-driven workers running, and backs off from beads
+another process holds for `refused_retry_secs`.
+
+The knob is disabled by default: a config without a `bead_dispatch` section (or
+with `enabled: false`) behaves exactly as before, and a disabled loop never
+touches the bead CLI. To turn it on, add the section with `enabled: true` and at
+least one workspace; `forge validate` checks the values (non-zero cadence,
+`max_in_flight` between 1 and 16, at least one workspace when enabled).
 
 ---
 

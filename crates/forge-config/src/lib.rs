@@ -135,6 +135,10 @@ pub struct ForgeConfig {
     #[serde(default)]
     pub worker_pool: WorkerPoolConfig,
 
+    /// Bead dispatch loop configuration (queue → worker control loop).
+    #[serde(default)]
+    pub bead_dispatch: BeadDispatchConfig,
+
     /// Notification configuration
     #[serde(default)]
     pub notifications: NotificationsConfig,
@@ -151,6 +155,7 @@ impl Default for ForgeConfig {
             auto_recovery: AutoRecoveryConfig::default(),
             workers: WorkerConfig::default(),
             worker_pool: WorkerPoolConfig::default(),
+            bead_dispatch: BeadDispatchConfig::default(),
             notifications: NotificationsConfig::default(),
         }
     }
@@ -329,6 +334,11 @@ impl ForgeConfig {
             .and_then(|v| serde_yaml::from_value(v.clone()).ok())
             .unwrap_or_default();
 
+        let bead_dispatch = yaml
+            .get("bead_dispatch")
+            .and_then(|v| serde_yaml::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
         let notifications = yaml
             .get("notifications")
             .and_then(|v| serde_yaml::from_value(v.clone()).ok())
@@ -345,6 +355,7 @@ impl ForgeConfig {
             auto_recovery,
             workers,
             worker_pool,
+            bead_dispatch,
             notifications,
         })
     }
@@ -454,6 +465,36 @@ impl ForgeConfig {
                     "worker_pool.backoff_max_secs ({}) must be >= backoff_base_secs ({})",
                     self.worker_pool.backoff_max_secs, self.worker_pool.backoff_base_secs
                 ));
+            }
+        }
+
+        // Validate bead dispatch settings (only when enabled — a disabled
+        // loop is inert and its defaults are valid anyway).
+        if self.bead_dispatch.enabled {
+            if self.bead_dispatch.interval_secs == 0 {
+                warnings.push("bead_dispatch.interval_secs must be at least 1".to_string());
+            }
+            if self.bead_dispatch.max_in_flight == 0 {
+                warnings.push("bead_dispatch.max_in_flight must be at least 1".to_string());
+            }
+            if self.bead_dispatch.max_in_flight > BeadDispatchConfig::MAX_IN_FLIGHT {
+                warnings.push(format!(
+                    "bead_dispatch.max_in_flight {} exceeds the maximum of {}",
+                    self.bead_dispatch.max_in_flight,
+                    BeadDispatchConfig::MAX_IN_FLIGHT
+                ));
+            }
+            if self.bead_dispatch.workspaces.is_empty() {
+                warnings.push(
+                    "bead_dispatch is enabled but no workspaces are configured; the loop has no queue to draw from"
+                        .to_string(),
+                );
+            }
+            if self.bead_dispatch.worker_id_prefix.trim().is_empty() {
+                warnings.push(
+                    "bead_dispatch.worker_id_prefix must not be empty; dispatched workers need a stable identity in the bead store"
+                        .to_string(),
+                );
             }
         }
 
@@ -580,6 +621,40 @@ impl ForgeConfig {
                 );
                 tier.size = WorkerPoolConfig::MAX_TIER_SIZE;
             }
+        }
+
+        // Sanitize bead dispatch settings
+        if config.bead_dispatch.interval_secs == 0 {
+            tracing::warn!(
+                original = config.bead_dispatch.interval_secs,
+                "Sanitizing bead_dispatch.interval_secs to minimum 1"
+            );
+            config.bead_dispatch.interval_secs = 1;
+        }
+        if config.bead_dispatch.max_in_flight == 0 {
+            tracing::warn!(
+                original = config.bead_dispatch.max_in_flight,
+                "Sanitizing bead_dispatch.max_in_flight to minimum 1"
+            );
+            config.bead_dispatch.max_in_flight = 1;
+        }
+        if config.bead_dispatch.max_in_flight > BeadDispatchConfig::MAX_IN_FLIGHT {
+            tracing::warn!(
+                original = config.bead_dispatch.max_in_flight,
+                max = BeadDispatchConfig::MAX_IN_FLIGHT,
+                "Clamping bead_dispatch.max_in_flight to maximum"
+            );
+            config.bead_dispatch.max_in_flight = BeadDispatchConfig::MAX_IN_FLIGHT;
+        }
+        if config.bead_dispatch.worker_id_prefix.trim().is_empty() {
+            tracing::warn!("Sanitizing empty bead_dispatch.worker_id_prefix to default");
+            config.bead_dispatch.worker_id_prefix = default_dispatch_worker_prefix();
+        } else {
+            let prefix = config.bead_dispatch.worker_id_prefix.trim().to_string();
+            if prefix != config.bead_dispatch.worker_id_prefix {
+                tracing::warn!("Trimming bead_dispatch.worker_id_prefix whitespace");
+            }
+            config.bead_dispatch.worker_id_prefix = prefix;
         }
 
         // Sanitize default model
@@ -950,6 +1025,106 @@ fn default_pool_idle_timeout() -> u64 {
 
 fn default_pool_reconcile_interval() -> u64 {
     30
+}
+
+/// Bead dispatch loop configuration.
+///
+/// The dispatch loop is the control loop that turns a workspace's bead
+/// queue into running workers: on its configured cadence (or when the
+/// worker pool signals a replenished slot) it selects the next ready bead,
+/// claims it for an available worker, and launches that worker with
+/// `--bead-ref=<bead-id>` through the bead-aware launcher protocol.
+/// Automation is opt-in: `enabled` defaults to `false`, consistent with
+/// ADR 0014 and the worker pool's default.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct BeadDispatchConfig {
+    /// Enable the dispatch loop. Disabled loops never dispatch.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// How often the loop runs, in seconds.
+    #[serde(default = "default_dispatch_interval_secs")]
+    pub interval_secs: u64,
+
+    /// Maximum bead workers allowed in flight at once.
+    #[serde(default = "default_dispatch_max_in_flight")]
+    pub max_in_flight: usize,
+
+    /// Workspaces whose bead queues the loop draws from.
+    #[serde(default)]
+    pub workspaces: Vec<PathBuf>,
+
+    /// Launcher script used to spawn bead workers.
+    /// Defaults to `~/.forge/launcher.sh`.
+    #[serde(default)]
+    pub launcher: Option<PathBuf>,
+
+    /// Model to launch bead workers with. Defaults to `"sonnet"`.
+    #[serde(default)]
+    pub model: Option<String>,
+
+    /// A bead refused because another process already holds it stays
+    /// skipped for this many seconds before the loop tries it again.
+    #[serde(default = "default_dispatch_refused_retry_secs")]
+    pub refused_retry_secs: u64,
+
+    /// Prefix for dispatched worker ids (`{prefix}-{n}-{bead-id}`). Give
+    /// each dispatching process its own prefix: the bead store's assignee
+    /// field identifies the holder, so two dispatchers generating
+    /// identical worker ids would mistake each other's claims for their
+    /// own.
+    #[serde(default = "default_dispatch_worker_prefix")]
+    pub worker_id_prefix: String,
+}
+
+impl BeadDispatchConfig {
+    /// Safety cap for `max_in_flight`.
+    pub const MAX_IN_FLIGHT: usize = 16;
+
+    /// Launcher script used when `launcher` is not set.
+    pub fn resolved_launcher(&self) -> PathBuf {
+        self.launcher.clone().unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".forge/launcher.sh")
+        })
+    }
+
+    /// Model used when `model` is not set.
+    pub fn resolved_model(&self) -> String {
+        self.model.clone().unwrap_or_else(|| "sonnet".to_string())
+    }
+}
+
+impl Default for BeadDispatchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: default_dispatch_interval_secs(),
+            max_in_flight: default_dispatch_max_in_flight(),
+            workspaces: Vec::new(),
+            launcher: None,
+            model: None,
+            refused_retry_secs: default_dispatch_refused_retry_secs(),
+            worker_id_prefix: default_dispatch_worker_prefix(),
+        }
+    }
+}
+
+fn default_dispatch_interval_secs() -> u64 {
+    30
+}
+
+fn default_dispatch_max_in_flight() -> usize {
+    1
+}
+
+fn default_dispatch_refused_retry_secs() -> u64 {
+    300
+}
+
+fn default_dispatch_worker_prefix() -> String {
+    "dispatch".to_string()
 }
 
 /// Cost tracking configuration.
@@ -1527,5 +1702,228 @@ worker_pool:
         let yaml = serde_yaml::to_string(&config).unwrap();
         let parsed: ForgeConfig = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(parsed.worker_pool, config.worker_pool);
+    }
+
+    // ============================================================
+    // Bead dispatch configuration tests
+    // ============================================================
+
+    #[test]
+    fn test_bead_dispatch_defaults() {
+        let dispatch = BeadDispatchConfig::default();
+        // Opt-in, consistent with the worker pool (ADR 0014): the dispatch
+        // loop never runs unless explicitly enabled.
+        assert!(!dispatch.enabled);
+        assert_eq!(dispatch.interval_secs, 30);
+        assert_eq!(dispatch.max_in_flight, 1);
+        assert!(dispatch.workspaces.is_empty());
+        assert_eq!(dispatch.refused_retry_secs, 300);
+        assert_eq!(dispatch.launcher, None);
+        assert_eq!(dispatch.model, None);
+    }
+
+    #[test]
+    fn test_default_config_keeps_bead_dispatch_off() {
+        let config = ForgeConfig::default();
+        assert!(!config.bead_dispatch.enabled);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_bead_dispatch_section_missing_uses_defaults() {
+        let yaml = "dashboard:\n  max_fps: 30\n";
+        let config = ForgeConfig::parse(yaml).expect("Failed to parse config");
+        assert!(!config.bead_dispatch.enabled);
+        assert_eq!(config.bead_dispatch.interval_secs, 30);
+        assert_eq!(config.bead_dispatch.max_in_flight, 1);
+        assert!(config.bead_dispatch.workspaces.is_empty());
+    }
+
+    #[test]
+    fn test_parse_bead_dispatch_config() {
+        let yaml = r#"
+bead_dispatch:
+  enabled: true
+  interval_secs: 15
+  max_in_flight: 4
+  workspaces:
+    - /home/user/project-a
+    - /home/user/project-b
+  launcher: /home/user/.forge/bead-launcher.sh
+  model: opus
+  refused_retry_secs: 60
+"#;
+        let config = ForgeConfig::parse(yaml).expect("Failed to parse config");
+        let dispatch = &config.bead_dispatch;
+        assert!(dispatch.enabled);
+        assert_eq!(dispatch.interval_secs, 15);
+        assert_eq!(dispatch.max_in_flight, 4);
+        assert_eq!(
+            dispatch.workspaces,
+            vec![
+                PathBuf::from("/home/user/project-a"),
+                PathBuf::from("/home/user/project-b")
+            ]
+        );
+        assert_eq!(
+            dispatch.launcher,
+            Some(PathBuf::from("/home/user/.forge/bead-launcher.sh"))
+        );
+        assert_eq!(dispatch.model.as_deref(), Some("opus"));
+        assert_eq!(dispatch.refused_retry_secs, 60);
+    }
+
+    #[test]
+    fn test_validate_rejects_bad_bead_dispatch_when_enabled() {
+        // Zero cadence: the loop would spin.
+        let mut config = ForgeConfig::default();
+        config.bead_dispatch.enabled = true;
+        config
+            .bead_dispatch
+            .workspaces
+            .push(PathBuf::from("/tmp/ws"));
+        config.bead_dispatch.interval_secs = 0;
+        assert!(config.validate().is_err());
+
+        // Zero in-flight cap: enabled but can never dispatch.
+        let mut config = ForgeConfig::default();
+        config.bead_dispatch.enabled = true;
+        config
+            .bead_dispatch
+            .workspaces
+            .push(PathBuf::from("/tmp/ws"));
+        config.bead_dispatch.max_in_flight = 0;
+        assert!(config.validate().is_err());
+
+        // In-flight cap above the safety maximum.
+        let mut config = ForgeConfig::default();
+        config.bead_dispatch.enabled = true;
+        config
+            .bead_dispatch
+            .workspaces
+            .push(PathBuf::from("/tmp/ws"));
+        config.bead_dispatch.max_in_flight = BeadDispatchConfig::MAX_IN_FLIGHT + 1;
+        assert!(config.validate().is_err());
+
+        // Enabled with no workspaces: the loop has no queue to draw from.
+        let mut config = ForgeConfig::default();
+        config.bead_dispatch.enabled = true;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_ignores_bead_dispatch_when_disabled() {
+        let mut config = ForgeConfig::default();
+        config.bead_dispatch.interval_secs = 0;
+        config.bead_dispatch.max_in_flight = 0;
+        config.bead_dispatch.max_in_flight = BeadDispatchConfig::MAX_IN_FLIGHT + 1;
+        // Disabled loop: misconfigurations are not fatal.
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_sanitize_fixes_bead_dispatch_values() {
+        let mut config = ForgeConfig::default();
+        config.bead_dispatch.enabled = true;
+        config.bead_dispatch.interval_secs = 0;
+        config.bead_dispatch.max_in_flight = 0;
+
+        let sanitized = config.sanitized();
+        assert_eq!(sanitized.bead_dispatch.interval_secs, 1);
+        assert_eq!(sanitized.bead_dispatch.max_in_flight, 1);
+
+        config.bead_dispatch.max_in_flight = BeadDispatchConfig::MAX_IN_FLIGHT + 10;
+        let sanitized = config.sanitized();
+        assert_eq!(
+            sanitized.bead_dispatch.max_in_flight,
+            BeadDispatchConfig::MAX_IN_FLIGHT
+        );
+    }
+
+    #[test]
+    fn test_bead_dispatch_defaults_are_opt_in() {
+        let config = ForgeConfig::default();
+        assert!(!config.bead_dispatch.enabled);
+        assert_eq!(config.bead_dispatch.interval_secs, 30);
+        assert_eq!(config.bead_dispatch.max_in_flight, 1);
+        assert_eq!(config.bead_dispatch.refused_retry_secs, 300);
+        assert_eq!(config.bead_dispatch.worker_id_prefix, "dispatch");
+
+        // A config file with no bead_dispatch section yields the same
+        // defaults — the loop never runs unless explicitly enabled.
+        let parsed = ForgeConfig::parse("dashboard:\n  refresh_interval_ms: 2000\n")
+            .expect("Failed to parse config");
+        assert_eq!(parsed.bead_dispatch, BeadDispatchConfig::default());
+    }
+
+    #[test]
+    fn test_sanitize_and_validate_bead_dispatch_worker_prefix() {
+        let mut config = ForgeConfig::default();
+        config.bead_dispatch.enabled = true;
+        config
+            .bead_dispatch
+            .workspaces
+            .push(PathBuf::from("/tmp/ws"));
+        config.bead_dispatch.worker_id_prefix = "  ".to_string();
+
+        // Validation flags the unusable prefix before sanitization runs.
+        assert!(
+            config
+                .validate()
+                .err()
+                .is_some_and(|e| e.contains("worker_id_prefix"))
+        );
+
+        // Sanitization trims surrounding whitespace...
+        config.bead_dispatch.worker_id_prefix = " fleet-a ".to_string();
+        let sanitized = config.sanitized();
+        assert_eq!(sanitized.bead_dispatch.worker_id_prefix, "fleet-a");
+
+        // ...and restores the default when nothing usable remains.
+        config.bead_dispatch.worker_id_prefix = " ".to_string();
+        let sanitized = config.sanitized();
+        assert_eq!(sanitized.bead_dispatch.worker_id_prefix, "dispatch");
+        assert!(
+            sanitized.validate().is_ok(),
+            "a sanitized enabled config with a workspace must validate clean"
+        );
+    }
+
+    #[test]
+    fn test_bead_dispatch_resolved_helpers() {
+        let dispatch = BeadDispatchConfig::default();
+        assert_eq!(
+            dispatch.resolved_launcher(),
+            dirs::home_dir().unwrap().join(".forge/launcher.sh")
+        );
+        assert_eq!(dispatch.resolved_model(), "sonnet");
+
+        let configured = BeadDispatchConfig {
+            launcher: Some(PathBuf::from("/opt/launcher.sh")),
+            model: Some("opus".to_string()),
+            ..BeadDispatchConfig::default()
+        };
+        assert_eq!(
+            configured.resolved_launcher(),
+            PathBuf::from("/opt/launcher.sh")
+        );
+        assert_eq!(configured.resolved_model(), "opus");
+    }
+
+    #[test]
+    fn test_bead_dispatch_round_trips_through_yaml() {
+        let mut config = ForgeConfig::default();
+        config.bead_dispatch.enabled = true;
+        config.bead_dispatch.interval_secs = 20;
+        config.bead_dispatch.max_in_flight = 3;
+        config
+            .bead_dispatch
+            .workspaces
+            .push(PathBuf::from("/tmp/ws"));
+        config.bead_dispatch.model = Some("haiku".to_string());
+
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let parsed: ForgeConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(parsed.bead_dispatch, config.bead_dispatch);
     }
 }
