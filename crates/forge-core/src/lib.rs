@@ -30,8 +30,9 @@
 //! ```
 
 pub mod activity_monitor;
-pub mod audit;
 pub mod assignment;
+pub mod audit;
+pub mod bead_store;
 pub mod deps;
 pub mod error;
 pub mod logging;
@@ -47,45 +48,46 @@ pub mod worker_perf;
 pub mod workspace;
 
 // Re-export worker performance types
-pub use worker_perf::{
-    TaskEvent, TaskPerfMetrics, WorkerPerfSummary, WorkerPerfTracker,
-};
+pub use worker_perf::{TaskEvent, TaskPerfMetrics, WorkerPerfSummary, WorkerPerfTracker};
 
 // Re-export stuck detection types
-pub use stuck_detection::{
-    ActivityChecks, StuckDetectionConfig, StuckTask, StuckTaskDetector,
-};
+pub use stuck_detection::{ActivityChecks, StuckDetectionConfig, StuckTask, StuckTaskDetector};
 
 // Re-export activity monitoring types
 pub use activity_monitor::{
-    ActivityMonitor, ActivityMonitorConfig, ActivityState, HeartbeatData,
-    HeartbeatMetrics, HeartbeatWriter, WorkerActivity,
+    ActivityMonitor, ActivityMonitorConfig, ActivityState, HeartbeatData, HeartbeatMetrics,
+    HeartbeatWriter, WorkerActivity,
 };
 
 // Re-export main types for convenience
-pub use error::{ForgeError, Result};
-pub use logging::{LogGuard, init_logging};
-pub use recovery::{
-    friendly_error_message, retry_with_backoff, retry_with_backoff_async, RecoveryAction,
-    RetryConfig, RetryResult, Retryable,
-};
 pub use assignment::{
     AssignmentManager, AssignmentPriority, AssignmentStats, AssignmentStatus, BeadAssignment,
 };
-pub use session::{ClientInfo, SessionAction, SessionManager, SessionStatus, UserSession, UserRole};
+pub use bead_store::{BeadStoreFormat, StoreBead, StoreDependency, read_all_beads};
+pub use error::{ForgeError, Result};
+pub use logging::{LogGuard, init_logging};
+pub use recovery::{
+    RecoveryAction, RetryConfig, RetryResult, Retryable, friendly_error_message,
+    retry_with_backoff, retry_with_backoff_async,
+};
+pub use session::{
+    ClientInfo, SessionAction, SessionManager, SessionStatus, UserRole, UserSession,
+};
 pub use status::{StatusReader, StatusWriter, WorkerStatusInfo};
-pub use types::{WorkerStatus, BeadStatus, Priority, BeadType, WorkerTier, WorkerId, BeadId};
+pub use types::{BeadId, BeadStatus, BeadType, Priority, WorkerId, WorkerStatus, WorkerTier};
 pub use watcher::{StatusEvent, StatusWatcher, WatcherConfig};
 pub use workspace::{WorkspaceRegistry, query_beads_cross_workspace};
 
 // Re-export dependency checking utilities
-pub use deps::{check_and_report as check_dependencies, check_dependencies as dependency_check, DependencyCheck};
+pub use deps::{
+    DependencyCheck, check_and_report as check_dependencies, check_dependencies as dependency_check,
+};
 
 // Re-export self_update types when feature is enabled
 #[cfg(feature = "self-update")]
 pub use self_update::{
-    check_and_perform_self_install, check_and_rollback, check_for_update,
-    did_previous_startup_crash, mark_startup_in_progress, mark_startup_successful,
-    perform_update, read_last_version, restart_with_new_binary, save_current_version,
-    DownloadProgress, RollbackResult, UpdateResult, UpdateStatus,
+    DownloadProgress, RollbackResult, UpdateResult, UpdateStatus, check_and_perform_self_install,
+    check_and_rollback, check_for_update, did_previous_startup_crash, mark_startup_in_progress,
+    mark_startup_successful, perform_update, read_last_version, restart_with_new_binary,
+    save_current_version,
 };

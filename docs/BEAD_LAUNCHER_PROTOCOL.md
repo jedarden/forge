@@ -181,28 +181,37 @@ See `test/example-launchers/bead-worker-launcher.sh` for a complete reference im
 
 ## FORGE Integration
 
+The scheduler and pipeline described here are implemented by
+`forge_worker::bead_scheduler::BeadScheduler` (crates/forge-worker), with
+queue reading in `forge_worker::bead_queue::BeadQueueReader`.
+
 ### Bead Queue Reading
 
-Forge reads bead queues from workspace directories:
+Forge reads bead queues from workspaces through `forge_core::bead_store`,
+which understands both the bead-rs checkpoint layout and the legacy flat
+`issues.jsonl` format:
 
 ```rust
-// Read .beads/*.jsonl files
-// Parse bead data
-// Filter for ready beads (status=open, dependency_count=0)
-// Sort by priority (P0 first)
+// Parse bead data from the workspace's bead store
+// Filter for ready beads (open, unassigned, no unfinished blockers)
+// Sort by priority (P0 first, then by task score)
 ```
 
 ### Bead Allocation
 
-Forge allocates beads to workers:
+`BeadScheduler` allocates beads to workers:
 
 ```rust
 // For each ready bead:
-// 1. Check if bead is already assigned
-// 2. Find available worker (matching tier)
+// 1. Check if bead is already assigned (BeadAlreadyAssigned is returned
+//    if a second worker claims it — the mapping is the lock)
+// 2. Fetch the bead context and build the task prompt
 // 3. Call launcher with --bead-ref=<bead-id>
-// 4. Track assignment in memory
+// 4. Track assignment in the bead -> worker mapping
 // 5. Update bead status to in_progress
+// 6. On completion: close the bead and record it
+//    (scheduler.record_completion), or reopen it for reallocation
+//    (scheduler.release) if the worker failed
 ```
 
 ### Status Monitoring

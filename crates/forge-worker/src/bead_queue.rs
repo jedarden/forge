@@ -3,26 +3,28 @@
 //! This module provides functionality for reading bead queues from workspaces
 //! and managing bead allocation to workers. It extends the existing bead module
 //! with queue-specific operations for launcher integration.
+//!
+//! Reads go through [`forge_core::bead_store`], which understands both the
+//! current bead-rs checkpoint layout and the legacy flat `issues.jsonl`
+//! format. Bead mutations stay with the `bead` CLI (ADR 0007/0020); this
+//! module never writes to the store.
 
 use crate::complexity::{ComplexityScorer, TaskContext};
 use crate::scorer::{ScoredBead, TaskScorer};
 use crate::types::{LaunchConfig, SpawnRequest};
+use forge_core::bead_store::{self, StoreBead};
 use forge_core::types::BeadId;
 use forge_core::{ForgeError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
-use std::io::BufRead;
-use std::path::{Path, PathBuf};
-use tracing::{debug, info, warn};
+use std::path::PathBuf;
+use tracing::{debug, info};
 
-/// Bead queue reader for parsing .beads/*.jsonl files.
+/// Bead queue reader for parsing a workspace's bead store.
 #[derive(Debug)]
 pub struct BeadQueueReader {
     /// Workspace path
     workspace: PathBuf,
-    /// Bead data file path (.beads/issues.jsonl)
-    bead_file: PathBuf,
     /// Cached ready beads
     ready_cache: Vec<QueuedBead>,
     /// Bead assignment tracking (bead_id -> worker_id)
@@ -129,7 +131,6 @@ impl BeadQueueReader {
     /// Create a new bead queue reader for a workspace.
     pub fn new(workspace: impl Into<PathBuf>) -> Result<Self> {
         let workspace = workspace.into();
-        let bead_file = workspace.join(".beads/issues.jsonl");
 
         // Verify workspace exists
         if !workspace.exists() {
@@ -138,7 +139,6 @@ impl BeadQueueReader {
 
         Ok(Self {
             workspace,
-            bead_file,
             ready_cache: Vec::new(),
             assignments: HashMap::new(),
         })
@@ -146,109 +146,60 @@ impl BeadQueueReader {
 
     /// Check if this workspace has a beads database.
     pub fn has_beads(&self) -> bool {
-        self.bead_file.exists()
+        bead_store::detect_format(&self.workspace).is_some()
     }
 
-    /// Read beads from the JSONL file.
+    /// Read beads from the workspace's bead store.
     pub fn read_beads(&mut self) -> Result<Vec<QueuedBead>> {
         if !self.has_beads() {
-            debug!("No beads file found at {:?}", self.bead_file);
+            debug!("No bead store found in {:?}", self.workspace);
             return Ok(Vec::new());
         }
 
-        let file = fs::File::open(&self.bead_file)
-            .map_err(|e| ForgeError::io("opening beads file", &self.bead_file, e))?;
+        let store_beads = bead_store::read_all_beads(&self.workspace)?;
+        let index = bead_store::build_index(&store_beads);
 
-        let reader = std::io::BufReader::new(file);
-        let mut beads = Vec::new();
+        let beads: Vec<QueuedBead> = store_beads
+            .iter()
+            .map(|bead| {
+                // Only `blocks` edges gate readiness; `related` edges don't.
+                let dependency_count = bead.blocking_dependency_ids().len();
+                let dependent_count = bead_store::count_dependents(&store_beads, &bead.id);
+                let is_ready = bead_store::is_ready(bead, &index);
+                self.to_queued_bead(bead, dependency_count, dependent_count, is_ready)
+            })
+            .collect();
 
-        for line in reader.lines() {
-            let line =
-                line.map_err(|e| ForgeError::io("reading beads file", &self.bead_file, e))?;
-
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            // Parse JSONL entry
-            match serde_json::from_str::<serde_json::Value>(&line) {
-                Ok(value) => {
-                    if let Ok(bead) = Self::parse_bead(&value, &self.workspace) {
-                        beads.push(bead);
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to parse bead JSONL entry: {}", e);
-                    continue;
-                }
-            }
-        }
-
-        info!("Read {} beads from {:?}", beads.len(), self.bead_file);
+        info!("Read {} beads from {:?}", beads.len(), self.workspace);
         Ok(beads)
     }
 
-    /// Parse a bead from JSON value.
-    fn parse_bead(value: &serde_json::Value, workspace: &Path) -> Result<QueuedBead> {
-        let id = value["id"]
-            .as_str()
-            .ok_or_else(|| ForgeError::parse("bead missing id field"))?
-            .to_string();
-
-        let title = value["title"]
-            .as_str()
-            .ok_or_else(|| ForgeError::parse("bead missing title field"))?
-            .to_string();
-
-        let description = value["description"].as_str().unwrap_or("").to_string();
-        let status = value["status"].as_str().unwrap_or("open").to_string();
-        let priority = value["priority"].as_u64().unwrap_or(2) as u8;
-        let issue_type = value["issue_type"].as_str().unwrap_or("task").to_string();
-
-        let labels = value["labels"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        // Check dependencies (tasks this bead depends on)
-        let dependency_count = if let Some(deps) = value.get("dependencies") {
-            deps.as_array().map(|a| a.len()).unwrap_or(0)
-        } else {
-            0
-        };
-
-        // Check dependents (tasks that depend on this bead)
-        let dependent_count = value
-            .get("dependent_count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize;
-
-        // Creation timestamp
-        let created_at = value
-            .get("created_at")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
-        let is_ready = dependency_count == 0 && status == "open";
-
-        Ok(QueuedBead {
-            id,
-            title,
-            description,
-            status,
-            priority,
-            issue_type,
-            labels,
+    /// Convert a normalized store bead into a queue entry.
+    fn to_queued_bead(
+        &self,
+        bead: &StoreBead,
+        dependency_count: usize,
+        dependent_count: usize,
+        is_ready: bool,
+    ) -> QueuedBead {
+        QueuedBead {
+            id: bead.id.clone(),
+            title: bead.title.clone(),
+            description: bead.description.clone(),
+            status: bead.status.clone(),
+            priority: bead.priority,
+            issue_type: if bead.issue_type.is_empty() {
+                "task".to_string()
+            } else {
+                bead.issue_type.clone()
+            },
+            labels: bead.labels.clone(),
             dependency_count,
             dependent_count,
-            created_at,
+            created_at: bead.created_at.clone(),
             is_ready,
-            workspace: workspace.to_path_buf(),
-        })
+            workspace: self.workspace.clone(),
+        }
     }
 
     /// Get ready beads, sorted by score (highest first).
@@ -277,19 +228,48 @@ impl BeadQueueReader {
     }
 
     /// Get the next ready bead for allocation.
+    ///
+    /// Returns the highest-scoring ready bead that is not already assigned,
+    /// or `None` when the queue is empty or fully assigned.
     pub fn pop_ready_bead(&mut self) -> Option<QueuedBead> {
         if let Ok(mut ready) = self.get_ready_beads() {
             // Filter out already assigned beads
             ready.retain(|b| !self.assignments.contains_key(&b.id));
 
-            ready.pop()
+            // `get_ready_beads` sorts highest-score first, so the next bead to
+            // allocate is at the front of the list.
+            ready.into_iter().next()
         } else {
             None
         }
     }
 
+    /// Fetch a single bead by ID, regardless of readiness or assignment state.
+    ///
+    /// This is the context-fetch step of the bead-aware launcher pipeline: it
+    /// returns everything needed to build a task prompt for the bead.
+    pub fn get_bead(&mut self, bead_id: &BeadId) -> Result<Option<QueuedBead>> {
+        Ok(self.read_beads()?.into_iter().find(|b| &b.id == bead_id))
+    }
+
     /// Assign a bead to a worker.
+    ///
+    /// Assignment is the bead-level lock that prevents duplicate work: a bead
+    /// already assigned to a different worker is rejected with
+    /// [`ForgeError::BeadAlreadyAssigned`]. Re-assigning the same worker is
+    /// idempotent.
     pub fn assign_bead(&mut self, bead_id: BeadId, worker_id: String) -> Result<()> {
+        if let Some(existing) = self.assignments.get(&bead_id) {
+            if *existing != worker_id {
+                return Err(ForgeError::BeadAlreadyAssigned {
+                    bead_id,
+                    worker_id: existing.clone(),
+                });
+            }
+            debug!("Bead {} already assigned to {}", bead_id, worker_id);
+            return Ok(());
+        }
+
         info!("Assigning bead {} to worker {}", bead_id, worker_id);
         self.assignments.insert(bead_id, worker_id);
         Ok(())
@@ -387,7 +367,7 @@ impl BeadQueueManager {
             score_b.cmp(&score_a)
         });
 
-        candidates.pop()
+        candidates.into_iter().next()
     }
 
     /// Get all ready beads across all workspaces.
@@ -445,6 +425,7 @@ impl Default for BeadQueueManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::io::Write;
     use tempfile::TempDir;
 
@@ -571,6 +552,9 @@ mod tests {
         assert_eq!(assignment.bead_id, "test-1");
         assert_eq!(assignment.assigned_model, "claude-opus");
         assert_eq!(request.config.bead_id.as_deref(), Some("test-1"));
+        // The prediction reflects the bead's real dependent count: test-2
+        // declares a blocks edge against test-1, so it is 1, not 0.
+        assert_eq!(bead.dependent_count, 1);
         assert_eq!(
             assignment.predicted_score,
             ComplexityScorer::new()
@@ -578,7 +562,7 @@ mod tests {
                     &TaskContext::new("Test bead")
                         .with_description("A test")
                         .with_labels(Vec::new())
-                        .with_blocks(0),
+                        .with_blocks(bead.dependent_count),
                 )
                 .score
         );
@@ -716,5 +700,191 @@ mod tests {
         assert!(display.contains("[P0]"));
         assert!(display.contains("[Score:"));
         assert!(display.contains("Test task"));
+    }
+
+    /// Workspace with two ready beads at different priorities plus a blocked one.
+    fn create_multi_priority_workspace() -> TempDir {
+        let dir = TempDir::new().unwrap();
+        let beads_dir = dir.path().join(".beads");
+        fs::create_dir_all(&beads_dir).unwrap();
+
+        let mut file = fs::File::create(beads_dir.join("issues.jsonl")).unwrap();
+        writeln!(file, r#"{{"id":"p-low","title":"Low priority","description":"","status":"open","priority":3,"issue_type":"task","labels":[],"dependencies":[]}}"#).unwrap();
+        writeln!(file, r#"{{"id":"p-high","title":"High priority","description":"","status":"open","priority":0,"issue_type":"bug","labels":[],"dependencies":[]}}"#).unwrap();
+        writeln!(file, r#"{{"id":"p-blocked","title":"Blocked","description":"","status":"open","priority":0,"issue_type":"task","labels":[],"dependencies":["p-high"]}}"#).unwrap();
+
+        dir
+    }
+
+    #[test]
+    fn test_pop_ready_bead_returns_highest_priority() {
+        let dir = create_multi_priority_workspace();
+        let mut reader = BeadQueueReader::new(dir.path()).unwrap();
+
+        let bead = reader.pop_ready_bead().expect("queue should not be empty");
+        assert_eq!(bead.id, "p-high");
+        // Popping hands the bead out; the assignment is what consumes it.
+        reader
+            .assign_bead("p-high".to_string(), "worker-1".to_string())
+            .unwrap();
+
+        // The P3 bead is next; the blocked bead is never returned.
+        let bead = reader.pop_ready_bead().expect("queue should not be empty");
+        assert_eq!(bead.id, "p-low");
+        reader
+            .assign_bead("p-low".to_string(), "worker-1".to_string())
+            .unwrap();
+
+        assert!(reader.pop_ready_bead().is_none());
+    }
+
+    #[test]
+    fn test_assign_bead_prevents_duplicate_assignment() {
+        let dir = create_test_workspace();
+        let mut reader = BeadQueueReader::new(dir.path()).unwrap();
+
+        reader
+            .assign_bead("test-1".to_string(), "worker-1".to_string())
+            .unwrap();
+
+        // A second worker must be refused: the assignment is the lock.
+        let err = reader
+            .assign_bead("test-1".to_string(), "worker-2".to_string())
+            .unwrap_err();
+        match err {
+            ForgeError::BeadAlreadyAssigned {
+                ref bead_id,
+                ref worker_id,
+            } => {
+                assert_eq!(bead_id, "test-1");
+                assert_eq!(worker_id, "worker-1");
+            }
+            other => panic!("expected BeadAlreadyAssigned, got: {}", other),
+        }
+
+        // The original worker keeps the lock, and re-assignment is idempotent.
+        assert_eq!(
+            reader.get_assigned_worker(&"test-1".to_string()),
+            Some(&"worker-1".to_string())
+        );
+        reader
+            .assign_bead("test-1".to_string(), "worker-1".to_string())
+            .unwrap();
+    }
+
+    #[test]
+    fn test_pop_ready_bead_skips_assigned_beads() {
+        let dir = create_multi_priority_workspace();
+        let mut reader = BeadQueueReader::new(dir.path()).unwrap();
+
+        reader
+            .assign_bead("p-high".to_string(), "worker-1".to_string())
+            .unwrap();
+
+        let bead = reader.pop_ready_bead().expect("queue should not be empty");
+        assert_eq!(bead.id, "p-low");
+    }
+
+    #[test]
+    fn test_get_bead_fetches_context() {
+        let dir = create_test_workspace();
+        let mut reader = BeadQueueReader::new(dir.path()).unwrap();
+
+        let bead = reader
+            .get_bead(&"test-2".to_string())
+            .unwrap()
+            .expect("bead should exist");
+        assert_eq!(bead.id, "test-2");
+        assert_eq!(bead.title, "Blocked bead");
+
+        assert!(
+            reader
+                .get_bead(&"does-not-exist".to_string())
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    /// A bead-rs workspace: config.json plus a checkpoint whose active root
+    /// carries the same kinds of records the queue must allocate.
+    fn create_bead_rs_workspace() -> TempDir {
+        let dir = TempDir::new().unwrap();
+        let checkpoint = dir.path().join(".beads/checkpoint");
+        let objects = checkpoint.join("objects");
+        fs::create_dir_all(&objects).unwrap();
+
+        fs::write(
+            dir.path().join(".beads/config.json"),
+            r#"{"prefix":"forge","uuid":"6d33e860"}"#,
+        )
+        .unwrap();
+
+        let root_sha = "073fc7bbf1d714799316ad50cd08bf1be4418b04dc8934f183cf2ab88908614b";
+        let mut root = fs::File::create(objects.join(format!("{root_sha}.jsonl"))).unwrap();
+        writeln!(
+            root,
+            r#"{{"record_type":"issue","issue":{{"id":"rs-high","title":"High priority","description":"","base_status":"open","priority":0,"issue_type":"bug","labels":[],"assignee":null,"manual_blocked":false,"dependencies":[],"created_at":"2026-09-01T00:00:00Z"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            root,
+            r#"{{"record_type":"issue","issue":{{"id":"rs-blocked","title":"Blocked","description":"","base_status":"open","priority":0,"issue_type":"task","labels":[],"assignee":null,"manual_blocked":false,"dependencies":[{{"blocker":"rs-high","kind":"blocks"}}]}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            root,
+            r#"{{"record_type":"issue","issue":{{"id":"rs-claimed","title":"Claimed elsewhere","description":"","base_status":"in_progress","priority":0,"issue_type":"task","labels":[],"assignee":"other-worker","manual_blocked":false,"dependencies":[]}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            root,
+            r#"{{"record_type":"event","event":{{"id":"evt-1","kind":"created"}}}}"#
+        )
+        .unwrap();
+
+        fs::write(
+            checkpoint.join("current.json"),
+            format!(
+                r#"{{"active_root":{{"path":"objects/{root_sha}.jsonl","sha256":"{root_sha}"}},"generation_id":"gen-1","issue_count":3,"mode":"monolithic","schema_version":1}}"#
+            ),
+        )
+        .unwrap();
+
+        dir
+    }
+
+    #[test]
+    fn test_bead_rs_store_reads_through_queue_reader() {
+        let dir = create_bead_rs_workspace();
+        let mut reader = BeadQueueReader::new(dir.path()).unwrap();
+
+        // Format detection works through the queue reader.
+        assert!(reader.has_beads());
+
+        let beads = reader.read_beads().unwrap();
+        assert_eq!(beads.len(), 3, "event records must not surface as beads");
+
+        // base_status maps onto the queue's status field.
+        let claimed = beads.iter().find(|b| b.id == "rs-claimed").unwrap();
+        assert_eq!(claimed.status, "in_progress");
+
+        // Only rs-high is allocatable: rs-blocked has an unfinished blocks
+        // edge, rs-claimed is already assigned in the store.
+        let ready = reader.get_ready_beads().unwrap();
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].id, "rs-high");
+
+        // Blocked bead carries its dependency count for display/scoring.
+        let blocked = beads.iter().find(|b| b.id == "rs-blocked").unwrap();
+        assert_eq!(blocked.dependency_count, 1);
+        assert_eq!(blocked.dependent_count, 0);
+        assert_eq!(
+            beads
+                .iter()
+                .find(|b| b.id == "rs-high")
+                .unwrap()
+                .dependent_count,
+            1
+        );
     }
 }

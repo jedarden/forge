@@ -136,6 +136,7 @@
 
 pub mod auto_recovery;
 pub mod bead_queue;
+pub mod bead_scheduler;
 pub mod complexity;
 pub mod crash_recovery;
 pub mod discovery;
@@ -156,6 +157,11 @@ pub use auto_recovery::{
     AutoRecoveryManager, RecoveryAction, RecoveryActionType, RecoveryConfig, RecoveryPolicy,
 };
 pub use bead_queue::{BeadAllocation, BeadQueueManager, BeadQueueReader, QueuedBead};
+pub use bead_scheduler::{
+    BeadScheduler, BeadStatusAction, BeadStatusBackend, BeadStatusUpdate, CompletionRecord,
+    FORGE_BEAD_ID_ENV, FORGE_TASK_PROMPT_ENV, WorkerBeadAssignment, build_bead_prompt,
+    priority_label,
+};
 pub use complexity::{
     CalibrationError, CalibrationReport, CalibrationResult, ComplexityCalibrationEvent,
     ComplexityCalibrationJob, ComplexityConfig, ComplexityScore, ComplexityScorer, ComplexityTier,

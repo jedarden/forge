@@ -21,8 +21,10 @@
 //! let logger = AuditLogger::open("~/.forge/audit.db")?;
 //!
 //! logger.log(AuditEvent {
+//!     timestamp: chrono::Utc::now(),
 //!     event_type: EventType::WorkerSpawn,
 //!     actor: "user".to_string(),
+//!     session_id: None,
 //!     entity_type: "worker".to_string(),
 //!     entity_id: "worker-1".to_string(),
 //!     old_value: None,

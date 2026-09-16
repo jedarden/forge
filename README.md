@@ -73,9 +73,10 @@ Press `:` to open the chat interface and control FORGE in natural language:
 ```
 
 ### Bead task integration
-- Reads task queues from `.beads/` directories (same format as NEEDLE)
+- Reads task queues from `.beads/` directories (bead-rs checkpoint and legacy JSONL formats)
 - Dependency-aware scheduling
-- Bead-level locking to prevent duplicate work across workers
+- Bead-level locking to prevent duplicate work across workers (`BeadScheduler` refuses a bead already assigned to another worker)
+- Bead-aware launcher pipeline: highest-priority ready bead is injected into the worker prompt and launched via `--bead-ref=<bead-id>` (see `docs/BEAD_LAUNCHER_PROTOCOL.md`)
 
 ---
 

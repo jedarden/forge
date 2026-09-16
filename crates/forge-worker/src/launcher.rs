@@ -17,6 +17,25 @@ use tokio::sync::RwLock;
 use tokio::time::timeout;
 use tracing::{debug, error, info, instrument, warn};
 
+/// Build the command-line arguments passed to a launcher script.
+///
+/// Standard launcher-protocol arguments are always present; the bead-aware
+/// extension adds `--bead-ref=<bead-id>` when the launch config carries a
+/// bead assignment (see `docs/BEAD_LAUNCHER_PROTOCOL.md`).
+fn build_launcher_args(config: &LaunchConfig, session_name: &str) -> Vec<String> {
+    let mut args = vec![
+        format!("--model={}", config.model),
+        format!("--workspace={}", config.workspace.display()),
+        format!("--session-name={}", session_name),
+    ];
+
+    if let Some(ref bead_id) = config.bead_id {
+        args.push(format!("--bead-ref={}", bead_id));
+    }
+
+    args
+}
+
 /// Worker launcher for spawning and managing worker processes.
 ///
 /// The launcher uses external launcher scripts to spawn workers in tmux sessions.
@@ -213,15 +232,16 @@ impl WorkerLauncher {
     ) -> Result<String> {
         let mut cmd = Command::new(&config.launcher_path);
 
-        // Pass standard arguments
-        cmd.arg(format!("--model={}", config.model))
-            .arg(format!("--workspace={}", config.workspace.display()))
-            .arg(format!("--session-name={}", session_name));
-
-        // Pass bead-ref if we have a bead assignment (bead-aware launcher protocol)
-        if let Some(ref bead_id) = config.bead_id {
-            cmd.arg(format!("--bead-ref={}", bead_id));
-            debug!("Launching bead-aware worker for bead: {}", bead_id);
+        // Standard arguments plus the bead-aware extension
+        let args = build_launcher_args(config, session_name);
+        if config.has_bead() {
+            debug!(
+                "Launching bead-aware worker for bead: {}",
+                config.bead_id.as_deref().unwrap_or_default()
+            );
+        }
+        for arg in args {
+            cmd.arg(arg);
         }
 
         // Set working directory
@@ -460,6 +480,35 @@ mod tests {
     fn test_launcher_creation() {
         let launcher = WorkerLauncher::new();
         assert_eq!(launcher.session_prefix, "forge-");
+    }
+
+    #[test]
+    fn test_launcher_args_standard_protocol() {
+        let config = LaunchConfig::new("/path/to/launcher.sh", "session", "/workspace", "sonnet");
+
+        let args = build_launcher_args(&config, "forge-session");
+        assert_eq!(
+            args,
+            vec![
+                "--model=sonnet".to_string(),
+                "--workspace=/workspace".to_string(),
+                "--session-name=forge-session".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_launcher_args_include_bead_ref() {
+        // The bead-aware launcher protocol extension: a configured bead is
+        // forwarded to the launcher script as --bead-ref=<bead-id>.
+        let config = LaunchConfig::new("/path/to/launcher.sh", "session", "/workspace", "sonnet")
+            .with_bead("fg-1qo");
+
+        let args = build_launcher_args(&config, "forge-fg-1qo-sonnet");
+        assert_eq!(args.len(), 4);
+        assert!(args.contains(&"--bead-ref=fg-1qo".to_string()));
+        // The extension comes after the standard arguments.
+        assert_eq!(args.last().unwrap(), "--bead-ref=fg-1qo");
     }
 
     #[test]

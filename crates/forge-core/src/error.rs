@@ -209,6 +209,10 @@ pub enum ForgeError {
     #[error("Bead not found: {bead_id}")]
     BeadNotFound { bead_id: String },
 
+    /// Bead is already assigned to another worker
+    #[error("Bead {bead_id} is already assigned to worker {worker_id}")]
+    BeadAlreadyAssigned { bead_id: String, worker_id: String },
+
     /// Bead JSONL file not found
     #[error("Bead file not found: {path}")]
     BeadFileNotFound { path: PathBuf },
@@ -293,7 +297,10 @@ pub enum ForgeError {
     // =========================================================================
     /// Generic timeout error for any operation
     #[error("Operation '{operation}' timed out after {timeout_secs}s")]
-    Timeout { operation: String, timeout_secs: u64 },
+    Timeout {
+        operation: String,
+        timeout_secs: u64,
+    },
 
     // =========================================================================
     // Audit Errors
@@ -461,12 +468,12 @@ impl ForgeError {
                 Some("Configure a chat backend in ~/.forge/config.yaml or run 'forge init'")
             }
             Self::WorkerHealth { .. } => Some("Check worker logs in ~/.forge/logs/ for details"),
-            Self::WorkerCrash { recoverable: true, .. } => {
-                Some("Worker crashed. Restart the worker or check logs for details.")
-            }
-            Self::WorkerCrash { recoverable: false, .. } => {
-                Some("Worker crashed unrecoverably. Check logs and report if persistent.")
-            }
+            Self::WorkerCrash {
+                recoverable: true, ..
+            } => Some("Worker crashed. Restart the worker or check logs for details."),
+            Self::WorkerCrash {
+                recoverable: false, ..
+            } => Some("Worker crashed unrecoverably. Check logs and report if persistent."),
             Self::WorkerExit { .. } => Some("Worker exited unexpectedly. Check logs for details."),
             Self::ToolRateLimited { .. } => Some("Wait and try again"),
             Self::TerminalInit { .. } => Some("Try running in a different terminal"),
@@ -504,10 +511,7 @@ impl ForgeError {
     }
 
     /// Create a permission denied error
-    pub fn permission_denied(
-        action: impl Into<String>,
-        required_role: UserRole,
-    ) -> Self {
+    pub fn permission_denied(action: impl Into<String>, required_role: UserRole) -> Self {
         Self::RolePermissionDenied {
             action: action.into(),
             required_role: required_role.to_string(),
