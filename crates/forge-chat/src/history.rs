@@ -162,13 +162,10 @@ impl HistoryManager {
             .create(true)
             .append(true)
             .open(&self.history_path)
-            .map_err(|e| {
-                ChatError::ConfigError(format!("Failed to open history file: {}", e))
-            })?;
+            .map_err(|e| ChatError::ConfigError(format!("Failed to open history file: {}", e)))?;
 
-        writeln!(file, "{}", json).map_err(|e| {
-            ChatError::ConfigError(format!("Failed to write history entry: {}", e))
-        })?;
+        writeln!(file, "{}", json)
+            .map_err(|e| ChatError::ConfigError(format!("Failed to write history entry: {}", e)))?;
 
         info!("Appended entry to history: {}", self.history_path.display());
         Ok(())
@@ -180,9 +177,7 @@ impl HistoryManager {
             .create(true)
             .append(true)
             .open(&self.history_path)
-            .map_err(|e| {
-                ChatError::ConfigError(format!("Failed to open history file: {}", e))
-            })?;
+            .map_err(|e| ChatError::ConfigError(format!("Failed to open history file: {}", e)))?;
 
         let mut saved = 0;
         for entry in entries {
@@ -199,7 +194,11 @@ impl HistoryManager {
             saved += 1;
         }
 
-        info!("Saved {} entries to history: {}", saved, self.history_path.display());
+        info!(
+            "Saved {} entries to history: {}",
+            saved,
+            self.history_path.display()
+        );
         Ok(saved)
     }
 
@@ -210,9 +209,8 @@ impl HistoryManager {
             return Ok(Vec::new());
         }
 
-        let file = std::fs::File::open(&self.history_path).map_err(|e| {
-            ChatError::ConfigError(format!("Failed to open history file: {}", e))
-        })?;
+        let file = std::fs::File::open(&self.history_path)
+            .map_err(|e| ChatError::ConfigError(format!("Failed to open history file: {}", e)))?;
 
         let reader = BufReader::new(file);
         let mut entries = Vec::new();
@@ -231,7 +229,10 @@ impl HistoryManager {
             match serde_json::from_str::<HistoryEntry>(&line) {
                 Ok(entry) => entries.push(entry),
                 Err(e) => {
-                    warn!("Skipping malformed history entry at line {}: {}", line_num, e);
+                    warn!(
+                        "Skipping malformed history entry at line {}: {}",
+                        line_num, e
+                    );
                 }
             }
         }
@@ -266,11 +267,15 @@ impl HistoryManager {
             ChatError::ConfigError(format!("Failed to serialize history for export: {}", e))
         })?;
 
-        fs::write(&export_path, json).await.map_err(|e| {
-            ChatError::ConfigError(format!("Failed to write export file: {}", e))
-        })?;
+        fs::write(&export_path, json)
+            .await
+            .map_err(|e| ChatError::ConfigError(format!("Failed to write export file: {}", e)))?;
 
-        info!("Exported {} entries to {}", entries.len(), export_path.display());
+        info!(
+            "Exported {} entries to {}",
+            entries.len(),
+            export_path.display()
+        );
         Ok(export_path)
     }
 
@@ -333,9 +338,8 @@ impl HistoryManager {
         };
 
         // Rewrite the file
-        let mut file = std::fs::File::create(&self.history_path).map_err(|e| {
-            ChatError::ConfigError(format!("Failed to create history file: {}", e))
-        })?;
+        let mut file = std::fs::File::create(&self.history_path)
+            .map_err(|e| ChatError::ConfigError(format!("Failed to create history file: {}", e)))?;
 
         for entry in &entries {
             let json = serde_json::to_string(entry).map_err(|e| {
@@ -354,11 +358,9 @@ impl HistoryManager {
 
 impl Default for HistoryManager {
     fn default() -> Self {
-        Self::new().unwrap_or_else(|_| {
-            Self {
-                history_path: PathBuf::from("chat-history.jsonl"),
-                session_id: chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string(),
-            }
+        Self::new().unwrap_or_else(|_| Self {
+            history_path: PathBuf::from("chat-history.jsonl"),
+            session_id: chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string(),
         })
     }
 }
@@ -463,7 +465,10 @@ mod tests {
         let entry = create_test_entry("Test", "Response");
         manager.append_entry(&entry).await.unwrap();
 
-        let result_path = manager.export_to_file(Some(export_path.clone())).await.unwrap();
+        let result_path = manager
+            .export_to_file(Some(export_path.clone()))
+            .await
+            .unwrap();
         assert_eq!(result_path, export_path);
         assert!(export_path.exists());
 

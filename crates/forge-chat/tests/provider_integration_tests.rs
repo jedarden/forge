@@ -243,11 +243,10 @@ async fn test_mock_provider_clear_calls() {
 async fn test_mock_provider_and_then_tool_call() {
     // Test and_then_tool_call by chaining it after creating the provider.
     // Note: and_then_tool_call takes self by value, so we must reassign.
-    let mock = MockProvider::new()
-        .and_then_tool_call(
-            "get_worker_status",
-            serde_json::json!({"status_filter": "healthy"}),
-        );
+    let mock = MockProvider::new().and_then_tool_call(
+        "get_worker_status",
+        serde_json::json!({"status_filter": "healthy"}),
+    );
 
     let context = DashboardContext::default();
 
@@ -255,9 +254,12 @@ async fn test_mock_provider_and_then_tool_call() {
     let response1 = mock.process("show workers", &context, &[]).await.unwrap();
     // With chaining, we should have 2 responses: default + tool call
     // The first call consumes the default response
-    assert!(!response1.text.is_empty() || response1.tool_calls.len() == 1,
+    assert!(
+        !response1.text.is_empty() || response1.tool_calls.len() == 1,
         "Expected non-empty text or tool call, got text='{}', tool_calls={}",
-        response1.text, response1.tool_calls.len());
+        response1.text,
+        response1.tool_calls.len()
+    );
 
     // Second call should return the tool call if chaining worked
     let response2 = mock.process("continue", &context, &[]).await.unwrap();
@@ -281,7 +283,10 @@ async fn test_mock_provider_with_multiple_tool_calls() {
     // Chain multiple and_then_tool_call calls
     let mock = MockProvider::new()
         .and_then_tool_call("get_worker_status", serde_json::json!({}))
-        .and_then_tool_call("get_cost_analytics", serde_json::json!({"timeframe": "today"}));
+        .and_then_tool_call(
+            "get_cost_analytics",
+            serde_json::json!({"timeframe": "today"}),
+        );
 
     // First call: default response
     let response1 = mock.process("query 1", &context, &[]).await.unwrap();

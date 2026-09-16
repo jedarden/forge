@@ -7,15 +7,12 @@
 //! 4. Automatically retries after the wait period
 
 use forge_chat::{
-    claude_api::ClaudeApiProvider,
-    config::ClaudeApiConfig,
-    context::DashboardContext,
-    error::ChatError,
-    provider::ChatProvider,
+    claude_api::ClaudeApiProvider, config::ClaudeApiConfig, context::DashboardContext,
+    error::ChatError, provider::ChatProvider,
 };
 use wiremock::{
-    matchers::{method, path},
     Mock, MockServer, Request, ResponseTemplate,
+    matchers::{method, path},
 };
 
 /// Custom matcher to track retry attempts
@@ -116,15 +113,13 @@ async fn test_429_response_without_retry_after_uses_default() {
     // First request returns 429 without retry-after header
     Mock::given(method("POST"))
         .and(path("/v1/messages"))
-        .respond_with(
-            ResponseTemplate::new(429).set_body_json(serde_json::json!({
-                "type": "error",
-                "error": {
-                    "type": "rate_limit_error",
-                    "message": "Too many requests"
-                }
-            })),
-        )
+        .respond_with(ResponseTemplate::new(429).set_body_json(serde_json::json!({
+            "type": "error",
+            "error": {
+                "type": "rate_limit_error",
+                "message": "Too many requests"
+            }
+        })))
         .up_to_n_times(3)
         .mount(&mock_server)
         .await;
@@ -294,8 +289,7 @@ async fn test_rate_limit_error_provides_friendly_message() {
 
     let action = err.suggested_action();
     assert!(
-        action.to_lowercase().contains("wait")
-            || action.to_lowercase().contains("retry"),
+        action.to_lowercase().contains("wait") || action.to_lowercase().contains("retry"),
         "Should suggest waiting or retrying"
     );
 }

@@ -113,8 +113,7 @@ impl RealWorkerSpawner {
     /// 3. $FORGE_SRC/test/example-launchers/claude-code-launcher.sh
     pub fn find_launcher() -> Option<PathBuf> {
         let home = std::env::var("HOME").ok()?;
-        let forge_src = std::env::var("FORGE_SRC")
-            .unwrap_or_else(|_| format!("{}/forge", home));
+        let forge_src = std::env::var("FORGE_SRC").unwrap_or_else(|_| format!("{}/forge", home));
 
         let paths = vec![
             PathBuf::from(&forge_src).join("scripts/launchers/bead-worker-launcher.sh"),
@@ -218,12 +217,7 @@ impl WorkerSpawner for RealWorkerSpawner {
                 Err(e) => {
                     // If we spawned some workers successfully, return those
                     if !results.is_empty() {
-                        error!(
-                            "Failed to spawn worker {}/{}: {}",
-                            i + 1,
-                            count,
-                            e
-                        );
+                        error!("Failed to spawn worker {}/{}: {}", i + 1, count, e);
                         break;
                     }
                     return Err(e);
@@ -285,9 +279,7 @@ mod tests {
     #[tokio::test]
     async fn test_noop_spawner_returns_error() {
         let spawner = NoOpWorkerSpawner;
-        let result = spawner
-            .spawn_workers("sonnet", 1, None)
-            .await;
+        let result = spawner.spawn_workers("sonnet", 1, None).await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();

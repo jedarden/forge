@@ -39,7 +39,9 @@ use tokio::sync::Mutex;
 use tokio::time::{Duration, timeout};
 use tracing::{debug, error, info};
 
-use crate::config::{ChatConfig, ClaudeApiConfig, ClaudeCliConfig, MockConfig, OpencodeConfig, ProviderConfig};
+use crate::config::{
+    ChatConfig, ClaudeApiConfig, ClaudeCliConfig, MockConfig, OpencodeConfig, ProviderConfig,
+};
 use crate::context::DashboardContext;
 use crate::error::{ChatError, Result};
 use crate::tools::{ToolCall, ToolDefinition};
@@ -1634,7 +1636,10 @@ mod tests {
         assert_eq!(r2.text, "");
         assert_eq!(r2.tool_calls.len(), 1);
         assert_eq!(r2.tool_calls[0].name, "test_tool");
-        assert_eq!(r2.tool_calls[0].parameters, serde_json::json!({"param": "value"}));
+        assert_eq!(
+            r2.tool_calls[0].parameters,
+            serde_json::json!({"param": "value"})
+        );
     }
 
     #[tokio::test]
@@ -1787,7 +1792,10 @@ mod tests {
         let event: OpencodeEvent = serde_json::from_str(synthetic_event_json).unwrap();
         let part = event.part.unwrap();
         assert_eq!(part.synthetic, Some(true));
-        assert_eq!(part.text, Some("Continue if you have next steps".to_string()));
+        assert_eq!(
+            part.text,
+            Some("Continue if you have next steps".to_string())
+        );
 
         // Non-synthetic messages should not be filtered
         let normal_event_json = r#"{"type":"text","timestamp":1772353020961,"sessionID":"ses_123","part":{"id":"prt_123","sessionID":"ses_123","messageID":"msg_123","type":"text","text":"Normal response","time":{"start":1772353020960,"end":1772353020960}}}"#;
@@ -1969,14 +1977,10 @@ mod tests {
         let provider = Arc::new(MockProvider::new());
         provider.clear_responses().await;
 
-        provider
-            .add_response("Normal response".to_string())
-            .await;
+        provider.add_response("Normal response".to_string()).await;
 
         // Add an error response
-        provider
-            .add_error("Simulated error".to_string())
-            .await;
+        provider.add_error("Simulated error".to_string()).await;
 
         let context = DashboardContext::default();
 

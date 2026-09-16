@@ -111,7 +111,10 @@ impl ChatError {
 
     /// Check if this error is a rate limit error.
     pub fn is_rate_limit(&self) -> bool {
-        matches!(self, ChatError::RateLimitExceeded(_, _) | ChatError::ApiRateLimitExceeded(_))
+        matches!(
+            self,
+            ChatError::RateLimitExceeded(_, _) | ChatError::ApiRateLimitExceeded(_)
+        )
     }
 
     /// Get the retry-after duration for rate limit errors.
@@ -148,10 +151,16 @@ impl ChatError {
                 format!("Connection failed: {}. Check your network.", msg)
             }
             ChatError::DnsResolutionFailed { host, message } => {
-                format!("Cannot resolve hostname '{}': {}. Check DNS settings.", host, message)
+                format!(
+                    "Cannot resolve hostname '{}': {}. Check DNS settings.",
+                    host, message
+                )
             }
             ChatError::NetworkUnreachable(msg) => {
-                format!("Network unreachable: {}. Check your internet connection.", msg)
+                format!(
+                    "Network unreachable: {}. Check your internet connection.",
+                    msg
+                )
             }
             ChatError::ApiError(msg) => msg.clone(),
             ChatError::ConfigError(msg) => {
@@ -165,12 +174,18 @@ impl ChatError {
     pub fn suggested_action(&self) -> &'static str {
         match self {
             ChatError::RateLimitExceeded(_, _) => "Wait a moment before sending more commands.",
-            ChatError::ApiRateLimitExceeded(_) => "Wait for the API rate limit to reset. This will retry automatically.",
+            ChatError::ApiRateLimitExceeded(_) => {
+                "Wait for the API rate limit to reset. This will retry automatically."
+            }
             ChatError::ApiTransientError(_) => "Try again in a few seconds.",
             ChatError::Timeout(_, _) => "Check your internet connection and try again.",
             ChatError::ConnectionFailed(_) => "Verify network connectivity and API availability.",
-            ChatError::DnsResolutionFailed { .. } => "Check DNS settings. Try using a different DNS server (e.g., 8.8.8.8).",
-            ChatError::NetworkUnreachable(_) => "Check your internet connection. Try again once network is available.",
+            ChatError::DnsResolutionFailed { .. } => {
+                "Check DNS settings. Try using a different DNS server (e.g., 8.8.8.8)."
+            }
+            ChatError::NetworkUnreachable(_) => {
+                "Check your internet connection. Try again once network is available."
+            }
             ChatError::ConfigError(_) => "Check your configuration file at ~/.forge/config.yaml.",
             ChatError::ApiError(msg) if msg.contains("401") || msg.contains("unauthorized") => {
                 "Check your API key configuration."
@@ -193,7 +208,9 @@ impl ChatError {
             500 | 502 | 503 | 504 => {
                 ChatError::ApiTransientError(format!("Server error ({}): {}", status, body))
             }
-            401 | 403 => ChatError::ApiError(format!("Authentication error ({}): {}", status, body)),
+            401 | 403 => {
+                ChatError::ApiError(format!("Authentication error ({}): {}", status, body))
+            }
             _ => ChatError::ApiError(format!("HTTP {}: {}", status, body)),
         }
     }
@@ -228,16 +245,16 @@ impl ChatError {
     pub fn from_http_response(status: u16, body: &str, retry_after: Option<&str>) -> Self {
         match status {
             429 => {
-                let wait_secs = retry_after
-                    .and_then(Self::parse_retry_after)
-                    .unwrap_or(60);
+                let wait_secs = retry_after.and_then(Self::parse_retry_after).unwrap_or(60);
                 ChatError::ApiRateLimitExceeded(wait_secs)
             }
             408 => ChatError::Timeout(30, "Request timeout".to_string()),
             500 | 502 | 503 | 504 => {
                 ChatError::ApiTransientError(format!("Server error ({}): {}", status, body))
             }
-            401 | 403 => ChatError::ApiError(format!("Authentication error ({}): {}", status, body)),
+            401 | 403 => {
+                ChatError::ApiError(format!("Authentication error ({}): {}", status, body))
+            }
             _ => ChatError::ApiError(format!("HTTP {}: {}", status, body)),
         }
     }

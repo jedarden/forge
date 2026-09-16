@@ -19,8 +19,14 @@ mod network_error_classification {
     #[test]
     fn test_connection_failed_is_retryable() {
         let err = ChatError::ConnectionFailed("Could not connect".to_string());
-        assert!(err.is_retryable(), "Connection failures should be retryable");
-        assert!(err.is_network_error(), "Connection failure is a network error");
+        assert!(
+            err.is_retryable(),
+            "Connection failures should be retryable"
+        );
+        assert!(
+            err.is_network_error(),
+            "Connection failure is a network error"
+        );
     }
 
     #[test]
@@ -29,35 +35,56 @@ mod network_error_classification {
             host: "api.anthropic.com".to_string(),
             message: "name or service not known".to_string(),
         };
-        assert!(err.is_retryable(), "DNS resolution failures should be retryable");
+        assert!(
+            err.is_retryable(),
+            "DNS resolution failures should be retryable"
+        );
         assert!(err.is_network_error(), "DNS failure is a network error");
     }
 
     #[test]
     fn test_network_unreachable_is_network_error() {
         let err = ChatError::NetworkUnreachable("No route to host".to_string());
-        assert!(!err.is_retryable(), "Network unreachable is not auto-retryable (needs manual intervention)");
-        assert!(err.is_network_error(), "Network unreachable is a network error");
+        assert!(
+            !err.is_retryable(),
+            "Network unreachable is not auto-retryable (needs manual intervention)"
+        );
+        assert!(
+            err.is_network_error(),
+            "Network unreachable is a network error"
+        );
     }
 
     #[test]
     fn test_api_transient_error_is_retryable() {
         let err = ChatError::ApiTransientError("503 Service Unavailable".to_string());
-        assert!(err.is_retryable(), "Transient API errors should be retryable");
+        assert!(
+            err.is_retryable(),
+            "Transient API errors should be retryable"
+        );
     }
 
     #[test]
     fn test_rate_limit_is_retryable() {
         let err = ChatError::RateLimitExceeded(10, 60);
-        assert!(err.is_retryable(), "Rate limits should be retryable after waiting");
+        assert!(
+            err.is_retryable(),
+            "Rate limits should be retryable after waiting"
+        );
         assert!(!err.is_network_error(), "Rate limit is not a network error");
     }
 
     #[test]
     fn test_api_rate_limit_is_retryable() {
         let err = ChatError::ApiRateLimitExceeded(120);
-        assert!(err.is_retryable(), "API rate limits should be retryable after waiting");
-        assert!(!err.is_network_error(), "API rate limit is not a network error");
+        assert!(
+            err.is_retryable(),
+            "API rate limits should be retryable after waiting"
+        );
+        assert!(
+            !err.is_network_error(),
+            "API rate limit is not a network error"
+        );
         assert!(err.is_rate_limit(), "Should be classified as rate limit");
     }
 
@@ -76,7 +103,10 @@ mod network_error_classification {
     #[test]
     fn test_api_error_is_not_retryable() {
         let err = ChatError::ApiError("400 Bad Request".to_string());
-        assert!(!err.is_retryable(), "Permanent API errors should not be retryable");
+        assert!(
+            !err.is_retryable(),
+            "Permanent API errors should not be retryable"
+        );
     }
 }
 
@@ -100,14 +130,20 @@ mod user_guidance {
         };
         let friendly = err.friendly_message();
         assert!(friendly.contains("resolve"), "Should mention resolution");
-        assert!(friendly.contains("api.example.com"), "Should include hostname");
+        assert!(
+            friendly.contains("api.example.com"),
+            "Should include hostname"
+        );
     }
 
     #[test]
     fn test_network_unreachable_friendly_message() {
         let err = ChatError::NetworkUnreachable("No internet connection".to_string());
         let friendly = err.friendly_message();
-        assert!(friendly.contains("unreachable"), "Should mention unreachable");
+        assert!(
+            friendly.contains("unreachable"),
+            "Should mention unreachable"
+        );
         assert!(friendly.contains("internet"), "Should mention connection");
     }
 
@@ -115,8 +151,10 @@ mod user_guidance {
     fn test_timeout_error_suggested_action() {
         let err = ChatError::Timeout(30, "Request timeout".to_string());
         let action = err.suggested_action();
-        assert!(action.contains("connection") || action.contains("again"),
-                "Should suggest checking connection or retrying");
+        assert!(
+            action.contains("connection") || action.contains("again"),
+            "Should suggest checking connection or retrying"
+        );
     }
 
     #[test]
@@ -133,8 +171,10 @@ mod user_guidance {
     fn test_network_unreachable_suggested_action() {
         let err = ChatError::NetworkUnreachable("No route".to_string());
         let action = err.suggested_action();
-        assert!(action.contains("connection") || action.contains("network"),
-                "Should mention checking network");
+        assert!(
+            action.contains("connection") || action.contains("network"),
+            "Should mention checking network"
+        );
     }
 }
 
@@ -149,7 +189,10 @@ mod http_error_classification {
             ChatError::ApiRateLimitExceeded(_) => { /* expected */ }
             _ => panic!("Expected ApiRateLimitExceeded, got: {:?}", err),
         }
-        assert!(err.is_rate_limit(), "429 should be classified as rate limit");
+        assert!(
+            err.is_rate_limit(),
+            "429 should be classified as rate limit"
+        );
         assert!(err.is_retryable(), "429 should be retryable");
     }
 
@@ -199,12 +242,17 @@ mod http_error_classification {
     #[test]
     fn test_http_status_401_creates_auth_error() {
         let err = ChatError::from_http_status(401, "Unauthorized");
-        assert!(!err.is_retryable(), "Auth errors should not be auto-retryable");
+        assert!(
+            !err.is_retryable(),
+            "Auth errors should not be auto-retryable"
+        );
 
         match err {
             ChatError::ApiError(msg) => {
-                assert!(msg.contains("401") || msg.contains("Authentication"),
-                        "Should mention auth error");
+                assert!(
+                    msg.contains("401") || msg.contains("Authentication"),
+                    "Should mention auth error"
+                );
             }
             _ => panic!("Expected ApiError, got: {:?}", err),
         }
@@ -231,11 +279,7 @@ mod retry_behavior {
         ];
 
         for err in retryable_errors {
-            assert!(
-                err.is_retryable(),
-                "Error {:?} should be retryable",
-                err
-            );
+            assert!(err.is_retryable(), "Error {:?} should be retryable", err);
         }
 
         let non_retryable_errors = vec![
@@ -339,7 +383,9 @@ mod retry_after_parsing {
     fn test_api_rate_limit_suggested_action() {
         let err = ChatError::ApiRateLimitExceeded(120);
         let action = err.suggested_action();
-        assert!(action.contains("rate limit") || action.contains("retry"),
-                "Should mention rate limit or retry");
+        assert!(
+            action.contains("rate limit") || action.contains("retry"),
+            "Should mention rate limit or retry"
+        );
     }
 }

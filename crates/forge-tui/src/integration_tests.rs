@@ -5595,7 +5595,8 @@ mod tests {
         app.handle_app_event(AppEvent::SpawnWorker(crate::event::WorkerExecutor::Glm));
 
         // Simulate user pressing Enter to confirm the action
-        let key_event = crossterm::event::KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE);
+        let key_event =
+            crossterm::event::KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE);
         app.handle_key_event(key_event);
 
         // Try to receive the request from the channel with timeout

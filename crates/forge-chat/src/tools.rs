@@ -623,14 +623,19 @@ impl ChatTool for SpawnWorkerTool {
         let workspace = params.get("workspace").and_then(|v| v.as_str());
 
         // Check if worker spawner is available
-        let spawner = context.worker_spawner.as_ref()
-            .ok_or_else(|| ChatError::ToolExecutionFailed(
-                "Worker spawning not available. Please use the FORGE TUI to spawn workers.".to_string()
-            ))?;
+        let spawner = context.worker_spawner.as_ref().ok_or_else(|| {
+            ChatError::ToolExecutionFailed(
+                "Worker spawning not available. Please use the FORGE TUI to spawn workers."
+                    .to_string(),
+            )
+        })?;
 
         // Spawn workers using the real spawner
         let workspace_path = workspace.map(std::path::PathBuf::from);
-        match spawner.spawn_workers(worker_type, count, workspace_path.as_ref()).await {
+        match spawner
+            .spawn_workers(worker_type, count, workspace_path.as_ref())
+            .await
+        {
             Ok(spawned) => {
                 let mut result = ToolResult::success(
                     serde_json::json!({
@@ -656,7 +661,7 @@ impl ChatTool for SpawnWorkerTool {
 
                 Ok(result)
             }
-            Err(e) => Ok(ToolResult::error(format!("Failed to spawn workers: {}", e)))
+            Err(e) => Ok(ToolResult::error(format!("Failed to spawn workers: {}", e))),
         }
     }
 }

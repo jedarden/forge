@@ -149,9 +149,10 @@ impl OpencodeProvider {
                     if let Some(part) = event.part {
                         // Skip synthetic continuation messages.
                         if part.synthetic != Some(true)
-                            && let Some(text) = part.text {
-                                text_parts.push(text);
-                            }
+                            && let Some(text) = part.text
+                        {
+                            text_parts.push(text);
+                        }
                     }
                 }
                 "step_finish" => {

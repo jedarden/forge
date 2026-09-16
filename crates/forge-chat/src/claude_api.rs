@@ -29,11 +29,11 @@
 
 use ::async_trait::async_trait;
 use tokio::time::Duration;
-use tracing::{debug, warn, info};
+use tracing::{debug, info, warn};
 
 use crate::claude_api_types::{
-    ApiMessage, ApiRequest, ApiResponse, ApiTool, ApiUsage, ContentBlock,
-    StreamEvent, StreamChunk, ContentBlockDelta,
+    ApiMessage, ApiRequest, ApiResponse, ApiTool, ApiUsage, ContentBlock, ContentBlockDelta,
+    StreamChunk, StreamEvent,
 };
 use crate::config::ClaudeApiConfig;
 use crate::context::DashboardContext;
@@ -160,10 +160,7 @@ impl ClaudeApiProvider {
             match self.send_request_once(request).await {
                 Ok(response) => {
                     if attempt > 1 {
-                        info!(
-                            attempt,
-                            "API request succeeded after retry"
-                        );
+                        info!(attempt, "API request succeeded after retry");
                     }
                     return Ok(response);
                 }
@@ -250,7 +247,11 @@ impl ClaudeApiProvider {
 
             // Check if this is a retryable error
             if matches!(status_code, 429 | 500 | 502 | 503 | 504) {
-                return Err(ChatError::from_http_response(status_code, &body, retry_after.as_deref()));
+                return Err(ChatError::from_http_response(
+                    status_code,
+                    &body,
+                    retry_after.as_deref(),
+                ));
             }
 
             return Err(ChatError::ApiError(format!(
@@ -259,9 +260,10 @@ impl ClaudeApiProvider {
             )));
         }
 
-        response.json().await.map_err(|e| {
-            ChatError::ApiError(format!("Failed to parse API response: {}", e))
-        })
+        response
+            .json()
+            .await
+            .map_err(|e| ChatError::ApiError(format!("Failed to parse API response: {}", e)))
     }
 
     /// Classify a reqwest error into a specific ChatError variant.
@@ -271,7 +273,11 @@ impl ClaudeApiProvider {
     /// - DNS resolution failures: Cannot resolve hostname
     /// - Network unreachable: No internet connection
     /// - Connection failures: Generic connection issues
-    fn classify_network_error(error: reqwest::Error, base_url: &str, timeout_secs: u64) -> ChatError {
+    fn classify_network_error(
+        error: reqwest::Error,
+        base_url: &str,
+        timeout_secs: u64,
+    ) -> ChatError {
         let error_string = error.to_string().to_lowercase();
 
         // Check for timeout first
@@ -412,7 +418,11 @@ impl ClaudeApiProvider {
 
             // Use from_http_response for proper error classification
             if matches!(status_code, 429 | 500 | 502 | 503 | 504) {
-                return Err(ChatError::from_http_response(status_code, &body, retry_after.as_deref()));
+                return Err(ChatError::from_http_response(
+                    status_code,
+                    &body,
+                    retry_after.as_deref(),
+                ));
             }
 
             return Err(ChatError::ApiError(format!(
