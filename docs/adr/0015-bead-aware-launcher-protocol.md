@@ -47,10 +47,12 @@ launcher.sh \
 
 When `--bead-ref` is provided, the launcher MUST:
 
-1. **Fetch bead data** using `br show <bead-id>`
+1. **Fetch bead data** using `bead show <bead-id> --json`
 2. **Parse bead JSON** to extract title, description, priority, type
 3. **Construct prompt** with bead context
 4. **Launch worker** with injected task/prompt
+5. **Fence completion transitions** with the claimed bead's `claim_epoch`
+   when invoking `bead close` or `bead release`
 5. **Update bead status** to `in_progress` on launch
 6. **Update bead status** to `closed` on completion (exit code 0)
 
@@ -97,7 +99,7 @@ Workers remain bead-agnostic. They receive:
 
 - A prompt constructed by the launcher
 - Standard environment variables
-- No direct br CLI dependency
+- No direct bead CLI dependency
 
 The launcher handles all bead interactions.
 
@@ -128,13 +130,15 @@ Each task type would have its own launcher implementation that:
 ### Negative
 
 1. **Launcher complexity**: Launchers must now fetch and parse bead data
-2. **br dependency**: Bead launchers require br CLI in workspace
+2. **bead dependency**: Bead launchers require the `bead` CLI in workspace
 3. **Status race conditions**: Multiple workers could claim same bead (need locking)
 
 ### Mitigations
 
 1. **Launcher library**: Share bead-fetching logic across launchers
-2. **Graceful degradation**: Fall back to generic worker if br unavailable
+2. **Fail closed**: Refuse a bead-aware launch if `bead` is unavailable or
+   cannot fetch/update the referenced bead; a generic worker must never run
+   without its assigned task context
 3. **Bead locking**: Use bead-level locking (separate concern, see bead locking ADR)
 
 ## Examples
@@ -151,7 +155,7 @@ scripts/launchers/bead-worker-launcher.sh \
   --bead-ref=fg-1qo
 
 # Launcher fetches bead data
-br show fg-1qo --format json
+bead show fg-1qo --json
 
 # Launcher constructs prompt and spawns worker
 tmux new-session -d -s "forge-fg-1qo-sonnet" \

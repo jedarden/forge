@@ -139,6 +139,8 @@
 //! - `FORGE_WORKSPACE`: Working directory path
 
 pub mod auto_recovery;
+/// Cross-process bead-rs claims and fencing-token release support.
+pub mod bead_claim;
 pub mod bead_queue;
 pub mod bead_scheduler;
 pub mod complexity;
@@ -161,6 +163,9 @@ pub mod types;
 // Re-export main types for convenience
 pub use auto_recovery::{
     AutoRecoveryManager, RecoveryAction, RecoveryActionType, RecoveryConfig, RecoveryPolicy,
+};
+pub use bead_claim::{
+    BeadClaimBackend, ClaimOutcome, ClaimVerification, MemoryClaimStore, StoredClaim,
 };
 pub use bead_queue::{BeadAllocation, BeadQueueManager, BeadQueueReader, QueuedBead};
 pub use bead_scheduler::{

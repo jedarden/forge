@@ -53,16 +53,18 @@ launcher \
 ```
 
 **Bead-Aware Parameter:**
-- `--bead-ref` - Bead ID from br CLI (e.g., "fg-1qo", "bd-abc")
+- `--bead-ref` - Bead ID from the `bead` CLI (e.g., "fg-1qo", "bd-abc")
   - When present: launcher fetches bead data and constructs task prompt
   - When absent: launcher operates in standard mode (no task assigned)
 
 **Bead-aware launchers:**
-- Fetch bead data using `br show <bead-id>`
+- Fetch bead data using `bead show <bead-id> --json`
 - Construct task prompt with bead context (title, description, priority)
 - Update bead status to `in_progress` on spawn
 - Include `bead_ref` field in output JSON and status file
-- Close bead with `br close <bead-id>` when worker completes
+- Close bead with `bead close <bead-id>` when worker completes
+- Pass the `claim_epoch` from `bead show --json` as `--fencing-token` for
+  close/release transitions on claimed beads
 
 See `bead-worker-launcher.sh` for a complete reference implementation.
 
@@ -206,7 +208,7 @@ The launcher must spawn an actual running process:
 ### Test Bead-Aware Launcher
 
 ```bash
-# Test with a real bead (requires br CLI and valid bead ID)
+# Test with a real bead (requires the bead CLI and a valid bead ID)
 ./test/example-launchers/bead-worker-launcher.sh \
   --model=sonnet \
   --workspace=/home/coder/forge \
@@ -214,7 +216,7 @@ The launcher must spawn an actual running process:
   --bead-ref=fg-1qo
 
 # Verify bead status was updated to in_progress
-br show fg-1qo
+bead show fg-1qo
 
 # Verify status file contains bead_ref
 cat ~/.forge/status/test-bead-launch.json | jq '.current_task'

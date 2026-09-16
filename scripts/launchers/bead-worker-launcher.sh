@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # =============================================================================
 # FORGE Bead-Aware Worker Launcher
 # =============================================================================
@@ -20,7 +20,7 @@
 # BEAD-AWARE BEHAVIOR:
 # -------------------
 # When --bead-ref is provided:
-#   1. Fetch bead data using `br show <bead-id>`
+#   1. Fetch bead data using `bead show <bead-id> --json`
 #   2. Construct prompt with bead context
 #   3. Update bead status to "in_progress"
 #   4. Launch worker with bead-specific prompt
@@ -35,7 +35,7 @@
 #
 # DEPENDENCIES:
 # -------------
-# - br CLI (beads_rust) for bead operations
+# - bead CLI (bead-rs) for bead operations
 # - tmux for session management
 # - claude-code or other AI tool (configurable)
 #
@@ -48,7 +48,7 @@ set -euo pipefail
 # =============================================================================
 DEFAULT_MODEL="sonnet"
 DEFAULT_AI_TOOL="claude-code"
-BR_CMD="br"
+BEAD_CMD="${FORGE_BEAD_CLI:-bead}"
 
 # =============================================================================
 # Argument Parsing
@@ -127,24 +127,26 @@ BEAD_LABELS=""
 if [[ -n "$BEAD_REF" ]]; then
   echo "Fetching bead data for $BEAD_REF..." >&2
 
-  # Check if br is available
-  if ! command -v "$BR_CMD" &> /dev/null; then
-    echo "Warning: br CLI not found, cannot fetch bead data" >&2
-    echo "Launching generic worker instead..." >&2
-    BEAD_REF=""
+  # Check if bead is available
+  if ! command -v "$BEAD_CMD" &> /dev/null; then
+    echo "Error: bead CLI not found (required for --bead-ref)" >&2
+    exit 1
   else
-    # Fetch bead data (br show outputs a JSON array)
-    BEAD_JSON=$(cd "$WORKSPACE" && "$BR_CMD" show "$BEAD_REF" --format json 2>/dev/null || echo "")
+    # Fetch bead data (bead show --json outputs a one-element JSON array)
+    if ! BEAD_JSON=$(cd "$WORKSPACE" && "$BEAD_CMD" show "$BEAD_REF" --json 2>/dev/null); then
+      echo "Error: Failed to fetch bead $BEAD_REF" >&2
+      echo "       Bead may not exist or bead CLI may not be configured" >&2
+      exit 1
+    fi
 
     if [[ -z "$BEAD_JSON" ]]; then
-      echo "Warning: Failed to fetch bead $BEAD_REF" >&2
-      echo "Launching generic worker instead..." >&2
-      BEAD_REF=""
+      echo "Error: bead show returned no data for $BEAD_REF" >&2
+      exit 1
     else
       BEAD_DATA="$BEAD_JSON"
 
       # Parse bead data using jq if available
-      # br show returns an array, so we need to access the first element
+      # bead show --json returns a one-element array, so we access the first element
       if command -v jq &> /dev/null; then
         BEAD_TITLE=$(echo "$BEAD_DATA" | jq -r '.[0].title // empty')
         BEAD_DESC=$(echo "$BEAD_DATA" | jq -r '.[0].description // empty')
@@ -160,8 +162,14 @@ if [[ -n "$BEAD_REF" ]]; then
         BEAD_LABELS=$(echo "$BEAD_DATA" | grep -o '"labels":\[[^]]*\]' | head -1 | sed 's/"//g' | tr -d '[],' || echo "")
       fi
 
-      # Update bead status to in_progress
-      cd "$WORKSPACE" && "$BR_CMD" update "$BEAD_REF" --status in_progress 2>/dev/null || true
+      # Update bead status to in_progress (protocol §4: assignee is part of
+      # the transition — it is what duplicate-claim prevention and stale
+      # assignment recovery key on). Stdout is dropped: the bead CLI prints
+      # the bead id on success and stdout must stay JSON-only for FORGE.
+      if ! (cd "$WORKSPACE" && "$BEAD_CMD" update "$BEAD_REF" --status in_progress --assignee "$SESSION_NAME" >/dev/null 2>&1); then
+        echo "Error: Failed to update bead $BEAD_REF to in_progress" >&2
+        exit 1
+      fi
 
       echo "Bead loaded: $BEAD_TITLE" >&2
     fi
@@ -235,16 +243,23 @@ case "$MODEL" in
     ;;
 esac
 
-# Build the worker command
-# In a real deployment, this would launch the actual AI tool
-# For this reference implementation, we simulate the worker process
-WORKER_CMD=$(cat <<'INNER_EOF'
-  # Simulate a worker that processes the task
-  echo "Worker started, processing task..."
-  echo "Task: $BEAD_REF - $BEAD_TITLE"
-  # In real implementation: $AI_CMD $AI_MODEL_ARG <bead-prompt>
-INNER_EOF
-)
+# Materialize the task prompt as a temp file (protocol §3: "For tmux
+# sessions: write to a temp file and pass as argument"). Interpolating the
+# prompt into the pane command breaks on any description containing a quote;
+# a file path is injection-proof.
+PROMPT_FILE=$(mktemp "/tmp/forge-prompt-${SESSION_NAME}.XXXXXX")
+printf '%s\n' "$WORKER_PROMPT" > "$PROMPT_FILE"
+
+# On a clean worker exit the pane writes its exit code here; the completion
+# monitor below reads it to decide close vs release (empty in standard mode).
+BEAD_EXIT_MARKER=""
+WORKER_FINALIZE=""
+
+if [[ -n "$BEAD_REF" ]]; then
+  BEAD_EXIT_MARKER="$HOME/.forge/status/${SESSION_NAME}.exit"
+  rm -f "$BEAD_EXIT_MARKER"
+  WORKER_FINALIZE="echo 0 > '$BEAD_EXIT_MARKER'"
+fi
 
 # Launch in tmux session
 if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
@@ -253,18 +268,22 @@ if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
   sleep 1
 fi
 
-# Create tmux session with the worker command
+# Create tmux session with the worker command.
+# In a real deployment, the pane would run the actual AI tool fed by the
+# prompt file; this reference implementation simulates the worker process.
 tmux new-session -d -s "$SESSION_NAME" "
   cd '$WORKSPACE'
   echo 'Starting worker for bead: ${BEAD_REF:-<none>}'
   echo 'Model: $MODEL'
   echo ''
   echo 'Task Prompt:'
-  echo '$WORKER_PROMPT'
+  cat '$PROMPT_FILE'
+  rm -f '$PROMPT_FILE'
   echo ''
   echo 'Simulating worker process (press Ctrl+C to exit)...'
   # Simulate work
   sleep 300
+  $WORKER_FINALIZE
 "
 
 # Get the PID of the tmux server (not the session, but close enough for monitoring)
@@ -275,6 +294,98 @@ if [[ "$TMUX_PID" == "0" ]]; then
 fi
 
 echo "Worker spawned (tmux PID: $TMUX_PID)" >&2
+
+# =============================================================================
+# Bead Completion Monitor (Detached Background)
+# =============================================================================
+# Protocol §4: a standalone bead-aware launcher applies completion transitions
+# on FORGE's behalf, through the bead CLI (sole write authority — ADR 0020):
+#   worker exit 0    -> bead close <id> --reason "Completed by <session>"
+#   worker failure   -> bead release <id>  (back to open/unassigned)
+#   monitor timeout  -> no transition; the bead stays in_progress and
+#                       stale-assignment recovery owns it from there
+# The monitor survives this launcher (setsid + disown) and never touches
+# .beads/ directly — every transition is a CLI invocation from the workspace.
+if [[ -n "$BEAD_REF" ]]; then
+  BEAD_SESSION="$SESSION_NAME" \
+  BEAD_CMD="$BEAD_CMD" \
+  BEAD_ID="$BEAD_REF" \
+  BEAD_WORKSPACE="$WORKSPACE" \
+  BEAD_EXIT_MARKER="$BEAD_EXIT_MARKER" \
+  BEAD_LOG_FILE="$HOME/.forge/logs/$SESSION_NAME.log" \
+  BEAD_MONITOR_TIMEOUT_SECS="${BEAD_MONITOR_TIMEOUT_SECS:-86400}" \
+  nohup setsid bash -c '
+    # The monitor is detached from the launcher and must finish its cleanup
+    # path even when the parent shell exported errexit.
+    set +e
+    deadline=$(( $(date +%s) + BEAD_MONITOR_TIMEOUT_SECS ))
+    timed_out=0
+    while :; do
+      if [ -f "$BEAD_EXIT_MARKER" ]; then
+        break
+      fi
+      if ! tmux has-session -t "$BEAD_SESSION" > /dev/null 2>&1; then
+        # Session ended; brief grace for a racing marker write
+        sleep 2
+        break
+      fi
+      if [ "$(date +%s)" -ge "$deadline" ]; then
+        timed_out=1
+        break
+      fi
+      sleep 5
+    done
+
+    exit_code=1
+    if [ -f "$BEAD_EXIT_MARKER" ]; then
+      exit_code="$(cat "$BEAD_EXIT_MARKER" 2> /dev/null || echo 1)"
+    fi
+    rm -f "$BEAD_EXIT_MARKER"
+
+    log_event() {
+      echo "{\"timestamp\": \"$(date -Iseconds)\", \"level\": \"info\", \"worker_id\": \"$BEAD_SESSION\", \"message\": \"$1\", \"event\": \"$2\", \"bead_id\": \"$BEAD_ID\", \"exit_code\": ${exit_code:-1}}" \
+        >> "$BEAD_LOG_FILE" 2> /dev/null || true
+    }
+
+    # Transitions must run against the bead workspace store
+    cd "$BEAD_WORKSPACE" 2> /dev/null || exit 0
+
+    if [ "$timed_out" = "1" ]; then
+      log_event "Completion monitor timed out; bead left in_progress" "bead_monitor_timeout"
+      exit 0
+    fi
+
+    if [ "$exit_code" = "0" ]; then
+      # A claimed bead (our in_progress transition) requires the claim-epoch
+      # fencing token on close; read it fresh to minimize the conflict window.
+      # An empty epoch means the bead was never claimed — close without one.
+      close_args=(close "$BEAD_ID" --reason "Completed by $BEAD_SESSION")
+      claim_epoch="$("$BEAD_CMD" show "$BEAD_ID" --json 2> /dev/null | jq -r ".[0].claim_epoch // empty" 2> /dev/null || true)"
+      if [ -n "$claim_epoch" ]; then
+        close_args+=(--fencing-token "$claim_epoch")
+      fi
+      if "$BEAD_CMD" "${close_args[@]}" > /dev/null 2>&1; then
+        log_event "Bead closed after worker exit 0" "bead_closed"
+      else
+        log_event "Failed to close bead via bead CLI" "bead_close_failed"
+      fi
+    else
+      release_args=(release "$BEAD_ID")
+      claim_epoch="$("$BEAD_CMD" show "$BEAD_ID" --json 2> /dev/null | jq -r ".[0].claim_epoch // empty" 2> /dev/null || true)"
+      if [ -n "$claim_epoch" ]; then
+        release_args+=(--fencing-token "$claim_epoch")
+      fi
+      if "$BEAD_CMD" "${release_args[@]}" > /dev/null 2>&1; then
+        log_event "Bead released for reallocation after worker exit" "bead_released"
+      else
+        log_event "Failed to release bead via bead CLI" "bead_release_failed"
+      fi
+    fi
+  ' </dev/null > /dev/null 2>&1 &
+  disown || true
+
+  echo "Bead completion monitor armed for $BEAD_REF (timeout: ${BEAD_MONITOR_TIMEOUT_SECS:-86400}s)" >&2
+fi
 
 # =============================================================================
 # Output Worker Metadata (stdout - JSON ONLY)

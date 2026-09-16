@@ -10,7 +10,12 @@
 //! - **Duplicate-assignment prevention**: the mapping is a lock — a bead
 //!   already assigned to one worker is refused to every other worker. This is
 //!   the "bead-level locking to prevent duplicate work across workers"
-//!   guarantee from the README.
+//!   guarantee from the README. On the launch path the lock is backed by the
+//!   bead store itself ([`BeadClaimBackend`]): a guarded
+//!   `bead update --if-revision` claim makes the assignment safe against
+//!   *other processes* too — a second FORGE instance, or an external worker
+//!   such as NEEDLE sharing the same queue — not just against this
+//!   scheduler's own mapping.
 //! - **Launch pipeline**: fetches the bead's context, injects it into the
 //!   worker prompt, and spawns the worker through [`WorkerLauncher`] with
 //!   `--bead-ref=<bead-id>` (the bead-aware launcher protocol extension).
@@ -45,6 +50,7 @@
 //! # }
 //! ```
 
+use crate::bead_claim::{BeadClaimBackend, ClaimOutcome};
 use crate::bead_queue::{BeadQueueReader, QueuedBead};
 use crate::launcher::WorkerLauncher;
 use crate::scorer::TaskScorer;
@@ -114,10 +120,11 @@ pub fn build_bead_prompt(bead: &QueuedBead) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BeadStatusBackend {
     /// Shell out to the bead CLI in the bead's workspace (the
-    /// `br update` / `br close` calls from the launcher protocol).
+    /// `bead update` / `bead close` / `bead release` calls from the
+    /// launcher protocol).
     Cli {
-        /// Bead CLI binary name (defaults to `br`, matching the rest of
-        /// the codebase).
+        /// Bead CLI binary name (defaults to `bead`, the canonical bead-rs
+        /// CLI; legacy launcher aliases are deprecated).
         binary: String,
     },
     /// Record status updates in memory without executing any CLI.
@@ -130,7 +137,7 @@ pub enum BeadStatusBackend {
 impl Default for BeadStatusBackend {
     fn default() -> Self {
         Self::Cli {
-            binary: "br".to_string(),
+            binary: "bead".to_string(),
         }
     }
 }
@@ -159,9 +166,10 @@ pub enum BeadStatusAction {
     /// Worker launched on the bead: `update <id> --status in_progress --assignee <worker>`
     MarkInProgress,
     /// Worker finished the bead: `close <id> --reason "Completed by <worker>"`
+    /// (with the claim-epoch fencing token when the bead is claimed)
     Close,
-    /// Assignment released without completion: `update <id> --status open` and
-    /// `update <id> --assignee ""` so the bead can be reallocated
+    /// Assignment released without completion: `release <id>` returns the
+    /// bead to open/unassigned so it can be reallocated
     Reopen,
 }
 
@@ -224,6 +232,8 @@ pub struct BeadScheduler {
     status_updates: Vec<BeadStatusUpdate>,
     /// How status updates reach the bead store
     status_backend: BeadStatusBackend,
+    /// How cross-process claims reach the bead store
+    claim_backend: BeadClaimBackend,
     /// Worker launcher used by the launch pipeline
     launcher: Arc<WorkerLauncher>,
 }
@@ -237,6 +247,7 @@ impl BeadScheduler {
             completions: Vec::new(),
             status_updates: Vec::new(),
             status_backend: BeadStatusBackend::default(),
+            claim_backend: BeadClaimBackend::default(),
             launcher,
         }
     }
@@ -244,6 +255,15 @@ impl BeadScheduler {
     /// Override how bead status updates are applied.
     pub fn with_status_backend(mut self, backend: BeadStatusBackend) -> Self {
         self.status_backend = backend;
+        self
+    }
+
+    /// Override how cross-process claims are taken.
+    ///
+    /// Tests and dry runs use [`BeadClaimBackend::Memory`] to race two
+    /// schedulers against one bead without executing any CLI.
+    pub fn with_claim_backend(mut self, backend: BeadClaimBackend) -> Self {
+        self.claim_backend = backend;
         self
     }
 
@@ -397,7 +417,9 @@ impl BeadScheduler {
     ///
     /// Same pipeline as [`BeadScheduler::launch_next`], but targeting a
     /// chosen bead. Fails with [`ForgeError::BeadAlreadyAssigned`] if another
-    /// worker already holds it.
+    /// worker already holds it — in this scheduler's mapping *or in the bead
+    /// store itself* — and with [`ForgeError::BeadClaimConflict`] when the
+    /// guarded claim write loses a race against another process.
     pub async fn launch_bead(
         &mut self,
         bead_id: impl Into<BeadId>,
@@ -407,7 +429,7 @@ impl BeadScheduler {
         let bead_id = bead_id.into();
         let worker_id = worker_id.into();
 
-        let (mut request, bead, reader_idx) =
+        let (mut request, bead, _reader_idx) =
             self.prepare_launch_full(&bead_id, &worker_id, config)?;
 
         // Inject the bead context into the worker prompt (protocol step 2).
@@ -428,20 +450,92 @@ impl BeadScheduler {
             worker_id, bead_id, bead.title
         );
 
+        // Cross-process claim (protocol §4.1): take the assignment in the
+        // bead store itself with a guarded `--if-revision` write before
+        // spawning, so two schedulers in different processes — or FORGE and
+        // an external worker sharing the queue — cannot both launch onto this
+        // bead. The claim doubles as the mark-in-progress transition. An
+        // unreadable store (no bead CLI, legacy flat file) degrades to the
+        // in-process mapping lock.
+        let claimed_in_store = match self
+            .claim_backend
+            .read_claim(Path::new(&bead.workspace), &bead_id)
+            .await?
+        {
+            None => {
+                warn!(
+                    bead_id = %bead_id,
+                    "Bead store claim state unavailable; relying on the in-process mapping lock"
+                );
+                false
+            }
+            Some(stored) if stored.assignee.as_deref() == Some(worker_id.as_str()) => {
+                // Re-launch of an assignment we already hold in the store:
+                // verify rather than re-write, per the protocol's retry path.
+                debug!(
+                    bead_id = %bead_id,
+                    worker_id = %worker_id,
+                    "Claim already holds for this worker"
+                );
+                true
+            }
+            Some(stored) if stored.assignee.is_some() => {
+                // Held by another worker in the store — refuse even though
+                // our own mapping was free, and roll the mapping back.
+                let holder = stored.assignee.unwrap_or_default();
+                warn!(
+                    bead_id = %bead_id,
+                    holder = %holder,
+                    "Bead is claimed in the store by another worker"
+                );
+                self.remove_assignment(&bead_id);
+                return Err(ForgeError::BeadAlreadyAssigned {
+                    bead_id: bead_id.clone(),
+                    worker_id: holder,
+                });
+            }
+            Some(stored) => {
+                match self
+                    .claim_backend
+                    .acquire(Path::new(&bead.workspace), &bead_id, &worker_id, &stored)
+                    .await?
+                {
+                    ClaimOutcome::Acquired { .. } => true,
+                    ClaimOutcome::Lost { detail } => {
+                        // Another process moved the bead between our read and
+                        // our guarded write: never launch on a lost race.
+                        warn!(
+                            bead_id = %bead_id,
+                            detail = %detail,
+                            "Bead claim lost the race"
+                        );
+                        self.remove_assignment(&bead_id);
+                        return Err(ForgeError::BeadClaimConflict {
+                            bead_id: bead_id.clone(),
+                            detail,
+                        });
+                    }
+                }
+            }
+        };
+
         // Spawn through the launcher (protocol step 3).
         match self.launcher.spawn(request).await {
             Ok(handle) => {
-                // Protocol step 4: mark the bead in-progress for this worker.
-                if let Err(e) = self
-                    .apply_status_update(
-                        Path::new(&bead.workspace),
-                        &bead_id,
-                        &worker_id,
-                        BeadStatusAction::MarkInProgress,
-                        format!("launched on session {}", handle.session_name),
-                        &handle.session_name,
-                    )
-                    .await
+                // Protocol step 4: mark the bead in-progress for this worker —
+                // unless the cross-process claim already did, in which case a
+                // second write would only duplicate the transition.
+                if !claimed_in_store
+                    && let Err(e) = self
+                        .apply_status_update(
+                            Path::new(&bead.workspace),
+                            &bead_id,
+                            &worker_id,
+                            BeadStatusAction::MarkInProgress,
+                            format!("launched on session {}", handle.session_name),
+                            &handle.session_name,
+                        )
+                        .await
                 {
                     warn!(
                         bead_id = %bead_id,
@@ -453,16 +547,26 @@ impl BeadScheduler {
             }
             Err(e) => {
                 // Roll the mapping back so the bead stays allocatable — a
-                // failed launch must not leave a stale lock behind.
+                // failed launch must not leave a stale lock behind — and give
+                // the cross-process claim back too.
                 warn!(
                     bead_id = %bead_id,
                     worker_id = %worker_id,
                     error = %e,
                     "Launch failed; releasing bead assignment"
                 );
-                self.assignments.remove(&bead_id);
-                if let Some(reader) = self.readers.get_mut(reader_idx) {
-                    reader.unassign_bead(&bead_id);
+                self.remove_assignment(&bead_id);
+                if claimed_in_store
+                    && let Err(release_err) = self
+                        .claim_backend
+                        .release_claim(Path::new(&bead.workspace), &bead_id, &worker_id)
+                        .await
+                {
+                    warn!(
+                        bead_id = %bead_id,
+                        error = %release_err,
+                        "Failed to release bead claim after failed launch"
+                    );
                 }
                 Err(e)
             }
@@ -691,8 +795,8 @@ impl BeadScheduler {
 
     /// Execute the bead CLI invocation for a status action.
     ///
-    /// Command shapes mirror `docs/BEAD_LAUNCHER_PROTOCOL.md` §4 and the
-    /// existing `br` usage in `forge-core`'s stuck detection.
+    /// Command shapes mirror `docs/BEAD_LAUNCHER_PROTOCOL.md` §4 and the real
+    /// `bead` CLI surface (`update`/`close`/`release`).
     async fn run_bead_cli(
         &self,
         workspace: &Path,
@@ -702,7 +806,7 @@ impl BeadScheduler {
         detail: &str,
         assignee: &str,
     ) -> Result<()> {
-        let tool = format!("{} update/close", binary);
+        let tool = format!("{} update/close/release", binary);
 
         match action {
             BeadStatusAction::MarkInProgress => {
@@ -722,37 +826,71 @@ impl BeadScheduler {
                 .await
             }
             BeadStatusAction::Close => {
-                self.exec_cli(
-                    workspace,
-                    binary,
-                    &["close", bead_id, "--reason", detail],
-                    &tool,
-                )
-                .await
+                // A claimed bead (our MarkInProgress transition) requires the
+                // claim-epoch fencing token on close; read it fresh to
+                // minimize the conflict window. A missing epoch means the
+                // bead was never claimed — close without one.
+                let mut args = vec![
+                    "close".to_string(),
+                    bead_id.to_string(),
+                    "--reason".to_string(),
+                    detail.to_string(),
+                ];
+                if let Some(epoch) = self.read_claim_epoch(workspace, binary, bead_id).await {
+                    args.push("--fencing-token".to_string());
+                    args.push(epoch.to_string());
+                }
+                let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+                self.exec_cli(workspace, binary, &arg_refs, &tool).await
             }
             BeadStatusAction::Reopen => {
-                self.exec_cli(
-                    workspace,
-                    binary,
-                    &["update", bead_id, "--status", "open"],
-                    &tool,
-                )
-                .await?;
-                // Best-effort assignee clear (matches stuck detection).
-                if let Err(e) = self
-                    .exec_cli(
-                        workspace,
-                        binary,
-                        &["update", bead_id, "--assignee", ""],
-                        &tool,
-                    )
-                    .await
-                {
-                    warn!(bead_id = %bead_id, error = %e, "Failed to clear assignee on reopen");
+                // `release` is the bead CLI's atomic claimed -> open/unassigned
+                // transition. The old shape (`update --status open` plus an
+                // empty-string assignee clear) is not a valid invocation and
+                // would leave the bead in the assigned-but-open state that the
+                // ready frontier silently skips.
+                let mut args = vec!["release".to_string(), bead_id.to_string()];
+                if let Some(epoch) = self.read_claim_epoch(workspace, binary, bead_id).await {
+                    args.push("--fencing-token".to_string());
+                    args.push(epoch.to_string());
                 }
-                Ok(())
+                let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+                self.exec_cli(workspace, binary, &arg_refs, &tool).await
             }
         }
+    }
+
+    /// Read a bead's current claim epoch through the CLI.
+    ///
+    /// `bead show <id> --json` projects `claim_epoch` (the fencing token the
+    /// CLI demands before it will close a claimed bead). Returns `None` when
+    /// the bead is unclaimed or the epoch cannot be read — close then runs
+    /// without a token, which is correct for unclaimed beads.
+    async fn read_claim_epoch(
+        &self,
+        workspace: &Path,
+        binary: &str,
+        bead_id: &BeadId,
+    ) -> Option<u64> {
+        let output = Command::new(binary)
+            .args(["show", bead_id, "--json"])
+            .current_dir(workspace)
+            .output()
+            .await
+            .ok()?;
+
+        if !output.status.success() {
+            return None;
+        }
+
+        #[derive(serde::Deserialize)]
+        struct ShownBead {
+            #[serde(default)]
+            claim_epoch: Option<u64>,
+        }
+
+        let beads: Vec<ShownBead> = serde_json::from_slice(&output.stdout).ok()?;
+        beads.into_iter().next().and_then(|b| b.claim_epoch)
     }
 
     async fn exec_cli(
@@ -784,6 +922,7 @@ impl BeadScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bead_claim::{MemoryClaimStore, StoredClaim};
     use forge_core::types::WorkerTier;
     use std::fs;
     use std::io::Write;
@@ -945,6 +1084,189 @@ mod tests {
                 .worker_id,
             "worker-a"
         );
+    }
+
+    /// A scheduler whose own mapping is free must still refuse a bead the
+    /// *store* shows as claimed by another process — the whole point of the
+    /// cross-process claim.
+    #[tokio::test]
+    async fn test_launch_refuses_bead_claimed_in_store_by_other() {
+        let dir = create_multi_priority_workspace();
+        let store = MemoryClaimStore::new();
+        store.seed(
+            "p-high",
+            StoredClaim {
+                assignee: Some("worker-b".to_string()),
+                status: "in_progress".to_string(),
+                revision: 5,
+                claim_epoch: None,
+            },
+        );
+        let mut scheduler =
+            scheduler_for(&dir).with_claim_backend(BeadClaimBackend::Memory(store.clone()));
+
+        let err = scheduler
+            .launch_bead("p-high", "worker-a", launch_config(&dir))
+            .await
+            .unwrap_err();
+        match err {
+            ForgeError::BeadAlreadyAssigned { bead_id, worker_id } => {
+                assert_eq!(bead_id, "p-high");
+                assert_eq!(worker_id, "worker-b", "the holder must come from the store");
+            }
+            other => panic!("expected BeadAlreadyAssigned, got: {}", other),
+        }
+
+        // The mapping rolled back and the foreign claim was left untouched.
+        assert!(scheduler.assignments().next().is_none());
+        let after = store.read(&"p-high".to_string());
+        assert_eq!(after.assignee.as_deref(), Some("worker-b"));
+        assert_eq!(after.revision, 5, "a foreign claim must not be released");
+    }
+
+    /// A free bead is claimed in the store before the spawn; when the spawn
+    /// fails, the claim is given back. The store's revision proves both
+    /// transitions ran: 0 (untouched) → 1 (acquire) → 2 (release).
+    #[tokio::test]
+    async fn test_launch_claims_in_store_and_rolls_back_on_failed_spawn() {
+        let dir = create_multi_priority_workspace();
+        let store = MemoryClaimStore::new();
+        let mut scheduler =
+            scheduler_for(&dir).with_claim_backend(BeadClaimBackend::Memory(store.clone()));
+
+        // The default launch config points at a launcher script that does not
+        // exist, so the spawn fails after the claim was taken.
+        let err = scheduler
+            .launch_bead("p-high", "worker-a", launch_config(&dir))
+            .await
+            .unwrap_err();
+        assert!(
+            !matches!(
+                err,
+                ForgeError::BeadAlreadyAssigned { .. } | ForgeError::BeadClaimConflict { .. }
+            ),
+            "the failure must come from the spawn, not the claim: {}",
+            err
+        );
+
+        assert!(scheduler.assignments().next().is_none());
+        let after = store.read(&"p-high".to_string());
+        assert_eq!(after.assignee, None, "claim must be released on failure");
+        assert_eq!(after.status, "open");
+        assert_eq!(after.revision, 2, "acquire then release both bumped it");
+
+        // And the bead is allocatable again: a second scheduler sharing the
+        // same store can take the claim.
+        let stored = store.read(&"p-high".to_string());
+        let backend = BeadClaimBackend::Memory(store);
+        assert!(matches!(
+            backend
+                .acquire(dir.path(), &"p-high".to_string(), "worker-z", &stored)
+                .await
+                .unwrap(),
+            ClaimOutcome::Acquired { .. }
+        ));
+    }
+
+    /// Retry path: the store already shows the bead claimed by this same
+    /// worker (a previous attempt took the claim, then died before its
+    /// launch completed). The re-launch must *verify* the claim rather than
+    /// re-write it: the store's revision proves only the post-failure
+    /// release touched the bead.
+    #[tokio::test]
+    async fn test_launch_retry_verifies_existing_claim_without_rewrite() {
+        let dir = create_multi_priority_workspace();
+        let store = MemoryClaimStore::new();
+        store.seed(
+            "p-high",
+            StoredClaim {
+                assignee: Some("worker-a".to_string()),
+                status: "in_progress".to_string(),
+                revision: 5,
+                claim_epoch: None,
+            },
+        );
+        let mut scheduler =
+            scheduler_for(&dir).with_claim_backend(BeadClaimBackend::Memory(store.clone()));
+
+        // The spawn fails (missing launcher script), but the failure must
+        // come from the spawn: the held claim verified and let the launch
+        // proceed to the pipeline.
+        let err = scheduler
+            .launch_bead("p-high", "worker-a", launch_config(&dir))
+            .await
+            .unwrap_err();
+        assert!(
+            !matches!(
+                err,
+                ForgeError::BeadAlreadyAssigned { .. } | ForgeError::BeadClaimConflict { .. }
+            ),
+            "a claim we already hold must not block the retry: {}",
+            err
+        );
+
+        // Revision 5 → 6: the failed spawn's release was the *only* store
+        // mutation. A re-written claim would have bumped it twice
+        // (acquire + release).
+        let after = store.read(&"p-high".to_string());
+        assert_eq!(after.revision, 6, "verify must not re-write the claim");
+        assert_eq!(after.assignee, None, "claim given back after failed spawn");
+    }
+
+    /// A guarded claim that loses the race to a competing process aborts
+    /// the launch with `BeadClaimConflict`: the mapping is rolled back and
+    /// the winner's state in the store is left untouched.
+    #[tokio::test]
+    async fn test_launch_lost_claim_race_returns_conflict_and_leaves_store() {
+        let dir = create_multi_priority_workspace();
+        let store = MemoryClaimStore::new();
+        store.simulate_lost_race("p-high");
+        let mut scheduler =
+            scheduler_for(&dir).with_claim_backend(BeadClaimBackend::Memory(store.clone()));
+
+        let err = scheduler
+            .launch_bead("p-high", "worker-a", launch_config(&dir))
+            .await
+            .unwrap_err();
+        match err {
+            ForgeError::BeadClaimConflict { ref bead_id, .. } => {
+                assert_eq!(bead_id, "p-high");
+            }
+            other => panic!("expected BeadClaimConflict, got: {}", other),
+        }
+
+        // Mapping rolled back, and the store still shows the bead
+        // unclaimed at its original revision — the loser never wrote.
+        assert!(scheduler.assignments().next().is_none());
+        let after = store.read(&"p-high".to_string());
+        assert_eq!(after.assignee, None);
+        assert_eq!(after.revision, 0);
+    }
+
+    /// An unreadable claim store must degrade to the in-process mapping lock,
+    /// not fail the launch.
+    #[tokio::test]
+    async fn test_launch_degrades_when_claim_store_unavailable() {
+        let dir = create_multi_priority_workspace();
+        let mut scheduler = scheduler_for(&dir).with_claim_backend(BeadClaimBackend::Cli {
+            binary: "/nonexistent/bead".to_string(),
+        });
+
+        // The claim read degrades to None, the spawn still runs (and fails
+        // on the missing launcher script), and the error is the spawn error.
+        let err = scheduler
+            .launch_bead("p-high", "worker-a", launch_config(&dir))
+            .await
+            .unwrap_err();
+        assert!(
+            !matches!(
+                err,
+                ForgeError::BeadAlreadyAssigned { .. } | ForgeError::BeadClaimConflict { .. }
+            ),
+            "degraded claim state must not surface as a claim error: {}",
+            err
+        );
+        assert!(scheduler.assignments().next().is_none());
     }
 
     #[test]
@@ -1154,7 +1476,7 @@ mod tests {
         assert_eq!(
             scheduler.status_backend,
             BeadStatusBackend::Cli {
-                binary: "br".to_string()
+                binary: "bead".to_string()
             }
         );
     }

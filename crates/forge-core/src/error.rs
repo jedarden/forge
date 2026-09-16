@@ -213,6 +213,12 @@ pub enum ForgeError {
     #[error("Bead {bead_id} is already assigned to worker {worker_id}")]
     BeadAlreadyAssigned { bead_id: String, worker_id: String },
 
+    /// A conditional bead claim (`bead update --if-revision`) lost the race:
+    /// another process modified or claimed the bead between our read and our
+    /// guarded write, so the assignment must not proceed or spawn a worker.
+    #[error("Bead {bead_id} claim conflict: {detail}")]
+    BeadClaimConflict { bead_id: String, detail: String },
+
     /// Bead JSONL file not found
     #[error("Bead file not found: {path}")]
     BeadFileNotFound { path: PathBuf },
