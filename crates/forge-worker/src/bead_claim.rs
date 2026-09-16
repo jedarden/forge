@@ -279,8 +279,11 @@ impl BeadClaimBackend {
     ///
     /// Only releases when the store still shows the bead held by
     /// `worker_id` — a bead that was never claimed, or that another
-    /// process has already taken over, is left alone. Returns whether a
-    /// release was actually performed.
+    /// process has already taken over, is left alone. A conflict from the
+    /// CLI (exit 4: the claim changed hands between the ownership check
+    /// and the release, or the bead moved on) also reads as "nothing of
+    /// ours left to release". Returns whether a release was actually
+    /// performed.
     pub async fn release_claim(
         &self,
         workspace: &Path,
@@ -306,6 +309,14 @@ impl BeadClaimBackend {
                 let output = self
                     .exec_cli(workspace, binary, &arg_refs, "bead release")
                     .await?;
+                if output.status.code() == Some(BEAD_EXIT_CONFLICT) {
+                    debug!(
+                        bead_id = %bead_id,
+                        worker_id,
+                        "Release conflicted; the claim is no longer ours to release"
+                    );
+                    return Ok(false);
+                }
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     return Err(ForgeError::ToolExecution {
@@ -531,10 +542,11 @@ mod tests {
         assert!(parse_show_payload(&no_revision).is_none());
     }
 
-    /// A stand-in `bead` binary: `show` cats a canned payload, `update`
-    /// exits with a scripted code after logging its arguments. The caller
-    /// must keep the returned TempDir alive while the backend is in use.
-    fn write_fake_bead(show_payload: &str, update_exit: i32) -> TempDir {
+    /// A stand-in `bead` binary: `show` cats a canned payload, `update` and
+    /// `release` exit with scripted codes after logging their arguments.
+    /// The caller must keep the returned TempDir alive while the backend is
+    /// in use.
+    fn write_fake_bead(show_payload: &str, update_exit: i32, release_exit: i32) -> TempDir {
         let bin_dir = TempDir::new().unwrap();
         let payload_file = bin_dir.path().join("show.json");
         fs::write(&payload_file, show_payload).unwrap();
@@ -552,7 +564,7 @@ mod tests {
         writeln!(file, "fi").unwrap();
         writeln!(file, "if [ \"$1\" = \"release\" ]; then").unwrap();
         writeln!(file, "  printf '%s\\n' \"$@\" >> {}", log_file.display()).unwrap();
-        writeln!(file, "  exit 0").unwrap();
+        writeln!(file, "  exit {}", release_exit).unwrap();
         writeln!(file, "fi").unwrap();
         writeln!(file, "exit 1").unwrap();
         drop(file);
@@ -567,7 +579,7 @@ mod tests {
     #[tokio::test]
     async fn test_cli_acquire_sends_guarded_update_and_acquires() {
         let workspace = TempDir::new().unwrap();
-        let bin = write_fake_bead(SHOW_PAYLOAD, 0);
+        let bin = write_fake_bead(SHOW_PAYLOAD, 0, 0);
         let backend = BeadClaimBackend::Cli {
             binary: bin.path().join("fake-bead.sh").display().to_string(),
         };
@@ -604,7 +616,7 @@ mod tests {
     async fn test_cli_acquire_maps_conflict_exit_to_lost() {
         let workspace = TempDir::new().unwrap();
         // Exit 4: the guard failed — another process moved the bead first.
-        let bin = write_fake_bead(SHOW_PAYLOAD, BEAD_EXIT_CONFLICT);
+        let bin = write_fake_bead(SHOW_PAYLOAD, BEAD_EXIT_CONFLICT, 0);
         let backend = BeadClaimBackend::Cli {
             binary: bin.path().join("fake-bead.sh").display().to_string(),
         };
@@ -630,7 +642,7 @@ mod tests {
     async fn test_cli_read_degrades_when_store_unavailable() {
         let workspace = TempDir::new().unwrap();
         // The fake bead fails `show` outright: no readable store.
-        let bin = write_fake_bead(SHOW_PAYLOAD, 0);
+        let bin = write_fake_bead(SHOW_PAYLOAD, 0, 0);
         fs::remove_file(bin.path().join("show.json")).unwrap();
         let backend = BeadClaimBackend::Cli {
             binary: bin.path().join("fake-bead.sh").display().to_string(),
@@ -657,7 +669,7 @@ mod tests {
         let claimed = SHOW_PAYLOAD
             .replace("\"assignee\": null", "\"assignee\": \"worker-a\"")
             .replace("\"status\": \"open\"", "\"status\": \"in_progress\"");
-        let bin = write_fake_bead(&claimed, 0);
+        let bin = write_fake_bead(&claimed, 0, 0);
         let backend = BeadClaimBackend::Cli {
             binary: bin.path().join("fake-bead.sh").display().to_string(),
         };
@@ -675,7 +687,7 @@ mod tests {
 
         // A bead held by someone else is left alone.
         let foreign = claimed.replace("worker-a", "worker-b");
-        let bin = write_fake_bead(&foreign, 0);
+        let bin = write_fake_bead(&foreign, 0, 0);
         let backend = BeadClaimBackend::Cli {
             binary: bin.path().join("fake-bead.sh").display().to_string(),
         };
@@ -684,6 +696,38 @@ mod tests {
             .await
             .unwrap();
         assert!(!released, "another worker's claim must not be released");
+    }
+
+    /// A release that conflicts — the claim changed hands between the
+    /// ownership check and the release, or the bead moved on — reads as
+    /// "nothing of ours left to release", not an error, on the rollback
+    /// path.
+    #[tokio::test]
+    async fn test_cli_release_claim_conflict_reads_as_not_released() {
+        let workspace = TempDir::new().unwrap();
+        let claimed = SHOW_PAYLOAD
+            .replace("\"assignee\": null", "\"assignee\": \"worker-a\"")
+            .replace("\"status\": \"open\"", "\"status\": \"in_progress\"");
+        // Exit 4 from `release`: the CLI refused because the claim is no
+        // longer ours by the time the release lands.
+        let bin = write_fake_bead(&claimed, 0, BEAD_EXIT_CONFLICT);
+        let backend = BeadClaimBackend::Cli {
+            binary: bin.path().join("fake-bead.sh").display().to_string(),
+        };
+
+        let released = backend
+            .release_claim(workspace.path(), &"fg-1qo".to_string(), "worker-a")
+            .await
+            .unwrap();
+        assert!(
+            !released,
+            "a conflicted release must not surface as an error"
+        );
+
+        // The fencing token read from the store went out with the release.
+        let log = update_log(&bin);
+        assert!(log.contains("--fencing-token"), "log was: {}", log);
+        assert!(log.contains("3"), "log was: {}", log);
     }
 
     #[tokio::test]
@@ -695,7 +739,7 @@ mod tests {
         let claimed = SHOW_PAYLOAD
             .replace("\"assignee\": null", "\"assignee\": \"worker-a\"")
             .replace("\"status\": \"open\"", "\"status\": \"in_progress\"");
-        let bin = write_fake_bead(&claimed, 0);
+        let bin = write_fake_bead(&claimed, 0, 0);
         let backend = BeadClaimBackend::Cli {
             binary: bin.path().join("fake-bead.sh").display().to_string(),
         };
@@ -718,7 +762,7 @@ mod tests {
         );
 
         // And an open, unassigned bead verifies as lost with no holder.
-        let bin = write_fake_bead(SHOW_PAYLOAD, 0);
+        let bin = write_fake_bead(SHOW_PAYLOAD, 0, 0);
         let backend = BeadClaimBackend::Cli {
             binary: bin.path().join("fake-bead.sh").display().to_string(),
         };

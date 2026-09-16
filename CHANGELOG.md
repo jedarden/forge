@@ -52,6 +52,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release) per `docs/BEAD_LAUNCHER_PROTOCOL.md`.
 - `forge_core::bead_store`: reads bead queues from both the bead-rs checkpoint
   layout and the legacy flat `issues.jsonl` format.
+- **Cross-Process Bead Claims** (`forge_worker::bead_claim`): the scheduler's
+  duplicate-assignment lock is now backed by the bead store itself on the
+  launch path. Before spawning, the assignment is recorded with a guarded
+  `bead update --assignee <worker> --if-revision <revision>` write (the claim
+  doubles as the mark-in-progress transition), so a second FORGE instance or
+  an external worker sharing the queue cannot claim the same bead: a bead the
+  store shows as held is refused (`BeadAlreadyAssigned` with the store's
+  holder), a lost read-then-write race surfaces as
+  `ForgeError::BeadClaimConflict` (CLI exit code 4) instead of clobbering the
+  winner, a re-launch verifies its existing claim still holds rather than
+  re-writing it, and a failed spawn gives the claim back (`bead release`,
+  only when the store still shows it ours). An unreadable store (no `bead`
+  CLI, legacy flat file) degrades to the in-process mapping lock. Protocol:
+  `docs/BEAD_LAUNCHER_PROTOCOL.md` §4.1.
 
 ### Fixed
 - **Build now vendors OpenSSL** (`native-tls`/`tokio-native-tls` with the
