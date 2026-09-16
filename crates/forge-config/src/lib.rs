@@ -1752,6 +1752,7 @@ bead_dispatch:
   launcher: /home/user/.forge/bead-launcher.sh
   model: opus
   refused_retry_secs: 60
+  worker_id_prefix: fleet-a
 "#;
         let config = ForgeConfig::parse(yaml).expect("Failed to parse config");
         let dispatch = &config.bead_dispatch;
@@ -1771,6 +1772,7 @@ bead_dispatch:
         );
         assert_eq!(dispatch.model.as_deref(), Some("opus"));
         assert_eq!(dispatch.refused_retry_secs, 60);
+        assert_eq!(dispatch.worker_id_prefix, "fleet-a");
     }
 
     #[test]

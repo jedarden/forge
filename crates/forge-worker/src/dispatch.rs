@@ -858,6 +858,25 @@ mod tests {
                 .is_none(),
             "the loop is opt-in and must not build while disabled"
         );
+
+        // The gate precedes normalization and workspace registration: even a
+        // degenerate disabled config returns `None` without consulting the
+        // cadence/capacity fields, and the scheduler (and with it the bead
+        // CLI) is never constructed.
+        let degenerate = BeadDispatchConfig {
+            enabled: false,
+            interval_secs: 0,
+            max_in_flight: 0,
+            workspaces: Vec::new(),
+            worker_id_prefix: "  ".to_string(),
+            ..BeadDispatchConfig::default()
+        };
+        assert!(
+            BeadDispatchLoop::from_config(&degenerate)
+                .unwrap()
+                .is_none(),
+            "a disabled loop must stay inert no matter how invalid its other fields are"
+        );
     }
 
     #[test]
