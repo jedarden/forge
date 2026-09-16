@@ -10,7 +10,8 @@
 //!
 //! ## Optional Dependencies
 //!
-//! - **br** (beads_rust): For bead/task management (graceful degradation if missing)
+//! - **bead** (bead-rs): For bead/task mutations and cross-process claims;
+//!   checkpoint-only queue reads still work when it is missing
 //! - **jq**: For JSON processing (graceful degradation if missing)
 //!
 //! ## Example
@@ -181,10 +182,10 @@ const DEPENDENCIES: &[Dependency] = &[
         install_instructions: "apt install git  |  brew install git  |  pacman -S git",
     },
     Dependency {
-        name: "br",
+        name: "bead",
         required: false,
-        purpose: "Bead/task management (beads_rust CLI)",
-        install_instructions: "cargo install beads_rust  |  See: https://github.com/jedarden/beads_rust",
+        purpose: "Bead/task management (bead-rs CLI)",
+        install_instructions: "cargo install bead-rs  |  See: https://git.ardenone.com/jedarden/bead-rs",
     },
     Dependency {
         name: "jq",
@@ -270,7 +271,10 @@ pub fn check_and_report() -> bool {
     if !missing_optional.is_empty() {
         eprintln!("⚠️  Some optional features are unavailable:");
         for status in missing_optional {
-            eprintln!("    {} not found ({} will not work)", status.dep.name, status.dep.purpose);
+            eprintln!(
+                "    {} not found ({} will not work)",
+                status.dep.name, status.dep.purpose
+            );
         }
         eprintln!();
     }
@@ -297,18 +301,16 @@ mod tests {
     #[test]
     fn test_format_summary_with_all_found() {
         let result = DependencyCheck {
-            statuses: vec![
-                DependencyStatus {
-                    dep: Dependency {
-                        name: "test",
-                        required: true,
-                        purpose: "testing",
-                        install_instructions: "apt install test",
-                    },
-                    found: true,
-                    version: Some("1.0.0".to_string()),
+            statuses: vec![DependencyStatus {
+                dep: Dependency {
+                    name: "test",
+                    required: true,
+                    purpose: "testing",
+                    install_instructions: "apt install test",
                 },
-            ],
+                found: true,
+                version: Some("1.0.0".to_string()),
+            }],
         };
 
         let summary = result.format_summary();
@@ -319,18 +321,16 @@ mod tests {
     #[test]
     fn test_format_errors_with_missing() {
         let result = DependencyCheck {
-            statuses: vec![
-                DependencyStatus {
-                    dep: Dependency {
-                        name: "missing-tool",
-                        required: true,
-                        purpose: "test purpose",
-                        install_instructions: "apt install missing-tool",
-                    },
-                    found: false,
-                    version: None,
+            statuses: vec![DependencyStatus {
+                dep: Dependency {
+                    name: "missing-tool",
+                    required: true,
+                    purpose: "test purpose",
+                    install_instructions: "apt install missing-tool",
                 },
-            ],
+                found: false,
+                version: None,
+            }],
         };
 
         let errors = result.format_errors();
@@ -374,18 +374,16 @@ mod tests {
     #[test]
     fn test_not_ready_with_required_missing() {
         let result = DependencyCheck {
-            statuses: vec![
-                DependencyStatus {
-                    dep: Dependency {
-                        name: "required-tool",
-                        required: true,
-                        purpose: "critical",
-                        install_instructions: "apt install required-tool",
-                    },
-                    found: false,
-                    version: None,
+            statuses: vec![DependencyStatus {
+                dep: Dependency {
+                    name: "required-tool",
+                    required: true,
+                    purpose: "critical",
+                    install_instructions: "apt install required-tool",
                 },
-            ],
+                found: false,
+                version: None,
+            }],
         };
 
         assert!(!result.is_ready());

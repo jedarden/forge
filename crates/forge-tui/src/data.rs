@@ -825,7 +825,7 @@ impl DataManager {
         };
 
         // Skip initial poll_updates during initialization - it blocks for too long
-        // due to bead manager calling `br` commands which can take 20+ seconds each.
+        // because bead-store polling can parse a large checkpoint.
         // Let the first poll happen during the main loop instead.
         info!("⏱️ Skipping initial poll_updates (will poll in main loop)");
 
@@ -909,7 +909,7 @@ impl DataManager {
         let perf_metrics = PerfMetrics::new();
 
         // Skip initial poll_updates during initialization - it blocks for too long
-        // due to bead manager calling `br` commands which can take seconds each.
+        // because bead-store polling can parse a large checkpoint.
         // Let the first poll happen during the main loop instead.
         Self {
             watcher,

@@ -155,8 +155,9 @@ class BeadWorkerLauncherTest:
 
         # Initialize beads workspace first
         print("Initializing beads workspace...")
+        # Use the canonical bead-rs CLI; callers may provide it on PATH.
         init_result = subprocess.run(
-            ["br", "init", "--prefix", "fg"],
+            ["bead", "init", "--prefix", "fg"],
             cwd=self.test_workspace,
             capture_output=True,
             text=True
@@ -168,7 +169,7 @@ class BeadWorkerLauncherTest:
         # Create a test bead
         print("Creating test bead...")
         bead_result = subprocess.run(
-            ["br", "create", "Test bead for launcher validation",
+            ["bead", "create", "--title", "Test bead for launcher validation",
              "--description", "Testing bead-worker-launcher status file integration",
              "--priority", "1"],
             cwd=self.test_workspace,
@@ -177,17 +178,11 @@ class BeadWorkerLauncherTest:
         )
 
         # Extract bead ID from output
-        # Format: "✓ Created fg-xxx: Title"
+        # bead create prints only the issue ID (e.g. "fg-xxx") on success
         bead_id = None
-        for line in bead_result.stdout.splitlines():
-            if "Created" in line and "fg-" in line:
-                # Extract bead_id using regex or string manipulation
-                # The format is "Created fg-xxx:" so we need to extract just the ID
-                import re
-                match = re.search(r'(fg-[a-z0-9]+)', line)
-                if match:
-                    bead_id = match.group(1)
-                    break
+        match = re.search(r'(fg-[a-z0-9]+)', bead_result.stdout)
+        if match:
+            bead_id = match.group(1)
 
         if not bead_id:
             print(f"SKIP: Could not create test bead: {bead_result.stdout}")
@@ -223,7 +218,7 @@ class BeadWorkerLauncherTest:
 
         if current_task != bead_id:
             print(f"FAIL: current_task value mismatch: '{current_task}' != '{bead_id}'")
-            print(f"  This usually means br commands failed in the launcher")
+            print(f"  This usually means bead commands failed in the launcher")
             return False
 
         print(f"PASS: current_task correctly set to bead_id: {bead_id}")

@@ -1,20 +1,28 @@
 //! Bead data management for the FORGE TUI.
 //!
 //! This module provides functionality for querying beads from monitored workspaces
-//! using the `br` CLI. It periodically polls for bead status and caches the results
-//! for display in the task queue.
+//! by reading the bead store directly. It periodically polls for bead status and
+//! caches the results for display in the task queue.
 //!
 //! ## Architecture
 //!
 //! The BeadManager:
 //! 1. Maintains a list of monitored workspace paths
-//! 2. Periodically queries the `br` CLI for bead status
-//! 3. Caches results to minimize CLI invocations
-//! 4. Provides formatted data for TUI display
+//! 2. Periodically reads the bead store (bead-rs checkpoint, or the legacy flat
+//!    file) via [`forge_core::bead_store`] — no CLI subprocess, so reads cannot
+//!    block the UI and also work on a fresh clone where `beads.db` has not been
+//!    restored yet
+//! 3. Computes ready/blocked/in-progress buckets and statistics locally, using
+//!    the same readiness semantics as `bead list --ready`
+//! 4. Leaves all store mutations to the `bead` CLI (sole write authority —
+//!    ADR 0007/0020); the only write path here is timing out stuck tasks
+//!
+//! Ready means: open, not deferred, no unfinished blocker, and not manually
+//! blocked. Assigned-but-open beads remain visible in the queue with their
+//! assignee, while only unassigned beads are offered to the scheduler.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -22,10 +30,12 @@ use thiserror::Error;
 use tracing::debug;
 
 // Re-export TaskScorer for use in TUI
-pub use forge_worker::scorer::{ScoredBead, ScoreComponents, TaskScorer};
+pub use forge_worker::scorer::{ScoreComponents, ScoredBead, TaskScorer};
 
 // Re-export stuck detection for use in TUI
-pub use forge_core::stuck_detection::{ActivityChecks, StuckDetectionConfig, StuckTask, StuckTaskDetector};
+pub use forge_core::stuck_detection::{
+    ActivityChecks, StuckDetectionConfig, StuckTask, StuckTaskDetector,
+};
 
 /// Default polling interval in seconds for bead updates.
 const DEFAULT_POLL_INTERVAL_SECS: u64 = 30; // Increased from 5 to reduce blocking
@@ -33,24 +43,12 @@ const DEFAULT_POLL_INTERVAL_SECS: u64 = 30; // Increased from 5 to reduce blocki
 /// Maximum age before considering cached data stale (in seconds).
 const CACHE_STALE_SECS: u64 = 60; // Increased from 30
 
-/// Timeout for br CLI commands in milliseconds.
-/// Keep short to prevent blocking the UI.
-const BR_COMMAND_TIMEOUT_MS: u64 = 2000;
-
 /// Errors that can occur during bead operations.
 #[derive(Error, Debug)]
 pub enum BeadError {
-    /// Failed to execute br CLI
-    #[error("Failed to execute br CLI: {0}")]
-    CliExecution(#[from] std::io::Error),
-
-    /// Failed to parse br CLI output
-    #[error("Failed to parse br output: {0}")]
-    ParseError(#[from] serde_json::Error),
-
-    /// br CLI returned non-zero exit code
-    #[error("br CLI returned error: {0}")]
-    CliError(String),
+    /// Failed to read the bead store
+    #[error("Failed to read bead store: {0}")]
+    StoreRead(#[from] forge_core::ForgeError),
 
     /// Workspace has no .beads directory
     #[error("Workspace has no .beads directory: {0}")]
@@ -60,7 +58,7 @@ pub enum BeadError {
 /// Result type for bead operations.
 pub type BeadResult<T> = Result<T, BeadError>;
 
-/// A bead/issue as returned by the `br` CLI.
+/// A bead/issue as read from the bead store.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Bead {
     /// Unique bead identifier (e.g., "fg-1r1")
@@ -92,13 +90,17 @@ pub struct Bead {
     #[serde(default)]
     pub labels: Vec<String>,
 
-    /// Number of dependencies this bead is blocked by
+    /// Number of unfinished blockers on this bead
     #[serde(default)]
     pub dependency_count: usize,
 
     /// Number of beads that depend on this one
     #[serde(default)]
     pub dependent_count: usize,
+
+    /// Bead is manually marked as blocked
+    #[serde(default)]
+    pub manual_blocked: bool,
 
     /// Creation timestamp
     #[serde(default)]
@@ -110,14 +112,14 @@ pub struct Bead {
 }
 
 impl Bead {
-    /// Check if this bead is ready to work on (not blocked, not deferred).
+    /// Check if this bead is ready to work on (not blocked, not deferred, not closed).
     pub fn is_ready(&self) -> bool {
-        self.dependency_count == 0 && !self.is_deferred()
+        !self.is_blocked() && !self.is_deferred() && !self.is_closed()
     }
 
-    /// Check if this bead is blocked by dependencies.
+    /// Check if this bead is blocked (by dependencies or manually).
     pub fn is_blocked(&self) -> bool {
-        self.dependency_count > 0
+        self.dependency_count > 0 || self.manual_blocked
     }
 
     /// Check if this bead is deferred.
@@ -226,12 +228,7 @@ impl Bead {
             None
         };
 
-        scorer.score_with_components(
-            self.priority,
-            self.dependent_count,
-            age_hours,
-            &self.labels,
-        )
+        scorer.score_with_components(self.priority, self.dependent_count, age_hours, &self.labels)
     }
 
     /// Get the score as a simple integer.
@@ -239,21 +236,21 @@ impl Bead {
         self.calculate_score().score
     }
 
-    /// Format the score for display.
+    /// Get the score as a simple integer.
     pub fn score_display(&self) -> String {
         format!("{:3}", self.score())
     }
 }
 
-/// Statistics from `br stats` command.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Statistics computed from a workspace's bead store contents.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct BeadStats {
     /// Summary statistics
     pub summary: BeadSummary,
 }
 
 /// Summary of bead counts.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct BeadSummary {
     /// Total number of issues
     pub total_issues: usize,
@@ -295,7 +292,7 @@ pub struct WorkspaceBeads {
     /// List of in-progress beads
     pub in_progress: Vec<Bead>,
 
-    /// Statistics from br stats
+    /// Statistics computed from the store contents
     pub stats: BeadStats,
 
     /// Last successful update timestamp
@@ -376,8 +373,8 @@ pub struct BeadManager {
     /// Polling interval
     poll_interval: Duration,
 
-    /// Whether br CLI is available
-    br_available: Option<bool>,
+    /// Whether any monitored workspace has a detectable bead store
+    store_available: Option<bool>,
 
     /// Stuck task detector
     stuck_detector: StuckTaskDetector,
@@ -400,7 +397,7 @@ impl BeadManager {
             cache: HashMap::new(),
             last_poll: None,
             poll_interval: Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS),
-            br_available: None,
+            store_available: None,
             stuck_detector: StuckTaskDetector::with_defaults(),
             stuck_tasks: Vec::new(),
         }
@@ -411,8 +408,13 @@ impl BeadManager {
         let path = path.into();
         if !self.workspaces.contains(&path) {
             self.workspaces.push(path.clone());
-            self.cache.insert(path.clone(), WorkspaceBeads::new(path.clone()));
+            self.cache
+                .insert(path.clone(), WorkspaceBeads::new(path.clone()));
             self.stuck_detector.add_workspace(path);
+            // A manager may be initialized before workspaces are discovered,
+            // or a workspace may gain its checkpoint after the first poll.
+            // Force format detection to run again in either case.
+            self.store_available = None;
         }
     }
 
@@ -447,18 +449,18 @@ impl BeadManager {
         }
     }
 
-    /// Check if br CLI is available.
-    pub fn is_br_available(&mut self) -> bool {
-        if let Some(available) = self.br_available {
+    /// Check whether any monitored workspace has a detectable bead store.
+    pub fn is_bead_store_available(&mut self) -> bool {
+        if let Some(available) = self.store_available {
             return available;
         }
 
-        let available = Command::new("br")
-            .arg("--version")
-            .output()
-            .map_or(false, |o| o.status.success());
+        let available = self
+            .workspaces
+            .iter()
+            .any(|ws| forge_core::bead_store::detect_format(ws).is_some());
 
-        self.br_available = Some(available);
+        self.store_available = Some(available);
         available
     }
 
@@ -472,8 +474,8 @@ impl BeadManager {
             }
         }
 
-        // Don't poll if br is not available
-        if !self.is_br_available() {
+        // Don't poll if no workspace has a bead store
+        if !self.is_bead_store_available() {
             return false;
         }
 
@@ -507,57 +509,67 @@ impl BeadManager {
             .entry(workspace.clone())
             .or_insert_with(|| WorkspaceBeads::new(workspace.clone()));
 
+        let beads = match forge_core::bead_store::read_all_beads(workspace) {
+            Ok(beads) => beads,
+            Err(e) => {
+                debug!(workspace = ?workspace, error = %e, "Failed to read bead store");
+                cache.last_error = Some(e.to_string());
+                return false;
+            }
+        };
+        cache.last_error = None;
+
+        let index = forge_core::bead_store::build_index(&beads);
+
+        let mut ready = Vec::new();
+        let mut blocked = Vec::new();
+        let mut in_progress = Vec::new();
+        let mut summary = BeadSummary::default();
+
+        for store_bead in &beads {
+            summary.total_issues += 1;
+            match store_bead.status.as_str() {
+                "closed" => {
+                    summary.closed_issues += 1;
+                    continue;
+                }
+                "deferred" => {
+                    summary.deferred_issues += 1;
+                    continue;
+                }
+                "in_progress" => summary.in_progress_issues += 1,
+                _ => summary.open_issues += 1,
+            }
+
+            let bead = to_bead(store_bead, &beads, &index);
+            if bead.status == "in_progress" {
+                in_progress.push(bead);
+            } else if bead.is_blocked() {
+                summary.blocked_issues += 1;
+                blocked.push(bead);
+            } else {
+                summary.ready_issues += 1;
+                ready.push(bead);
+            }
+        }
+
         let mut changed = false;
 
-        // Query ready beads
-        match Self::query_beads(workspace, "ready") {
-            Ok(beads) => {
-                if cache.ready != beads {
-                    cache.ready = beads;
-                    changed = true;
-                }
-                cache.last_error = None;
-            }
-            Err(e) => {
-                debug!(workspace = ?workspace, error = %e, "Failed to query ready beads");
-                cache.last_error = Some(e.to_string());
-            }
+        if cache.ready != ready {
+            cache.ready = ready;
+            changed = true;
         }
-
-        // Query blocked beads
-        match Self::query_beads(workspace, "blocked") {
-            Ok(beads) => {
-                if cache.blocked != beads {
-                    cache.blocked = beads;
-                    changed = true;
-                }
-            }
-            Err(e) => {
-                debug!(workspace = ?workspace, error = %e, "Failed to query blocked beads");
-            }
+        if cache.blocked != blocked {
+            cache.blocked = blocked;
+            changed = true;
         }
-
-        // Query in-progress beads
-        match Self::query_beads_filtered(workspace, Some("in_progress")) {
-            Ok(beads) => {
-                if cache.in_progress != beads {
-                    cache.in_progress = beads;
-                    changed = true;
-                }
-            }
-            Err(e) => {
-                debug!(workspace = ?workspace, error = %e, "Failed to query in-progress beads");
-            }
+        if cache.in_progress != in_progress {
+            cache.in_progress = in_progress;
+            changed = true;
         }
-
-        // Query stats
-        match Self::query_stats(workspace) {
-            Ok(stats) => {
-                cache.stats = stats;
-            }
-            Err(e) => {
-                debug!(workspace = ?workspace, error = %e, "Failed to query stats");
-            }
+        if cache.stats.summary != summary {
+            cache.stats = BeadStats { summary };
+            changed = true;
         }
 
         cache.last_update = Some(Instant::now());
@@ -570,194 +582,6 @@ impl BeadManager {
             .values()
             .map(|w| w.ready.len() + w.blocked.len() + w.in_progress.len())
             .sum()
-    }
-
-    /// Query beads using the `br ready` or `br blocked` command.
-    /// Uses a timeout to avoid blocking the UI.
-    fn query_beads(workspace: &PathBuf, subcommand: &str) -> BeadResult<Vec<Bead>> {
-        use std::io::Read;
-        use std::process::Stdio;
-
-        let mut child = Command::new("br")
-            .arg(subcommand)
-            .arg("--format")
-            .arg("json")
-            .current_dir(workspace)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-
-        // Wait with timeout
-        let start = Instant::now();
-        let timeout = Duration::from_millis(BR_COMMAND_TIMEOUT_MS);
-
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    // Process finished
-                    if !status.success() {
-                        let mut stderr = String::new();
-                        if let Some(mut err) = child.stderr {
-                            let _ = err.read_to_string(&mut stderr);
-                        }
-                        if stderr.contains("no .beads") || stderr.contains("beads workspace") {
-                            return Ok(Vec::new());
-                        }
-                        return Err(BeadError::CliError(stderr));
-                    }
-
-                    let mut stdout = String::new();
-                    if let Some(mut out) = child.stdout {
-                        let _ = out.read_to_string(&mut stdout);
-                    }
-
-                    if stdout.trim().is_empty() || stdout.trim() == "[]" {
-                        return Ok(Vec::new());
-                    }
-
-                    let beads: Vec<Bead> = serde_json::from_str(&stdout)?;
-                    return Ok(beads);
-                }
-                Ok(None) => {
-                    // Still running
-                    if start.elapsed() > timeout {
-                        // Kill the process and return empty
-                        let _ = child.kill();
-                        debug!(workspace = ?workspace, subcommand, "br command timed out");
-                        return Ok(Vec::new());
-                    }
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                Err(e) => {
-                    return Err(BeadError::CliExecution(e));
-                }
-            }
-        }
-    }
-
-    /// Query beads with a status filter using `br list`.
-    /// Uses a timeout to avoid blocking the UI.
-    fn query_beads_filtered(workspace: &PathBuf, status: Option<&str>) -> BeadResult<Vec<Bead>> {
-        use std::io::Read;
-        use std::process::Stdio;
-
-        let mut cmd = Command::new("br");
-        cmd.arg("list")
-            .arg("--format")
-            .arg("json")
-            .current_dir(workspace)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        if let Some(status) = status {
-            cmd.arg("--status").arg(status);
-        }
-
-        let mut child = cmd.spawn()?;
-
-        // Wait with timeout
-        let start = Instant::now();
-        let timeout = Duration::from_millis(BR_COMMAND_TIMEOUT_MS);
-
-        loop {
-            match child.try_wait() {
-                Ok(Some(exit_status)) => {
-                    if !exit_status.success() {
-                        let mut stderr = String::new();
-                        if let Some(mut err) = child.stderr {
-                            let _ = err.read_to_string(&mut stderr);
-                        }
-                        if stderr.contains("no .beads") || stderr.contains("beads workspace") {
-                            return Ok(Vec::new());
-                        }
-                        return Err(BeadError::CliError(stderr));
-                    }
-
-                    let mut stdout = String::new();
-                    if let Some(mut out) = child.stdout {
-                        let _ = out.read_to_string(&mut stdout);
-                    }
-
-                    if stdout.trim().is_empty() || stdout.trim() == "[]" {
-                        return Ok(Vec::new());
-                    }
-
-                    let beads: Vec<Bead> = serde_json::from_str(&stdout)?;
-                    return Ok(beads);
-                }
-                Ok(None) => {
-                    if start.elapsed() > timeout {
-                        let _ = child.kill();
-                        debug!(workspace = ?workspace, status, "br list command timed out");
-                        return Ok(Vec::new());
-                    }
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                Err(e) => {
-                    return Err(BeadError::CliExecution(e));
-                }
-            }
-        }
-    }
-
-    /// Query statistics using `br stats`.
-    /// Uses a timeout to avoid blocking the UI.
-    fn query_stats(workspace: &PathBuf) -> BeadResult<BeadStats> {
-        use std::io::Read;
-        use std::process::Stdio;
-
-        let mut child = Command::new("br")
-            .arg("stats")
-            .arg("--format")
-            .arg("json")
-            .current_dir(workspace)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-
-        // Wait with timeout
-        let start = Instant::now();
-        let timeout = Duration::from_millis(BR_COMMAND_TIMEOUT_MS);
-
-        loop {
-            match child.try_wait() {
-                Ok(Some(exit_status)) => {
-                    if !exit_status.success() {
-                        let mut stderr = String::new();
-                        if let Some(mut err) = child.stderr {
-                            let _ = err.read_to_string(&mut stderr);
-                        }
-                        if stderr.contains("no .beads") || stderr.contains("beads workspace") {
-                            return Ok(BeadStats::default());
-                        }
-                        return Err(BeadError::CliError(stderr));
-                    }
-
-                    let mut stdout = String::new();
-                    if let Some(mut out) = child.stdout {
-                        let _ = out.read_to_string(&mut stdout);
-                    }
-
-                    if stdout.trim().is_empty() {
-                        return Ok(BeadStats::default());
-                    }
-
-                    let stats: BeadStats = serde_json::from_str(&stdout)?;
-                    return Ok(stats);
-                }
-                Ok(None) => {
-                    if start.elapsed() > timeout {
-                        let _ = child.kill();
-                        debug!(workspace = ?workspace, "br stats command timed out");
-                        return Ok(BeadStats::default());
-                    }
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                Err(e) => {
-                    return Err(BeadError::CliExecution(e));
-                }
-            }
-        }
     }
 
     /// Get aggregated bead data across all workspaces.
@@ -778,14 +602,19 @@ impl BeadManager {
     /// When `priority_filter` is Some(p), only beads with priority == p are included.
     /// When `priority_filter` is None, all beads are included.
     /// When `search_query` is non-empty, only beads matching the query are included.
-    pub fn get_filtered_aggregated_data_with_search(&self, priority_filter: Option<u8>, search_query: &str) -> AggregatedBeadData {
+    pub fn get_filtered_aggregated_data_with_search(
+        &self,
+        priority_filter: Option<u8>,
+        search_query: &str,
+    ) -> AggregatedBeadData {
         let mut data = AggregatedBeadData::default();
 
         for (_, cache) in &self.cache {
             // Add ready beads (filtered)
             for bead in &cache.ready {
                 if priority_filter.map_or(true, |p| bead.priority == p)
-                    && bead.matches_search(search_query) {
+                    && bead.matches_search(search_query)
+                {
                     data.ready.push((cache.name.clone(), bead.clone()));
                 }
             }
@@ -793,7 +622,8 @@ impl BeadManager {
             // Add blocked beads (filtered)
             for bead in &cache.blocked {
                 if priority_filter.map_or(true, |p| bead.priority == p)
-                    && bead.matches_search(search_query) {
+                    && bead.matches_search(search_query)
+                {
                     data.blocked.push((cache.name.clone(), bead.clone()));
                 }
             }
@@ -801,7 +631,8 @@ impl BeadManager {
             // Add in-progress beads (filtered)
             for bead in &cache.in_progress {
                 if priority_filter.map_or(true, |p| bead.priority == p)
-                    && bead.matches_search(search_query) {
+                    && bead.matches_search(search_query)
+                {
                     data.in_progress.push((cache.name.clone(), bead.clone()));
                 }
             }
@@ -818,17 +649,23 @@ impl BeadManager {
         data.ready.sort_by(|a, b| {
             let score_a = a.1.calculate_score().score;
             let score_b = b.1.calculate_score().score;
-            score_b.cmp(&score_a).then_with(|| a.1.priority.cmp(&b.1.priority))
+            score_b
+                .cmp(&score_a)
+                .then_with(|| a.1.priority.cmp(&b.1.priority))
         });
         data.in_progress.sort_by(|a, b| {
             let score_a = a.1.calculate_score().score;
             let score_b = b.1.calculate_score().score;
-            score_b.cmp(&score_a).then_with(|| a.1.priority.cmp(&b.1.priority))
+            score_b
+                .cmp(&score_a)
+                .then_with(|| a.1.priority.cmp(&b.1.priority))
         });
         data.blocked.sort_by(|a, b| {
             let score_a = a.1.calculate_score().score;
             let score_b = b.1.calculate_score().score;
-            score_b.cmp(&score_a).then_with(|| a.1.priority.cmp(&b.1.priority))
+            score_b
+                .cmp(&score_a)
+                .then_with(|| a.1.priority.cmp(&b.1.priority))
         });
 
         data
@@ -841,7 +678,11 @@ impl BeadManager {
     }
 
     /// Get the total count of actionable beads (ready + in_progress + blocked), filtered by priority and search query.
-    pub fn task_count_filtered_with_search(&self, priority_filter: Option<u8>, search_query: &str) -> usize {
+    pub fn task_count_filtered_with_search(
+        &self,
+        priority_filter: Option<u8>,
+        search_query: &str,
+    ) -> usize {
         let data = self.get_filtered_aggregated_data_with_search(priority_filter, search_query);
         data.ready.len() + data.in_progress.len() + data.blocked.len()
     }
@@ -851,9 +692,9 @@ impl BeadManager {
         self.cache.values().any(|c| c.last_update.is_some())
     }
 
-    /// Check if br CLI is available and working.
-    pub fn has_br(&self) -> bool {
-        self.br_available.unwrap_or(false)
+    /// Check whether a bead store was found in any monitored workspace.
+    pub fn has_bead_store(&self) -> bool {
+        self.store_available.unwrap_or(false)
     }
 
     /// Get the number of monitored workspaces.
@@ -863,10 +704,10 @@ impl BeadManager {
 
     /// Format task queue summary for the overview panel.
     pub fn format_task_queue_summary(&self) -> String {
-        if !self.has_br() {
-            return "br CLI not available.\n\n\
-                    Install beads_rust to enable task queue:\n\
-                    cargo install beads_rust"
+        if !self.has_bead_store() {
+            return "No bead store found.\n\n\
+                    Install bead-rs to enable the task queue:\n\
+                    https://git.ardenone.com/jedarden/bead-rs"
                 .to_string();
         }
 
@@ -971,12 +812,16 @@ impl BeadManager {
     /// When `priority_filter` is Some(p), only beads with priority == p are shown.
     /// When `priority_filter` is None, all beads are shown.
     /// When `search_query` is non-empty, only beads matching the query are shown.
-    pub fn format_task_queue_full_filtered_with_search(&self, priority_filter: Option<u8>, search_query: &str) -> String {
-        if !self.has_br() {
-            return "br CLI not available.\n\n\
-                    Install beads_rust to enable task queue:\n\
-                    cargo install beads_rust\n\n\
-                    Documentation: https://github.com/Dicklesworthstone/beads_rust"
+    pub fn format_task_queue_full_filtered_with_search(
+        &self,
+        priority_filter: Option<u8>,
+        search_query: &str,
+    ) -> String {
+        if !self.has_bead_store() {
+            return "No bead store found.\n\n\
+                    Install bead-rs to enable the task queue:\n\
+                    https://git.ardenone.com/jedarden/bead-rs\n\n\
+                    Documentation: docs/BEAD_LAUNCHER_PROTOCOL.md"
                 .to_string();
         }
 
@@ -985,7 +830,7 @@ impl BeadManager {
                     To monitor workspaces, either:\n\
                     1. Set FORGE_WORKSPACES=/path/to/workspace1:/path/to/workspace2\n\
                     2. Run forge from a directory with a .beads/ folder\n\n\
-                    Workspaces are initialized with: br init --prefix <prefix>"
+                    Workspaces are initialized with: bead init"
                 .to_string();
         }
 
@@ -1057,15 +902,9 @@ impl BeadManager {
                     duration_mins,
                     truncate_str(&task.title, 30)
                 ));
-                lines.push(format!(
-                    "    Reason: {}",
-                    truncate_str(&task.reason, 50)
-                ));
+                lines.push(format!("    Reason: {}", truncate_str(&task.reason, 50)));
                 if let Some(activity) = self.get_bead_activity(&task.bead_id) {
-                    lines.push(format!(
-                        "    Activity: {}",
-                        activity.summary()
-                    ));
+                    lines.push(format!("    Activity: {}", activity.summary()));
                 }
             }
             lines.push(String::new());
@@ -1099,14 +938,19 @@ impl BeadManager {
             lines.push("─────────────────────────────────────────────────────".to_string());
             for (_ws, bead) in data.blocked.iter().take(5) {
                 let score = bead.score();
+                let reason = if bead.manual_blocked {
+                    "manual".to_string()
+                } else {
+                    format!("{} deps", bead.dependency_count)
+                };
                 lines.push(format!(
-                    "{} {:8} {} | {:3} | {} ({} deps)",
+                    "{} {:8} {} | {:3} | {} ({})",
                     bead.priority_indicator(),
                     bead.id,
                     bead.priority_str(),
                     score,
                     truncate_str(&bead.title, 20),
-                    bead.dependency_count
+                    reason
                 ));
             }
             if data.blocked.len() > 5 {
@@ -1118,7 +962,10 @@ impl BeadManager {
         // Show message if filter is active but no results
         if data.in_progress.is_empty() && data.ready.is_empty() && data.blocked.is_empty() {
             if !search_query.is_empty() {
-                lines.push(format!("No tasks found matching \"{}\". Press Esc to clear search.", search_query));
+                lines.push(format!(
+                    "No tasks found matching \"{}\". Press Esc to clear search.",
+                    search_query
+                ));
                 lines.push(String::new());
             } else if let Some(p) = priority_filter {
                 lines.push(format!("No P{p} tasks found. Press {p} to clear filter."));
@@ -1133,6 +980,38 @@ impl BeadManager {
         );
 
         lines.join("\n")
+    }
+}
+
+/// Convert a store bead into the display-oriented [`Bead`], computing the
+/// dependency and dependent counts from the graph. `dependency_count` counts
+/// *unfinished* blockers (a closed blocker no longer blocks), matching the
+/// ready/blocked partition used here.
+fn to_bead(
+    bead: &forge_core::StoreBead,
+    beads: &[forge_core::StoreBead],
+    index: &HashMap<&str, &forge_core::StoreBead>,
+) -> Bead {
+    let dependency_count = bead
+        .blocking_dependency_ids()
+        .into_iter()
+        .filter(|blocker| index.get(blocker).is_none_or(|dep| dep.status != "closed"))
+        .count();
+
+    Bead {
+        id: bead.id.clone(),
+        title: bead.title.clone(),
+        description: bead.description.clone(),
+        status: bead.status.clone(),
+        priority: bead.priority,
+        issue_type: bead.issue_type.clone(),
+        assignee: bead.assignee.clone(),
+        labels: bead.labels.clone(),
+        dependency_count,
+        dependent_count: forge_core::bead_store::count_dependents(beads, &bead.id),
+        manual_blocked: bead.manual_blocked,
+        created_at: bead.created_at.clone().unwrap_or_default(),
+        updated_at: bead.updated_at.clone().unwrap_or_default(),
     }
 }
 
@@ -1160,6 +1039,7 @@ impl Default for Bead {
             labels: Vec::new(),
             dependency_count: 0,
             dependent_count: 0,
+            manual_blocked: false,
             created_at: String::new(),
             updated_at: String::new(),
         }
@@ -1169,6 +1049,8 @@ impl Default for Bead {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::fs;
 
     #[test]
     fn test_bead_status_checks() {
@@ -1199,6 +1081,20 @@ mod tests {
 
         assert!(!blocked_bead.is_ready());
         assert!(blocked_bead.is_blocked());
+    }
+
+    #[test]
+    fn test_bead_manually_blocked() {
+        let bead = Bead {
+            id: "fg-mb".to_string(),
+            title: "Manually blocked".to_string(),
+            status: "open".to_string(),
+            manual_blocked: true,
+            ..Default::default()
+        };
+
+        assert!(bead.is_blocked());
+        assert!(!bead.is_ready());
     }
 
     #[test]
@@ -1291,5 +1187,86 @@ mod tests {
         assert!(summary.contains("Ready: 5"));
         assert!(summary.contains("Blocked: 2"));
         assert!(summary.contains("In Progress: 3"));
+    }
+
+    /// Create a temporary bead-rs workspace fixture (config + checkpoint).
+    fn create_bead_rs_workspace() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let beads = dir.path().join(".beads");
+        let checkpoint = beads.join("checkpoint");
+        let objects = checkpoint.join("objects");
+        fs::create_dir_all(&objects).unwrap();
+
+        fs::write(
+            beads.join("config.json"),
+            r#"{"bead_cli": {"backend": "bead-rs"}}"#,
+        )
+        .unwrap();
+
+        let snapshot = concat!(
+            r#"{"issue":{"id":"tui-ready","title":"Ready task","base_status":"open","priority":1,"issue_type":"task","labels":[],"assignee":null,"dependencies":[]},"record_type":"issue"}"#,
+            "\n",
+            r#"{"issue":{"id":"tui-blocked","title":"Blocked task","base_status":"open","priority":2,"issue_type":"task","labels":[],"assignee":null,"dependencies":[{"blocker":"tui-ready","kind":"blocks"}]},"record_type":"issue"}"#,
+            "\n",
+            r#"{"issue":{"id":"tui-wip","title":"In progress task","base_status":"in_progress","priority":0,"issue_type":"task","labels":[],"assignee":"alpha","dependencies":[]},"record_type":"issue"}"#,
+            "\n",
+            r#"{"issue":{"id":"tui-closed","title":"Closed task","base_status":"closed","priority":3,"issue_type":"task","labels":[],"assignee":null,"dependencies":[]},"record_type":"issue"}"#,
+            "\n",
+            r#"{"record_type":"event","data":{"op":"close","bead":"tui-closed"}}"#,
+            "\n",
+        );
+        // The snapshot filename is arbitrary from the reader's perspective —
+        // it only follows active_root.path.
+        let hash = "gen-3851a9f2c0d4e7b6a9c1d3e5f708162a";
+        fs::write(objects.join(format!("{hash}.jsonl")), snapshot).unwrap();
+
+        fs::write(
+            checkpoint.join("current.json"),
+            format!(r#"{{"active_root": {{"path": "objects/{hash}.jsonl"}}}}"#),
+        )
+        .unwrap();
+        fs::write(checkpoint.join("forensic.jsonl"), snapshot).unwrap();
+
+        dir
+    }
+
+    #[test]
+    fn test_poll_workspace_reads_bead_rs_store() {
+        let dir = create_bead_rs_workspace();
+        let workspace = dir.path().to_path_buf();
+
+        let mut manager = BeadManager::new();
+        manager.add_workspace(workspace.clone());
+        assert!(manager.is_bead_store_available());
+
+        assert!(manager.poll_updates());
+        assert!(manager.is_loaded());
+
+        let cache = manager.cache.get(&workspace).unwrap();
+        assert_eq!(cache.ready.len(), 1);
+        assert_eq!(cache.ready[0].id, "tui-ready");
+        assert_eq!(cache.in_progress.len(), 1);
+        assert_eq!(cache.in_progress[0].id, "tui-wip");
+        assert_eq!(cache.in_progress[0].assignee.as_deref(), Some("alpha"));
+        assert_eq!(cache.blocked.len(), 1);
+        assert_eq!(cache.blocked[0].id, "tui-blocked");
+        assert_eq!(cache.blocked[0].dependency_count, 1);
+        assert_eq!(cache.blocked[0].dependent_count, 0);
+        assert_eq!(cache.ready[0].dependent_count, 1);
+
+        let s = &cache.stats.summary;
+        assert_eq!(s.total_issues, 4);
+        assert_eq!(s.open_issues, 2);
+        assert_eq!(s.in_progress_issues, 1);
+        assert_eq!(s.closed_issues, 1);
+        assert_eq!(s.ready_issues, 1);
+        assert_eq!(s.blocked_issues, 1);
+
+        // Aggregation surfaces the same buckets
+        let data = manager.get_aggregated_data();
+        assert_eq!(data.ready.len(), 1);
+        assert_eq!(data.in_progress.len(), 1);
+        assert_eq!(data.blocked.len(), 1);
+        assert_eq!(data.total_open, 3);
     }
 }

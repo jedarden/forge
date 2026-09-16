@@ -257,7 +257,8 @@ class BeadWorkerADR0005Test:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create a minimal beads workspace
-            init_result = subprocess.run(["br", "init", "--prefix", "fg"], cwd=tmpdir,
+            # The test intentionally exercises the canonical bead-rs CLI.
+            init_result = subprocess.run(["bead", "init", "--prefix", "fg"], cwd=tmpdir,
                          capture_output=True, check=False)
 
             if init_result.returncode != 0:
@@ -267,7 +268,7 @@ class BeadWorkerADR0005Test:
 
             # Create a test bead
             bead_result = subprocess.run(
-                ["br", "create", "Test bead for ADR 0005 validation",
+                ["bead", "create", "--title", "Test bead for ADR 0005 validation",
                  "--description", "Testing ADR 0005 compliance",
                  "--priority", "1"],
                 cwd=tmpdir,
@@ -276,16 +277,11 @@ class BeadWorkerADR0005Test:
             )
 
             # Extract bead ID from output
-            # Format: "✓ Created fg-xxx: Title"
+            # bead create prints only the issue ID (e.g. "fg-xxx") on success
             bead_id = None
-            for line in bead_result.stdout.splitlines():
-                if "Created" in line and "fg-" in line:
-                    # Extract bead_id using regex
-                    # The format is "Created fg-xxx:" so we need to extract just the ID
-                    match = re.search(r'(fg-[a-z0-9]+)', line)
-                    if match:
-                        bead_id = match.group(1)
-                        break
+            match = re.search(r'(fg-[a-z0-9]+)', bead_result.stdout)
+            if match:
+                bead_id = match.group(1)
 
             if not bead_id:
                 print(f"⚠️  SKIP - Could not create test bead")
@@ -327,7 +323,7 @@ class BeadWorkerADR0005Test:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create a minimal beads workspace
-            init_result = subprocess.run(["br", "init", "--prefix", "fg"], cwd=tmpdir,
+            init_result = subprocess.run(["bead", "init", "--prefix", "fg"], cwd=tmpdir,
                          capture_output=True, check=False)
 
             if init_result.returncode != 0:
@@ -337,7 +333,7 @@ class BeadWorkerADR0005Test:
 
             # Create a test bead
             bead_result = subprocess.run(
-                ["br", "create", "Test bead for ADR 0005 log validation",
+                ["bead", "create", "--title", "Test bead for ADR 0005 log validation",
                  "--description", "Testing ADR 0005 log compliance",
                  "--priority", "1"],
                 cwd=tmpdir,
@@ -346,16 +342,11 @@ class BeadWorkerADR0005Test:
             )
 
             # Extract bead ID from output
-            # Format: "✓ Created fg-xxx: Title"
+            # bead create prints only the issue ID (e.g. "fg-xxx") on success
             bead_id = None
-            for line in bead_result.stdout.splitlines():
-                if "Created" in line and "fg-" in line:
-                    # Extract bead_id using regex
-                    # The format is "Created fg-xxx:" so we need to extract just the ID
-                    match = re.search(r'(fg-[a-z0-9]+)', line)
-                    if match:
-                        bead_id = match.group(1)
-                        break
+            match = re.search(r'(fg-[a-z0-9]+)', bead_result.stdout)
+            if match:
+                bead_id = match.group(1)
 
             if not bead_id:
                 print(f"⚠️  SKIP - Could not create test bead")

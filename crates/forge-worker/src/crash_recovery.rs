@@ -351,21 +351,25 @@ impl CrashRecoveryManager {
         };
 
         let (command, args) = if status == "in_progress" {
-            ("bead release", vec![bead_id.to_string()])
+            let mut args = vec![bead_id.to_string()];
+            if let Some(epoch) = forge_core::bead_store::claim_epoch(workspace, bead_id)? {
+                args.extend(["--fencing-token".to_string(), epoch.to_string()]);
+            }
+            ("release", args)
         } else {
             (
-                "bead update",
+                "update",
                 vec![bead_id.to_string(), "--clear-assignee".to_string()],
             )
         };
 
-        let output = Command::new(command)
+        let output = Command::new("bead")
             .args(&args)
             .current_dir(workspace)
             .output()
             .map_err(|e| forge_core::ForgeError::ToolExecution {
                 tool_name: command.to_string(),
-                message: format!("Failed to execute {} {}: {}", command, bead_id, e),
+                message: format!("Failed to execute bead {} {}: {}", command, bead_id, e),
             })?;
 
         if !output.status.success() {
@@ -373,7 +377,7 @@ impl CrashRecoveryManager {
             error!("Failed to clear assignee for {}: {}", bead_id, stderr);
             return Err(forge_core::ForgeError::ToolExecution {
                 tool_name: command.to_string(),
-                message: format!("{} failed for {}: {}", command, bead_id, stderr),
+                message: format!("bead {} failed for {}: {}", command, bead_id, stderr),
             });
         }
 

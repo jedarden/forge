@@ -63,7 +63,7 @@ pub use activity_monitor::{
 pub use assignment::{
     AssignmentManager, AssignmentPriority, AssignmentStats, AssignmentStatus, BeadAssignment,
 };
-pub use bead_store::{BeadStoreFormat, StoreBead, StoreDependency, read_all_beads};
+pub use bead_store::{BeadStoreFormat, StoreBead, StoreDependency, claim_epoch, read_all_beads};
 pub use error::{ForgeError, Result};
 pub use logging::{LogGuard, init_logging};
 pub use recovery::{

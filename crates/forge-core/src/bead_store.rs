@@ -40,9 +40,20 @@ pub enum BeadStoreFormat {
 ///
 /// Returns `None` when the workspace has no bead store at all.
 pub fn detect_format(workspace: &Path) -> Option<BeadStoreFormat> {
-    if workspace.join(".beads/config.json").exists() {
+    let beads = workspace.join(".beads");
+    let checkpoint = beads.join("checkpoint");
+
+    // A checkout may contain the portable checkpoint without the live
+    // `beads.db` (or, in a minimal fixture, without config.json). The
+    // checkpoint is sufficient to identify bead-rs and is the only input the
+    // reader needs, so do not require the SQLite database or config file.
+    if beads.join("config.json").exists()
+        || checkpoint.join("current.json").exists()
+        || checkpoint.join("forensic.jsonl").exists()
+        || checkpoint.join("objects").is_dir()
+    {
         Some(BeadStoreFormat::BeadRs)
-    } else if workspace.join(".beads/issues.jsonl").exists() {
+    } else if beads.join("issues.jsonl").exists() {
         Some(BeadStoreFormat::LegacyFlatJsonl)
     } else {
         None
@@ -86,6 +97,9 @@ pub struct StoreBead {
     /// Assignee, if any.
     #[serde(default)]
     pub assignee: Option<String>,
+    /// Claim epoch used by bead-rs as the fencing token for mutations.
+    #[serde(default)]
+    pub claim_epoch: Option<u64>,
     /// True when the bead was explicitly blocked via `bead update --status blocked`.
     #[serde(default)]
     pub manual_blocked: bool,
@@ -158,6 +172,14 @@ pub fn read_all_beads(workspace: &Path) -> Result<Vec<StoreBead>> {
         }
         None => Ok(Vec::new()),
     }
+}
+
+/// Read the fencing token for a bead from the durable checkpoint.
+pub fn claim_epoch(workspace: &Path, bead_id: &str) -> Result<Option<u64>> {
+    Ok(read_all_beads(workspace)?
+        .into_iter()
+        .find(|bead| bead.id == bead_id)
+        .and_then(|bead| bead.claim_epoch))
 }
 
 /// Read a bead-rs store from its checkpoint.
@@ -302,6 +324,8 @@ fn parse_issue(value: &serde_json::Value) -> Option<StoreBead> {
         .filter(|s| !s.is_empty() && *s != "none")
         .map(String::from);
 
+    let claim_epoch = value.get("claim_epoch").and_then(|v| v.as_u64());
+
     let manual_blocked = value
         .get("manual_blocked")
         .and_then(|v| v.as_bool())
@@ -346,6 +370,7 @@ fn parse_issue(value: &serde_json::Value) -> Option<StoreBead> {
         issue_type,
         labels,
         assignee,
+        claim_epoch,
         manual_blocked,
         dependencies,
         created_at,
@@ -450,6 +475,11 @@ mod tests {
         );
 
         let bead_rs = create_bead_rs_workspace();
+        assert_eq!(detect_format(bead_rs.path()), Some(BeadStoreFormat::BeadRs));
+
+        // A clone may carry only the checkpoint. The reader must not require
+        // the live database or config file to recognize bead-rs.
+        fs::remove_file(bead_rs.path().join(".beads/config.json")).unwrap();
         assert_eq!(detect_format(bead_rs.path()), Some(BeadStoreFormat::BeadRs));
 
         let empty = TempDir::new().unwrap();

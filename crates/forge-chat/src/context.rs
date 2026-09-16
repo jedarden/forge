@@ -57,7 +57,10 @@ impl fmt::Debug for DashboardContext {
             .field("subscriptions", &self.subscriptions)
             .field("recent_events", &self.recent_events)
             .field("timestamp", &self.timestamp)
-            .field("worker_spawner", &self.worker_spawner.as_ref().map(|_| "<WorkerSpawner>"))
+            .field(
+                "worker_spawner",
+                &self.worker_spawner.as_ref().map(|_| "<WorkerSpawner>"),
+            )
             .finish()
     }
 }
@@ -455,7 +458,8 @@ impl ContextSource for MockContextSource {
 ///
 /// This implementation reads:
 /// - Worker status from ~/.forge/status/*.json
-/// - Task queue from the workspace's .beads/ directory via `br` CLI
+/// - Task queue from the workspace's bead-rs checkpoint (via
+///   `forge_core::bead_store`)
 /// - Cost data from ~/.forge/costs.db
 /// - Recent events from the chat audit log
 pub struct RealContextSource {
@@ -480,9 +484,7 @@ impl RealContextSource {
         // Get workspace from environment or current directory
         let workspace = std::env::var("FORGE_WORKSPACE")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from(&home))
-            });
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(&home)));
 
         Self {
             status_dir: forge_dir.join("status"),
@@ -580,10 +582,7 @@ impl RealContextSource {
         .to_string();
 
         // Check if healthy (active or idle status)
-        let is_healthy = matches!(
-            status.status.as_str(),
-            "active" | "idle" | "starting"
-        );
+        let is_healthy = matches!(status.status.as_str(), "active" | "idle" | "starting");
 
         Ok(WorkerInfo {
             session_name: status.worker_id,
@@ -598,69 +597,44 @@ impl RealContextSource {
         })
     }
 
-    /// Read task queue from beads via br CLI.
+    /// Read the task queue from the bead store.
+    ///
+    /// Reads the store directly (bead-rs checkpoint, or the legacy flat file)
+    /// via [`forge_core::bead_store`] — no CLI subprocess, and it also works
+    /// on a fresh clone where `beads.db` has not been restored yet. Ready
+    /// beads mirror `bead list --ready`: open, unassigned, not manually
+    /// blocked, with no unfinished blocker; in-progress beads are reported
+    /// alongside them.
     async fn read_tasks(&self) -> Vec<TaskInfo> {
-        let mut tasks = Vec::new();
-
-        // Use br CLI to get ready tasks
-        let output = tokio::process::Command::new("br")
-            .args(["ready", "--format", "json"])
-            .current_dir(&self.workspace)
-            .output()
-            .await;
-
-        if let Ok(output) = output
-            && output.status.success()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if !stdout.trim().is_empty()
-                && stdout.trim() != "[]"
-                && let Ok(beads) = serde_json::from_str::<Vec<BeadJson>>(&stdout)
-            {
-                for bead in beads {
-                    tasks.push(TaskInfo {
-                        id: bead.id,
-                        title: bead.title,
-                        priority: format!("P{}", bead.priority),
-                        workspace: self.workspace.to_string_lossy().to_string(),
-                        in_progress: false,
-                        assigned_model: bead.assignee,
-                        estimated_tokens: None,
-                    });
-                }
+        let beads = match forge_core::read_all_beads(&self.workspace) {
+            Ok(beads) => beads,
+            Err(e) => {
+                debug!("Failed to read bead store: {}", e);
+                return Vec::new();
             }
-        }
+        };
 
-        // Also get in-progress tasks
-        let output = tokio::process::Command::new("br")
-            .args(["list", "--status", "in_progress", "--format", "json"])
-            .current_dir(&self.workspace)
-            .output()
-            .await;
+        let index = forge_core::bead_store::build_index(&beads);
+        let workspace = self.workspace.to_string_lossy().to_string();
 
-        if let Ok(output) = output
-            && output.status.success()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if !stdout.trim().is_empty()
-                && stdout.trim() != "[]"
-                && let Ok(beads) = serde_json::from_str::<Vec<BeadJson>>(&stdout)
-            {
-                for bead in beads {
-                    tasks.push(TaskInfo {
-                        id: bead.id,
-                        title: bead.title,
-                        priority: format!("P{}", bead.priority),
-                        workspace: self.workspace.to_string_lossy().to_string(),
-                        in_progress: true,
-                        assigned_model: bead.assignee,
-                        estimated_tokens: None,
-                    });
+        beads
+            .iter()
+            .filter_map(|bead| {
+                let in_progress = bead.status == "in_progress";
+                if !in_progress && !forge_core::bead_store::is_ready(bead, &index) {
+                    return None;
                 }
-            }
-        }
-
-        tasks
+                Some(TaskInfo {
+                    id: bead.id.clone(),
+                    title: bead.title.clone(),
+                    priority: format!("P{}", bead.priority),
+                    workspace: workspace.clone(),
+                    in_progress,
+                    assigned_model: bead.assignee.clone(),
+                    estimated_tokens: None,
+                })
+            })
+            .collect()
     }
 
     /// Read cost data from the database.
@@ -677,15 +651,15 @@ impl RealContextSource {
         let query = forge_cost::CostQuery::new(&db);
 
         // Get today's costs
-        let today = query.get_today_costs().unwrap_or_else(|_| {
-            forge_cost::DailyCost {
+        let today = query
+            .get_today_costs()
+            .unwrap_or_else(|_| forge_cost::DailyCost {
                 date: chrono::Utc::now().date_naive(),
                 total_cost_usd: 0.0,
                 call_count: 0,
                 total_tokens: 0,
                 by_model: vec![],
-            }
-        });
+            });
         let costs_today = CostAnalytics {
             timeframe: "today".to_string(),
             total_cost_usd: today.total_cost_usd,
@@ -706,13 +680,15 @@ impl RealContextSource {
         };
 
         // Get projected costs
-        let projected = query.get_projected_costs(None).unwrap_or(forge_cost::ProjectedCost {
-            current_total: 0.0,
-            daily_rate: 0.0,
-            days_remaining: 0,
-            projected_total: 0.0,
-            confidence: 0.0,
-        });
+        let projected = query
+            .get_projected_costs(None)
+            .unwrap_or(forge_cost::ProjectedCost {
+                current_total: 0.0,
+                daily_rate: 0.0,
+                days_remaining: 0,
+                projected_total: 0.0,
+                confidence: 0.0,
+            });
         let costs_projected = CostAnalytics {
             timeframe: "month".to_string(),
             total_cost_usd: projected.projected_total,
@@ -857,16 +833,6 @@ struct WorkerStatusFile {
     last_activity: Option<String>,
     current_task: Option<String>,
     tasks_completed: Option<i64>,
-}
-
-/// Bead JSON format from br CLI.
-#[derive(Debug, Clone, Deserialize)]
-struct BeadJson {
-    id: String,
-    title: String,
-    priority: u8,
-    #[serde(default)]
-    assignee: Option<String>,
 }
 
 /// Subscriptions config format.

@@ -845,61 +845,40 @@ impl AutoRecoveryManager {
 
     /// Find beads with stale assignees in a workspace.
     fn find_stale_assignees(&self, workspace: &PathBuf) -> Result<Vec<(String, String, i64)>> {
-        // Use br CLI to list in_progress beads
-        let output = Command::new("br")
-            .arg("list")
-            .arg("--status")
-            .arg("in_progress")
-            .arg("--format")
-            .arg("json")
-            .current_dir(workspace)
-            .output();
-
-        let output = match output {
-            Ok(o) => o,
+        // Read in_progress beads directly from the bead-rs checkpoint (or
+        // the legacy flat compatibility file) — no CLI subprocess needed.
+        let beads = match forge_core::bead_store::read_all_beads(workspace) {
+            Ok(beads) => beads,
             Err(e) => {
-                debug!(workspace = ?workspace, error = %e, "Failed to run br list");
+                debug!(workspace = ?workspace, error = %e, "Failed to read bead store");
                 return Ok(Vec::new());
             }
         };
 
-        if !output.status.success() {
-            return Ok(Vec::new());
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if stdout.trim().is_empty() || stdout.trim() == "[]" {
-            return Ok(Vec::new());
-        }
-
-        // Parse JSON and check for stale assignees
-        let beads: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap_or_default();
         let mut stale = Vec::new();
-
         let threshold = self.config.stale_assignee_timeout_mins;
 
         for bead in beads {
-            let bead_id = bead.get("id").and_then(|v| v.as_str()).unwrap_or("");
-            let assignee = bead.get("assignee").and_then(|v| v.as_str()).unwrap_or("");
-            let updated_at = bead
-                .get("updated_at")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            if bead.status != "in_progress" {
+                continue;
+            }
 
-            if bead_id.is_empty() || assignee.is_empty() {
+            let Some(assignee) = bead.assignee else {
+                continue;
+            };
+            if assignee.is_empty() {
                 continue;
             }
 
             // Parse timestamp and check if stale
-            if let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(updated_at) {
+            if let Some(updated_at) = bead.updated_at.as_deref()
+                && let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(updated_at)
+            {
                 let now = Utc::now();
                 let elapsed_mins = now.signed_duration_since(timestamp).num_minutes();
 
-                if elapsed_mins > threshold {
-                    // Check if assignee (worker) is still alive
-                    if !self.is_worker_alive(assignee) {
-                        stale.push((bead_id.to_string(), assignee.to_string(), elapsed_mins));
-                    }
+                if elapsed_mins > threshold && !self.is_worker_alive(&assignee) {
+                    stale.push((bead.id, assignee, elapsed_mins));
                 }
             }
         }
@@ -1059,44 +1038,44 @@ impl AutoRecoveryManager {
     }
 
     /// Clear a stale assignee from a bead.
+    ///
+    /// `bead release` returns an in_progress issue to open/unassigned in one
+    /// atomic step; if the bead is no longer claimed (it moved since we read
+    /// it), fall back to clearing the assignee on the open bead.
     async fn clear_assignee(&self, workspace: &Path, bead_id: &str) -> Result<()> {
-        // Update status to open
-        let status_output = Command::new("br")
-            .arg("update")
-            .arg(bead_id)
-            .arg("--status")
-            .arg("open")
-            .current_dir(workspace)
-            .output()
-            .map_err(|e| forge_core::ForgeError::ToolExecution {
-                tool_name: "br".to_string(),
-                message: e.to_string(),
-            })?;
-
-        if !status_output.status.success() {
-            let stderr = String::from_utf8_lossy(&status_output.stderr);
-            warn!(bead_id, error = %stderr, "Failed to update bead status");
+        let mut release_args = vec!["release".to_string(), bead_id.to_string()];
+        if let Some(epoch) = forge_core::bead_store::claim_epoch(workspace, bead_id)? {
+            release_args.extend(["--fencing-token".to_string(), epoch.to_string()]);
         }
-
-        // Clear assignee
-        let assignee_output = Command::new("br")
-            .arg("update")
-            .arg(bead_id)
-            .arg("--assignee")
-            .arg("")
+        let released = Command::new("bead")
+            .args(&release_args)
             .current_dir(workspace)
             .output()
             .map_err(|e| forge_core::ForgeError::ToolExecution {
-                tool_name: "br".to_string(),
+                tool_name: "bead".to_string(),
                 message: e.to_string(),
             })?;
 
-        if !assignee_output.status.success() {
-            let stderr = String::from_utf8_lossy(&assignee_output.stderr);
-            return Err(forge_core::ForgeError::ToolExecution {
-                tool_name: "br".to_string(),
-                message: stderr.to_string(),
-            });
+        if !released.status.success() {
+            let stderr = String::from_utf8_lossy(&released.stderr);
+            warn!(bead_id, error = %stderr, "bead release failed; trying clear-assignee");
+
+            let cleared = Command::new("bead")
+                .args(["update", bead_id, "--clear-assignee"])
+                .current_dir(workspace)
+                .output()
+                .map_err(|e| forge_core::ForgeError::ToolExecution {
+                    tool_name: "bead".to_string(),
+                    message: e.to_string(),
+                })?;
+
+            if !cleared.status.success() {
+                let stderr = String::from_utf8_lossy(&cleared.stderr);
+                return Err(forge_core::ForgeError::ToolExecution {
+                    tool_name: "bead".to_string(),
+                    message: stderr.to_string(),
+                });
+            }
         }
 
         Ok(())

@@ -3,12 +3,13 @@
 //! This module provides the workspace registry and management for coordinating
 //! multiple FORGE workspaces from a single dashboard.
 
+use crate::bead_store;
 use crate::{ForgeError, Result};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::fs;
 use std::fmt;
+use std::fs;
+use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 /// Configuration for a monitored workspace.
@@ -31,8 +32,12 @@ pub struct WorkspaceConfig {
     pub description: Option<String>,
 }
 
-fn default_enabled() -> bool { true }
-fn default_priority() -> u32 { 100 }
+fn default_enabled() -> bool {
+    true
+}
+fn default_priority() -> u32 {
+    100
+}
 
 impl WorkspaceConfig {
     /// Create a new workspace configuration.
@@ -250,16 +255,13 @@ impl WorkspaceRegistry {
         if path.exists() && path.is_dir() {
             let forge_dir = path.join(".forge");
             if forge_dir.exists() {
-                let id = path.file_name()
+                let id = path
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("default")
                     .to_string();
 
-                let ws = WorkspaceConfig::new(
-                    id.clone(),
-                    id.clone(),
-                    path
-                );
+                let ws = WorkspaceConfig::new(id.clone(), id.clone(), path);
                 registry.add(ws);
                 info!("Discovered workspace: {} at {:?}", id, path);
             }
@@ -281,12 +283,11 @@ impl WorkspaceRegistry {
             source: e,
         })?;
 
-        let mut registry: Self = serde_yaml::from_str(&content).map_err(|e| {
-            ForgeError::YamlParse {
+        let mut registry: Self =
+            serde_yaml::from_str(&content).map_err(|e| ForgeError::YamlParse {
                 context: format!("workspace config at {:?}", path),
                 message: e.to_string(),
-            }
-        })?;
+            })?;
 
         // Rebuild index
         registry.rebuild_index();
@@ -465,7 +466,9 @@ impl CrossWorkspaceBeadResult {
     pub fn open_beads(&self) -> Vec<&WorkspaceBead> {
         self.beads
             .iter()
-            .filter(|b| b.status == "open" || b.status == "in-progress")
+            .filter(|b| {
+                b.status == "open" || b.status == "in_progress" || b.status == "in-progress"
+            })
             .collect()
     }
 
@@ -512,28 +515,27 @@ pub fn query_beads_cross_workspace(
             continue;
         }
 
-        let issues_path = beads_dir.join("issues.jsonl");
-
-        if !issues_path.exists() {
-            continue;
-        }
-
-        // Read and parse beads JSONL
-        match read_beads_from_jsonl(&issues_path, &ws.id, &ws.name) {
+        // Read through the shared store reader. Bead-rs checkpoints are the
+        // canonical source; flat issues.jsonl is compatibility-only.
+        match read_workspace_beads(&ws.path, &ws.id, &ws.name) {
             Ok(mut beads) => {
-                result.total_open += beads.iter().filter(|b| b.status == "open" || b.status == "in-progress").count();
+                result.total_open += beads
+                    .iter()
+                    .filter(|b| {
+                        b.status == "open" || b.status == "in_progress" || b.status == "in-progress"
+                    })
+                    .count();
                 result.total_closed += beads.iter().filter(|b| b.status == "closed").count();
-                result.unassigned += beads.iter().filter(|b| b.assignee.is_none() || b.assignee.as_deref() == Some("none")).count();
+                result.unassigned += beads
+                    .iter()
+                    .filter(|b| b.assignee.is_none() || b.assignee.as_deref() == Some("none"))
+                    .count();
 
                 result.by_workspace.insert(ws.id.clone(), beads.clone());
                 result.beads.append(&mut beads);
             }
             Err(e) => {
-                tracing::warn!(
-                    "Failed to read beads from workspace {}: {}",
-                    ws.id,
-                    e
-                );
+                tracing::warn!("Failed to read beads from workspace {}: {}", ws.id, e);
             }
         }
     }
@@ -549,89 +551,39 @@ pub fn query_beads_cross_workspace(
     Ok(result)
 }
 
-/// Read beads from a JSONL file.
-fn read_beads_from_jsonl(
-    path: &Path,
+/// Read a workspace's beads through [`bead_store`], normalized for display.
+fn read_workspace_beads(
+    workspace_path: &Path,
     workspace_id: &str,
     workspace_name: &str,
 ) -> Result<Vec<WorkspaceBead>> {
-    let content = fs::read_to_string(path).map_err(|e| ForgeError::Io {
-        operation: "read".to_string(),
-        path: path.to_path_buf(),
-        source: e,
-    })?;
+    let store_beads = bead_store::read_all_beads(workspace_path)?;
 
-    let mut beads = Vec::new();
-
-    for line in content.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        // Parse JSONL line
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
-            let id = value.get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
-
-            let title = value.get("title")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-
-            let status = value.get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("open")
-                .to_string();
-
-            let assignee = value.get("assignee")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty() && *s != "none")
-                .map(|s| s.to_string());
-
-            let priority = value.get("priority")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-
-            beads.push(WorkspaceBead {
-                id,
-                workspace_id: workspace_id.to_string(),
-                workspace_name: workspace_name.to_string(),
-                title,
-                status,
-                assignee,
-                priority,
-            });
-        }
-    }
-
-    Ok(beads)
+    Ok(store_beads
+        .into_iter()
+        .map(|bead| WorkspaceBead {
+            id: bead.id,
+            workspace_id: workspace_id.to_string(),
+            workspace_name: workspace_name.to_string(),
+            title: if bead.title.is_empty() {
+                None
+            } else {
+                Some(bead.title)
+            },
+            status: bead.status,
+            assignee: bead.assignee,
+            priority: Some(bead.priority.to_string()),
+        })
+        .collect())
 }
 
 /// Get bead count for a specific workspace.
 pub fn get_workspace_bead_count(workspace_path: &Path) -> Result<usize> {
-    let beads_dir = workspace_path.join(".beads");
-    let issues_path = beads_dir.join("issues.jsonl");
-
-    if !issues_path.exists() {
-        return Ok(0);
-    }
-
-    let content = fs::read_to_string(&issues_path).map_err(|e| ForgeError::Io {
-        operation: "read".to_string(),
-        path: issues_path.clone(),
-        source: e,
-    })?;
-
-    let count = content.lines().filter(|l| !l.trim().is_empty()).count();
-
-    Ok(count)
+    Ok(bead_store::read_all_beads(workspace_path)?.len())
 }
 
 /// Get bead counts for all workspaces in a registry.
-pub fn get_workspace_bead_counts(
-    registry: &WorkspaceRegistry,
-) -> Result<HashMap<String, usize>> {
+pub fn get_workspace_bead_counts(registry: &WorkspaceRegistry) -> Result<HashMap<String, usize>> {
     let mut counts = HashMap::new();
 
     for ws in registry.all() {
@@ -644,11 +596,7 @@ pub fn get_workspace_bead_counts(
                 counts.insert(ws.id.clone(), count);
             }
             Err(e) => {
-                tracing::warn!(
-                    "Failed to get bead count for workspace {}: {}",
-                    ws.id,
-                    e
-                );
+                tracing::warn!("Failed to get bead count for workspace {}: {}", ws.id, e);
             }
         }
     }
@@ -778,9 +726,11 @@ mod tests {
 
         let registry = WorkspaceRegistry::discover_from_path(workspace_path).unwrap();
         assert_eq!(registry.len(), 1);
-        assert!(registry.get(
-            workspace_path.file_name().and_then(|n| n.to_str()).unwrap()
-        ).is_some());
+        assert!(
+            registry
+                .get(workspace_path.file_name().and_then(|n| n.to_str()).unwrap())
+                .is_some()
+        );
     }
 
     #[test]

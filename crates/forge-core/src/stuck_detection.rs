@@ -31,12 +31,12 @@
 //! }
 //! ```
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime};
-use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 use crate::{ForgeError, Result};
@@ -230,38 +230,24 @@ impl StuckTaskDetector {
         Ok(stuck_tasks)
     }
 
-    /// Get in-progress beads from a workspace using br CLI.
+    /// Get in-progress beads from a workspace.
+    ///
+    /// Reads the bead store directly (the bead-rs checkpoint, or the legacy
+    /// flat compatibility file) via [`bead_store`] — no CLI subprocess, and
+    /// it also works on a fresh clone where `beads.db` has not been restored.
     fn get_in_progress_beads(&self, workspace: &Path) -> Result<Vec<InProgressBead>> {
-        let output = Command::new("br")
-            .arg("list")
-            .arg("--status")
-            .arg("in_progress")
-            .arg("--format")
-            .arg("json")
-            .current_dir(workspace)
-            .output()
-            .map_err(|e| ForgeError::io("running br list", workspace, e))?;
+        let beads = crate::bead_store::read_all_beads(workspace)?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("no .beads") {
-                return Ok(Vec::new());
-            }
-            return Err(ForgeError::ToolExecution {
-                tool_name: "br list".to_string(),
-                message: stderr.to_string(),
-            });
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if stdout.trim().is_empty() || stdout.trim() == "[]" {
-            return Ok(Vec::new());
-        }
-
-        let beads: Vec<InProgressBead> = serde_json::from_str(&stdout)
-            .map_err(|e| ForgeError::parse(format!("Failed to parse br output: {}", e)))?;
-
-        Ok(beads)
+        Ok(beads
+            .into_iter()
+            .filter(|b| b.status == "in_progress")
+            .map(|b| InProgressBead {
+                id: b.id,
+                title: b.title,
+                assignee: b.assignee,
+                updated_at: b.updated_at.unwrap_or_default(),
+            })
+            .collect())
     }
 
     /// Check activity indicators for a bead.
@@ -335,11 +321,7 @@ impl StuckTaskDetector {
     }
 
     /// Check recent API calls from cost logs.
-    fn check_recent_api_calls(
-        &self,
-        workspace: &Path,
-        worker_id: &Option<String>,
-    ) -> Result<u32> {
+    fn check_recent_api_calls(&self, workspace: &Path, worker_id: &Option<String>) -> Result<u32> {
         let cost_db = workspace.join(".forge/costs.db");
         if !cost_db.exists() {
             return Ok(0);
@@ -356,7 +338,8 @@ impl StuckTaskDetector {
         let mut api_calls = 0;
 
         for entry in fs::read_dir(&logs_dir)
-            .map_err(|e| ForgeError::io("reading logs directory", &logs_dir, e))? {
+            .map_err(|e| ForgeError::io("reading logs directory", &logs_dir, e))?
+        {
             let entry = entry.map_err(|e| ForgeError::io("reading log entry", &logs_dir, e))?;
             let path = entry.path();
 
@@ -371,8 +354,8 @@ impl StuckTaskDetector {
                         if line.contains("API call")
                             || line.contains("input_tokens")
                             || line.contains("output_tokens")
-                            || line.contains("request_id") {
-
+                            || line.contains("request_id")
+                        {
                             // If worker_id is specified, filter by worker
                             if let Some(worker) = worker_id {
                                 if line.contains(worker) {
@@ -451,40 +434,42 @@ impl StuckTaskDetector {
     }
 
     /// Timeout a stuck task (mark as open, unassign worker).
+    ///
+    /// Mutations go through the `bead` CLI — the sole write authority over the
+    /// store (ADR 0007/0020). `bead release` returns an in_progress issue to
+    /// open/unassigned atomically; if the bead is no longer in_progress (it
+    /// moved while we were looking at it), fall back to clearing the assignee
+    /// on the open bead.
     pub fn timeout_task(&self, workspace: &Path, bead_id: &str) -> Result<()> {
         info!(bead_id, workspace = ?workspace, "Timing out stuck task");
 
-        // Use br CLI to update status
-        let output = Command::new("br")
-            .arg("update")
-            .arg(bead_id)
-            .arg("--status")
-            .arg("open")
-            .current_dir(workspace)
-            .output()
-            .map_err(|e| ForgeError::io("running br update", workspace, e))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(ForgeError::ToolExecution {
-                tool_name: "br update".to_string(),
-                message: stderr.to_string(),
-            });
+        let mut release_args = vec!["release".to_string(), bead_id.to_string()];
+        if let Some(epoch) = crate::bead_store::claim_epoch(workspace, bead_id)? {
+            release_args.extend(["--fencing-token".to_string(), epoch.to_string()]);
         }
-
-        // Clear assignee
-        let output = Command::new("br")
-            .arg("update")
-            .arg(bead_id)
-            .arg("--assignee")
-            .arg("")
+        let released = Command::new("bead")
+            .args(&release_args)
             .current_dir(workspace)
             .output()
-            .map_err(|e| ForgeError::io("running br update", workspace, e))?;
+            .map_err(|e| ForgeError::io("running bead release", workspace, e))?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!(bead_id, error = %stderr, "Failed to clear assignee");
+        if !released.status.success() {
+            let stderr = String::from_utf8_lossy(&released.stderr);
+            warn!(bead_id, error = %stderr, "bead release failed; trying clear-assignee");
+
+            let cleared = Command::new("bead")
+                .args(["update", bead_id, "--clear-assignee"])
+                .current_dir(workspace)
+                .output()
+                .map_err(|e| ForgeError::io("running bead update", workspace, e))?;
+
+            if !cleared.status.success() {
+                let stderr = String::from_utf8_lossy(&cleared.stderr);
+                return Err(ForgeError::ToolExecution {
+                    tool_name: "bead release".to_string(),
+                    message: stderr.to_string(),
+                });
+            }
         }
 
         info!(bead_id, "Task timed out and available for reassignment");
