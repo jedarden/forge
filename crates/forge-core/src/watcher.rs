@@ -600,7 +600,7 @@ mod tests {
 
         // Wait for watcher to be ready and drain initial event if any
         tokio::time::sleep(Duration::from_millis(100)).await;
-        while let Ok(_) = rx.try_recv() {}
+        while rx.try_recv().is_ok() {}
 
         // Modify the file
         create_status_file(&status_dir, "worker-x", "active");
@@ -641,7 +641,7 @@ mod tests {
 
         // Wait for watcher to be ready and drain initial events
         tokio::time::sleep(Duration::from_millis(100)).await;
-        while let Ok(_) = rx.try_recv() {}
+        while rx.try_recv().is_ok() {}
 
         // Delete the file
         fs::remove_file(status_dir.join("worker-del.json")).unwrap();
