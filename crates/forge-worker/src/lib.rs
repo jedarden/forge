@@ -16,6 +16,8 @@
 //! - **Discover active workers** from existing tmux sessions and Docker
 //!   containers
 //! - **Read bead queues** from workspaces for task allocation
+//! - **Dispatch bead work** onto workers through the opt-in control loop
+//!   (see [`dispatch`])
 //!
 //! # Architecture
 //!
@@ -146,6 +148,7 @@ pub mod bead_scheduler;
 pub mod complexity;
 pub mod crash_recovery;
 pub mod discovery;
+pub mod dispatch;
 pub mod docker;
 pub mod health;
 pub mod launcher;
@@ -170,8 +173,8 @@ pub use bead_claim::{
 pub use bead_queue::{BeadAllocation, BeadQueueManager, BeadQueueReader, QueuedBead};
 pub use bead_scheduler::{
     BeadScheduler, BeadStatusAction, BeadStatusBackend, BeadStatusUpdate, CompletionRecord,
-    FORGE_BEAD_ID_ENV, FORGE_TASK_PROMPT_ENV, WorkerBeadAssignment, build_bead_prompt,
-    priority_label,
+    FORGE_BEAD_ID_ENV, FORGE_TASK_PROMPT_ENV, SpawnFn, SpawnFuture, WorkerBeadAssignment,
+    build_bead_prompt, priority_label,
 };
 pub use complexity::{
     CalibrationError, CalibrationReport, CalibrationResult, ComplexityCalibrationEvent,
@@ -185,6 +188,9 @@ pub use crash_recovery::{
 };
 pub use discovery::{
     DiscoveredWorker, DiscoveryResult, WorkerType, discover_docker_workers, discover_workers,
+};
+pub use dispatch::{
+    BeadDispatchLoop, CompletionProbe, DispatchEvent, DispatchStats, LauncherCompletionProbe,
 };
 pub use docker::{
     CONTAINER_NAME_PREFIX, ContainerState, ContainerSummary, DEFAULT_DOCKER_BIN, WORKER_LABEL,

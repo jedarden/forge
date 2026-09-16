@@ -19,6 +19,9 @@
 //! - **Launch pipeline**: fetches the bead's context, injects it into the
 //!   worker prompt, and spawns the worker through [`WorkerLauncher`] with
 //!   `--bead-ref=<bead-id>` (the bead-aware launcher protocol extension).
+//!   Tests and dry runs swap in any spawn behavior via
+//!   [`BeadScheduler::with_spawner`], keeping the rest of the pipeline
+//!   identical.
 //! - **Status updates**: marks the bead in-progress on launch, closes it on
 //!   completion, and reopens it when an assignment is released, so beads are
 //!   never silently lost.
@@ -58,12 +61,48 @@ use crate::types::{LaunchConfig, SpawnRequest, WorkerHandle};
 use chrono::{DateTime, Utc};
 use forge_core::types::BeadId;
 use forge_core::{ForgeError, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
 use tracing::{debug, info, warn};
+
+/// Future resolving to a spawned worker handle.
+pub type SpawnFuture = Pin<Box<dyn Future<Output = Result<WorkerHandle>> + Send>>;
+
+/// Spawn behavior shared behind an `Arc`: a spawn request in, a running
+/// (or failed) worker out.
+pub type SpawnFn = dyn Fn(SpawnRequest) -> SpawnFuture + Send + Sync;
+
+/// The scheduler's spawn seam, with a printable `Debug` shape.
+///
+/// Production builds it from a [`WorkerLauncher`] (see
+/// [`BeadScheduler::new`]); tests and dry runs substitute any behavior via
+/// [`BeadScheduler::with_spawner`] without changing the pipeline around
+/// it — assignment, cross-process claim, status transitions, and rollback
+/// are identical either way.
+#[derive(Clone)]
+struct Spawner(Arc<SpawnFn>);
+
+impl std::fmt::Debug for Spawner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Spawner(<dynamic>)")
+    }
+}
+
+impl Spawner {
+    /// Spawn through the given worker launcher.
+    fn from_launcher(launcher: &Arc<WorkerLauncher>) -> Self {
+        let launcher = Arc::clone(launcher);
+        Self(Arc::new(move |request| {
+            let launcher = Arc::clone(&launcher);
+            Box::pin(async move { launcher.spawn(request).await })
+        }))
+    }
+}
 
 /// Environment variable carrying the constructed task prompt.
 ///
@@ -234,8 +273,8 @@ pub struct BeadScheduler {
     status_backend: BeadStatusBackend,
     /// How cross-process claims reach the bead store
     claim_backend: BeadClaimBackend,
-    /// Worker launcher used by the launch pipeline
-    launcher: Arc<WorkerLauncher>,
+    /// Spawn seam used by the launch pipeline
+    spawn: Spawner,
 }
 
 impl BeadScheduler {
@@ -248,7 +287,27 @@ impl BeadScheduler {
             status_updates: Vec::new(),
             status_backend: BeadStatusBackend::default(),
             claim_backend: BeadClaimBackend::default(),
-            launcher,
+            spawn: Spawner::from_launcher(&launcher),
+        }
+    }
+
+    /// Create a scheduler whose workers spawn through `spawn` instead of a
+    /// [`WorkerLauncher`].
+    ///
+    /// Everything else — queue selection, the assignment lock, the
+    /// cross-process `--if-revision` claim, the status backend, and launch
+    /// rollback — behaves exactly as in [`BeadScheduler::new`]. Intended
+    /// for wiring-level tests and dry runs that must exercise the full
+    /// dispatch pipeline on hosts without a launcher runtime (tmux).
+    pub fn with_spawner(spawn: Arc<SpawnFn>) -> Self {
+        Self {
+            readers: Vec::new(),
+            assignments: HashMap::new(),
+            completions: Vec::new(),
+            status_updates: Vec::new(),
+            status_backend: BeadStatusBackend::default(),
+            claim_backend: BeadClaimBackend::default(),
+            spawn: Spawner(spawn),
         }
     }
 
@@ -284,16 +343,21 @@ impl BeadScheduler {
     // =========================================================================
 
     /// Ready beads across all workspaces, highest priority first, excluding
-    /// beads already assigned by this scheduler.
+    /// beads already assigned or already completed by this scheduler.
     pub fn ready_beads(&mut self) -> Result<Vec<QueuedBead>> {
         let scorer = TaskScorer::new();
         let mut ready: Vec<QueuedBead> = Vec::new();
+        // Beads this scheduler has recorded as completed are done: never
+        // re-select them, even if the queue read still reports them ready
+        // (a close that failed, a dry-run backend, a static queue fixture).
+        let completed: HashSet<&BeadId> = self.completions.iter().map(|c| &c.bead_id).collect();
 
         for reader in &mut self.readers {
             for bead in reader.get_ready_beads()? {
-                if !self.assignments.contains_key(&bead.id) {
-                    ready.push(bead);
+                if self.assignments.contains_key(&bead.id) || completed.contains(&bead.id) {
+                    continue;
                 }
+                ready.push(bead);
             }
         }
 
@@ -520,7 +584,8 @@ impl BeadScheduler {
         };
 
         // Spawn through the launcher (protocol step 3).
-        match self.launcher.spawn(request).await {
+        let spawn = Arc::clone(&self.spawn.0);
+        match spawn(request).await {
             Ok(handle) => {
                 // Protocol step 4: mark the bead in-progress for this worker —
                 // unless the cross-process claim already did, in which case a
@@ -609,6 +674,32 @@ impl BeadScheduler {
 
         self.remove_assignment(&record.bead_id);
 
+        // Free the cross-process claim too, symmetric with the failed-launch
+        // rollback: a completed bead must not keep an assignee in the store,
+        // or the stale claim would refuse any legitimate future dispatch
+        // with "already assigned to <finished worker>". The fencing token
+        // makes this a no-op if another process has re-claimed since.
+        match self
+            .claim_backend
+            .release_claim(
+                Path::new(&record.workspace),
+                &record.bead_id,
+                &record.worker_id,
+            )
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => debug!(
+                bead_id = %record.bead_id,
+                "Bead claim already released by another writer"
+            ),
+            Err(e) => warn!(
+                bead_id = %record.bead_id,
+                error = %e,
+                "Failed to release bead claim after completion"
+            ),
+        }
+
         let completed_at = Utc::now();
         let duration = (completed_at - record.assigned_at)
             .to_std()
@@ -655,6 +746,21 @@ impl BeadScheduler {
         .await?;
 
         self.remove_assignment(&bead_id);
+
+        // The bead is allocatable again, so its store claim must be too —
+        // same fencing rules as the completion path.
+        if let Err(e) = self
+            .claim_backend
+            .release_claim(Path::new(&record.workspace), &bead_id, &record.worker_id)
+            .await
+        {
+            warn!(
+                bead_id = %bead_id,
+                error = %e,
+                "Failed to release bead claim during release"
+            );
+        }
+
         Ok(record)
     }
 
