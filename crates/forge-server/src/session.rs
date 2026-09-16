@@ -3,7 +3,7 @@
 //! Manages active user sessions, tracks connections, and provides session lookup.
 
 use crate::ServerError;
-use forge_core::{UserSession, UserRole};
+use forge_core::{UserRole, UserSession};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -36,12 +36,7 @@ impl SessionManager {
         let user_id = user_id.into();
         let display_name = display_name.into();
 
-        let session = UserSession::new(
-            &session_id,
-            &user_id,
-            &display_name,
-            role,
-        );
+        let session = UserSession::new(&session_id, &user_id, &display_name, role);
 
         // Add to sessions map
         {
@@ -52,7 +47,8 @@ impl SessionManager {
         // Add to user_sessions map
         {
             let mut user_sessions = self.user_sessions.write().await;
-            user_sessions.entry(user_id.clone())
+            user_sessions
+                .entry(user_id.clone())
                 .or_insert_with(Vec::new)
                 .push(session_id.clone());
         }
@@ -90,16 +86,22 @@ impl SessionManager {
     /// Update session activity.
     pub async fn update_activity(&self, session_id: &str) -> Result<(), ServerError> {
         let mut sessions = self.sessions.write().await;
-        let session = sessions.get_mut(session_id)
+        let session = sessions
+            .get_mut(session_id)
             .ok_or_else(|| ServerError::SessionNotFound(session_id.to_string()))?;
         session.update_activity();
         Ok(())
     }
 
     /// Update session's current view.
-    pub async fn update_view(&self, session_id: &str, view: impl Into<String>) -> Result<(), ServerError> {
+    pub async fn update_view(
+        &self,
+        session_id: &str,
+        view: impl Into<String>,
+    ) -> Result<(), ServerError> {
         let mut sessions = self.sessions.write().await;
-        let session = sessions.get_mut(session_id)
+        let session = sessions
+            .get_mut(session_id)
             .ok_or_else(|| ServerError::SessionNotFound(session_id.to_string()))?;
         session.set_view(view);
         Ok(())
@@ -125,7 +127,8 @@ impl SessionManager {
         };
 
         let sessions = self.sessions.read().await;
-        session_ids.iter()
+        session_ids
+            .iter()
             .filter_map(|id| sessions.get(id).cloned())
             .collect()
     }
@@ -136,7 +139,8 @@ impl SessionManager {
 
         let stale_ids = {
             let sessions = self.sessions.read().await;
-            sessions.iter()
+            sessions
+                .iter()
                 .filter(|(_, s)| s.is_stale(STALE_TIMEOUT_SECONDS))
                 .map(|(id, _)| id.clone())
                 .collect::<Vec<_>>()
@@ -153,8 +157,14 @@ impl SessionManager {
     }
 
     /// Check if a user has permission based on their session role.
-    pub async fn check_permission(&self, session_id: &str, action: super::auth::PermissionAction) -> Result<bool, ServerError> {
-        let session = self.get_session(session_id).await
+    pub async fn check_permission(
+        &self,
+        session_id: &str,
+        action: super::auth::PermissionAction,
+    ) -> Result<bool, ServerError> {
+        let session = self
+            .get_session(session_id)
+            .await
             .ok_or_else(|| ServerError::SessionNotFound(session_id.to_string()))?;
 
         Ok(super::auth::check_permission(session.role, action))
@@ -196,9 +206,18 @@ impl SessionRegistry {
     pub async fn stats(&self) -> SessionStats {
         let sessions = self.manager.all_sessions().await;
 
-        let viewers = sessions.iter().filter(|s| s.role == UserRole::Viewer).count();
-        let operators = sessions.iter().filter(|s| s.role == UserRole::Operator).count();
-        let admins = sessions.iter().filter(|s| s.role == UserRole::Admin).count();
+        let viewers = sessions
+            .iter()
+            .filter(|s| s.role == UserRole::Viewer)
+            .count();
+        let operators = sessions
+            .iter()
+            .filter(|s| s.role == UserRole::Operator)
+            .count();
+        let admins = sessions
+            .iter()
+            .filter(|s| s.role == UserRole::Admin)
+            .count();
 
         SessionStats {
             total_sessions: sessions.len(),
@@ -234,7 +253,10 @@ mod tests {
     async fn test_session_creation() {
         let manager = SessionManager::new();
 
-        let session = manager.create_session("user1", "User One", UserRole::Operator).await.unwrap();
+        let session = manager
+            .create_session("user1", "User One", UserRole::Operator)
+            .await
+            .unwrap();
 
         assert_eq!(session.user_id, "user1");
         assert_eq!(session.display_name, "User One");
@@ -246,7 +268,10 @@ mod tests {
     async fn test_session_retrieval() {
         let manager = SessionManager::new();
 
-        manager.create_session("user1", "User One", UserRole::Operator).await.unwrap();
+        manager
+            .create_session("user1", "User One", UserRole::Operator)
+            .await
+            .unwrap();
 
         let sessions = manager.all_sessions().await;
         assert_eq!(sessions.len(), 1);
@@ -257,7 +282,10 @@ mod tests {
     async fn test_session_removal() {
         let manager = SessionManager::new();
 
-        let session = manager.create_session("user1", "User One", UserRole::Operator).await.unwrap();
+        let session = manager
+            .create_session("user1", "User One", UserRole::Operator)
+            .await
+            .unwrap();
 
         assert_eq!(manager.session_count().await, 1);
 
@@ -271,7 +299,10 @@ mod tests {
         let manager = SessionManager::new();
 
         let session_id = {
-            let session = manager.create_session("user1", "User One", UserRole::Operator).await.unwrap();
+            let session = manager
+                .create_session("user1", "User One", UserRole::Operator)
+                .await
+                .unwrap();
             session.session_id.clone()
         };
 
@@ -288,15 +319,27 @@ mod tests {
 
         let manager = SessionManager::new();
 
-        let viewer_session = manager.create_session("viewer", "Viewer", UserRole::Viewer).await.unwrap();
-        let admin_session = manager.create_session("admin", "Admin", UserRole::Admin).await.unwrap();
+        let viewer_session = manager
+            .create_session("viewer", "Viewer", UserRole::Viewer)
+            .await
+            .unwrap();
+        let admin_session = manager
+            .create_session("admin", "Admin", UserRole::Admin)
+            .await
+            .unwrap();
 
         // Viewer can't spawn workers
-        let can_spawn = manager.check_permission(&viewer_session.session_id, PermissionAction::SpawnWorkers).await.unwrap();
+        let can_spawn = manager
+            .check_permission(&viewer_session.session_id, PermissionAction::SpawnWorkers)
+            .await
+            .unwrap();
         assert!(!can_spawn);
 
         // Admin can spawn workers
-        let can_spawn = manager.check_permission(&admin_session.session_id, PermissionAction::SpawnWorkers).await.unwrap();
+        let can_spawn = manager
+            .check_permission(&admin_session.session_id, PermissionAction::SpawnWorkers)
+            .await
+            .unwrap();
         assert!(can_spawn);
     }
 
@@ -304,8 +347,14 @@ mod tests {
     async fn test_multiple_sessions_per_user() {
         let manager = SessionManager::new();
 
-        manager.create_session("user1", "User One", UserRole::Operator).await.unwrap();
-        manager.create_session("user1", "User One", UserRole::Operator).await.unwrap();
+        manager
+            .create_session("user1", "User One", UserRole::Operator)
+            .await
+            .unwrap();
+        manager
+            .create_session("user1", "User One", UserRole::Operator)
+            .await
+            .unwrap();
 
         let sessions = manager.user_sessions("user1").await;
         assert_eq!(sessions.len(), 2);

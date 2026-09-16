@@ -3,10 +3,10 @@
 //! Provides functions to generate self-signed X.509 certificates for testing
 //! WebSocket Secure (WSS) connections.
 
+use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, SanType};
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
-use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, SanType};
 
 /// Generate a self-signed certificate and private key for testing.
 ///

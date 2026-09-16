@@ -3,13 +3,13 @@
 //! Tests multi-user session support, authentication, role-based access control,
 //! and bead assignment tracking.
 
-use forge_server::{
-    auth::{TestAuthProvider, AuthProvider, check_permission, PermissionAction},
-    session::SessionManager,
-    assignment::BeadAssignmentTracker,
-};
 use forge_core::UserRole;
-use tokio::time::{sleep, Duration};
+use forge_server::{
+    assignment::BeadAssignmentTracker,
+    auth::{AuthProvider, PermissionAction, TestAuthProvider, check_permission},
+    session::SessionManager,
+};
+use tokio::time::{Duration, sleep};
 
 /// Test authentication with test provider.
 #[tokio::test]
@@ -47,27 +47,72 @@ async fn test_test_provider_authentication() {
 fn test_role_permissions() {
     // Viewer permissions
     assert!(check_permission(UserRole::Viewer, PermissionAction::View));
-    assert!(!check_permission(UserRole::Viewer, PermissionAction::SpawnWorkers));
-    assert!(!check_permission(UserRole::Viewer, PermissionAction::KillWorkers));
-    assert!(!check_permission(UserRole::Viewer, PermissionAction::AssignBeads));
-    assert!(!check_permission(UserRole::Viewer, PermissionAction::ModifyConfig));
-    assert!(!check_permission(UserRole::Viewer, PermissionAction::ManageUsers));
+    assert!(!check_permission(
+        UserRole::Viewer,
+        PermissionAction::SpawnWorkers
+    ));
+    assert!(!check_permission(
+        UserRole::Viewer,
+        PermissionAction::KillWorkers
+    ));
+    assert!(!check_permission(
+        UserRole::Viewer,
+        PermissionAction::AssignBeads
+    ));
+    assert!(!check_permission(
+        UserRole::Viewer,
+        PermissionAction::ModifyConfig
+    ));
+    assert!(!check_permission(
+        UserRole::Viewer,
+        PermissionAction::ManageUsers
+    ));
 
     // Operator permissions
     assert!(check_permission(UserRole::Operator, PermissionAction::View));
-    assert!(check_permission(UserRole::Operator, PermissionAction::SpawnWorkers));
-    assert!(check_permission(UserRole::Operator, PermissionAction::KillWorkers));
-    assert!(check_permission(UserRole::Operator, PermissionAction::AssignBeads));
-    assert!(!check_permission(UserRole::Operator, PermissionAction::ModifyConfig));
-    assert!(!check_permission(UserRole::Operator, PermissionAction::ManageUsers));
+    assert!(check_permission(
+        UserRole::Operator,
+        PermissionAction::SpawnWorkers
+    ));
+    assert!(check_permission(
+        UserRole::Operator,
+        PermissionAction::KillWorkers
+    ));
+    assert!(check_permission(
+        UserRole::Operator,
+        PermissionAction::AssignBeads
+    ));
+    assert!(!check_permission(
+        UserRole::Operator,
+        PermissionAction::ModifyConfig
+    ));
+    assert!(!check_permission(
+        UserRole::Operator,
+        PermissionAction::ManageUsers
+    ));
 
     // Admin permissions
     assert!(check_permission(UserRole::Admin, PermissionAction::View));
-    assert!(check_permission(UserRole::Admin, PermissionAction::SpawnWorkers));
-    assert!(check_permission(UserRole::Admin, PermissionAction::KillWorkers));
-    assert!(check_permission(UserRole::Admin, PermissionAction::AssignBeads));
-    assert!(check_permission(UserRole::Admin, PermissionAction::ModifyConfig));
-    assert!(check_permission(UserRole::Admin, PermissionAction::ManageUsers));
+    assert!(check_permission(
+        UserRole::Admin,
+        PermissionAction::SpawnWorkers
+    ));
+    assert!(check_permission(
+        UserRole::Admin,
+        PermissionAction::KillWorkers
+    ));
+    assert!(check_permission(
+        UserRole::Admin,
+        PermissionAction::AssignBeads
+    ));
+    assert!(check_permission(
+        UserRole::Admin,
+        PermissionAction::ModifyConfig
+    ));
+    assert!(check_permission(
+        UserRole::Admin,
+        PermissionAction::ManageUsers
+    ));
 }
 
 /// Test session creation and management.
@@ -76,9 +121,18 @@ async fn test_session_management() {
     let manager = SessionManager::new();
 
     // Create sessions for different users
-    let admin_session = manager.create_session("admin", "Admin User", UserRole::Admin).await.unwrap();
-    let operator_session = manager.create_session("operator", "Operator User", UserRole::Operator).await.unwrap();
-    let viewer_session = manager.create_session("viewer", "Viewer User", UserRole::Viewer).await.unwrap();
+    let admin_session = manager
+        .create_session("admin", "Admin User", UserRole::Admin)
+        .await
+        .unwrap();
+    let operator_session = manager
+        .create_session("operator", "Operator User", UserRole::Operator)
+        .await
+        .unwrap();
+    let viewer_session = manager
+        .create_session("viewer", "Viewer User", UserRole::Viewer)
+        .await
+        .unwrap();
 
     // Verify sessions
     assert_eq!(manager.session_count().await, 3);
@@ -98,8 +152,14 @@ async fn test_session_management() {
     assert_eq!(manager.session_count().await, 2);
 
     // Update activity
-    manager.update_activity(&operator_session.session_id).await.unwrap();
-    let session = manager.get_session(&operator_session.session_id).await.unwrap();
+    manager
+        .update_activity(&operator_session.session_id)
+        .await
+        .unwrap();
+    let session = manager
+        .get_session(&operator_session.session_id)
+        .await
+        .unwrap();
     assert!(!session.is_stale(3600)); // 1 hour timeout
 }
 
@@ -136,7 +196,9 @@ async fn test_bead_assignment() {
 
     // Test reassignment
     tracker.assign("bead-1", "user-a", "admin").await.unwrap();
-    let reassigned = tracker.reassign("bead-1", "user-a", "user-c", "admin").await;
+    let reassigned = tracker
+        .reassign("bead-1", "user-a", "user-c", "admin")
+        .await;
     assert!(reassigned.is_ok());
     assert_eq!(reassigned.unwrap().assigned_to, Some("user-c".to_string()));
 }
@@ -151,11 +213,13 @@ async fn test_concurrent_sessions() {
     for i in 0..10 {
         let manager = manager.clone();
         let handle = tokio::spawn(async move {
-            manager.create_session(
-                &format!("user-{}", i),
-                &format!("User {}", i),
-                UserRole::Operator,
-            ).await
+            manager
+                .create_session(
+                    &format!("user-{}", i),
+                    &format!("User {}", i),
+                    UserRole::Operator,
+                )
+                .await
         });
         handles.push(handle);
     }
@@ -176,25 +240,84 @@ async fn test_session_permission_checks() {
     let manager = SessionManager::new();
 
     // Create sessions with different roles
-    let viewer = manager.create_session("viewer", "Viewer", UserRole::Viewer).await.unwrap();
-    let operator = manager.create_session("operator", "Operator", UserRole::Operator).await.unwrap();
-    let admin = manager.create_session("admin", "Admin", UserRole::Admin).await.unwrap();
+    let viewer = manager
+        .create_session("viewer", "Viewer", UserRole::Viewer)
+        .await
+        .unwrap();
+    let operator = manager
+        .create_session("operator", "Operator", UserRole::Operator)
+        .await
+        .unwrap();
+    let admin = manager
+        .create_session("admin", "Admin", UserRole::Admin)
+        .await
+        .unwrap();
 
     // Check viewer permissions
-    assert!(manager.check_permission(&viewer.session_id, PermissionAction::View).await.unwrap());
-    assert!(!manager.check_permission(&viewer.session_id, PermissionAction::SpawnWorkers).await.unwrap());
-    assert!(!manager.check_permission(&viewer.session_id, PermissionAction::AssignBeads).await.unwrap());
+    assert!(
+        manager
+            .check_permission(&viewer.session_id, PermissionAction::View)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !manager
+            .check_permission(&viewer.session_id, PermissionAction::SpawnWorkers)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !manager
+            .check_permission(&viewer.session_id, PermissionAction::AssignBeads)
+            .await
+            .unwrap()
+    );
 
     // Check operator permissions
-    assert!(manager.check_permission(&operator.session_id, PermissionAction::View).await.unwrap());
-    assert!(manager.check_permission(&operator.session_id, PermissionAction::SpawnWorkers).await.unwrap());
-    assert!(manager.check_permission(&operator.session_id, PermissionAction::AssignBeads).await.unwrap());
-    assert!(!manager.check_permission(&operator.session_id, PermissionAction::ModifyConfig).await.unwrap());
+    assert!(
+        manager
+            .check_permission(&operator.session_id, PermissionAction::View)
+            .await
+            .unwrap()
+    );
+    assert!(
+        manager
+            .check_permission(&operator.session_id, PermissionAction::SpawnWorkers)
+            .await
+            .unwrap()
+    );
+    assert!(
+        manager
+            .check_permission(&operator.session_id, PermissionAction::AssignBeads)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !manager
+            .check_permission(&operator.session_id, PermissionAction::ModifyConfig)
+            .await
+            .unwrap()
+    );
 
     // Check admin permissions
-    assert!(manager.check_permission(&admin.session_id, PermissionAction::View).await.unwrap());
-    assert!(manager.check_permission(&admin.session_id, PermissionAction::ModifyConfig).await.unwrap());
-    assert!(manager.check_permission(&admin.session_id, PermissionAction::ManageUsers).await.unwrap());
+    assert!(
+        manager
+            .check_permission(&admin.session_id, PermissionAction::View)
+            .await
+            .unwrap()
+    );
+    assert!(
+        manager
+            .check_permission(&admin.session_id, PermissionAction::ModifyConfig)
+            .await
+            .unwrap()
+    );
+    assert!(
+        manager
+            .check_permission(&admin.session_id, PermissionAction::ManageUsers)
+            .await
+            .unwrap()
+    );
 }
 
 /// Test stale session cleanup.
@@ -203,7 +326,10 @@ async fn test_stale_session_cleanup() {
     let manager = SessionManager::new();
 
     // Create a session
-    let session = manager.create_session("user", "User", UserRole::Viewer).await.unwrap();
+    let session = manager
+        .create_session("user", "User", UserRole::Viewer)
+        .await
+        .unwrap();
     assert_eq!(manager.session_count().await, 1);
 
     // Sessions should not be stale immediately

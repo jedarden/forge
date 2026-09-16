@@ -3,15 +3,15 @@
 //! Tests secure WebSocket connections, TLS handshake, and certificate handling.
 
 use forge_server::{
-    auth::{TestAuthProvider, AuthProvider},
+    auth::{AuthProvider, TestAuthProvider},
+    client::{ClientConfig, ForgeClient},
     websocket::{ForgeServer, ServerConfig, TlsConfig},
-    client::{ForgeClient, ClientConfig},
 };
-use std::sync::Arc;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::sleep;
 use tempfile::TempDir;
+use tokio::time::sleep;
 
 mod certs;
 use certs::generate_test_cert;
@@ -24,7 +24,9 @@ fn setup_crypto_provider() {
     use rustls::crypto::ring::default_provider;
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
-        default_provider().install_default().expect("Failed to install CryptoProvider");
+        default_provider()
+            .install_default()
+            .expect("Failed to install CryptoProvider");
     });
 }
 
@@ -60,7 +62,7 @@ fn create_tls_config(port: u16, cert_path: PathBuf, key_path: PathBuf) -> Server
         tls: Some(TlsConfig {
             cert_path: cert_path.to_string_lossy().to_string(),
             key_path: key_path.to_string_lossy().to_string(),
-            verify: false,  // For testing, don't verify self-signed certs
+            verify: false, // For testing, don't verify self-signed certs
             min_version: "TLSv1.2".to_string(),
         }),
     }
@@ -97,6 +99,7 @@ async fn test_tls_server_start_and_connect() {
         server_url: "wss://127.0.0.1:9010/ws".to_string(),
         user_id: "testuser".to_string(),
         password: "testpass".to_string(),
+        tls: None, // Use default TLS config for testing
     };
 
     // Verify client config is correct
@@ -127,14 +130,22 @@ async fn test_tls_cert_file_errors() {
         let key_path = temp_dir.path().join("test-key.pem");
 
         // Create only key file, no certificate
-        certs::generate_test_cert(&temp_dir.path().join("nonexistent-cert.pem"), &key_path, "localhost")
-            .expect("Failed to generate test key");
+        certs::generate_test_cert(
+            &temp_dir.path().join("nonexistent-cert.pem"),
+            &key_path,
+            "localhost",
+        )
+        .expect("Failed to generate test key");
 
         let config = ServerConfig {
             bind_address: "127.0.0.1".to_string(),
             port: 9020,
             tls: Some(TlsConfig {
-                cert_path: temp_dir.path().join("missing-cert.pem").to_string_lossy().to_string(),
+                cert_path: temp_dir
+                    .path()
+                    .join("missing-cert.pem")
+                    .to_string_lossy()
+                    .to_string(),
                 key_path: key_path.to_string_lossy().to_string(),
                 verify: false,
                 min_version: "TLSv1.2".to_string(),
@@ -181,15 +192,23 @@ async fn test_tls_cert_file_errors() {
         let cert_path = temp_dir.path().join("test-cert.pem");
 
         // Create only certificate file, no key
-        certs::generate_test_cert(&cert_path, &temp_dir.path().join("nonexistent-key.pem"), "localhost")
-            .expect("Failed to generate test certificate");
+        certs::generate_test_cert(
+            &cert_path,
+            &temp_dir.path().join("nonexistent-key.pem"),
+            "localhost",
+        )
+        .expect("Failed to generate test certificate");
 
         let config = ServerConfig {
             bind_address: "127.0.0.1".to_string(),
             port: 9021,
             tls: Some(TlsConfig {
                 cert_path: cert_path.to_string_lossy().to_string(),
-                key_path: temp_dir.path().join("missing-key.pem").to_string_lossy().to_string(),
+                key_path: temp_dir
+                    .path()
+                    .join("missing-key.pem")
+                    .to_string_lossy()
+                    .to_string(),
                 verify: false,
                 min_version: "TLSv1.2".to_string(),
             }),
@@ -199,9 +218,7 @@ async fn test_tls_cert_file_errors() {
         let server = ForgeServer::new(config, Arc::clone(&auth));
 
         let server_clone = server.clone();
-        let server_handle = tokio::spawn(async move {
-            server_clone.run().await
-        });
+        let server_handle = tokio::spawn(async move { server_clone.run().await });
 
         // Wait for startup attempt
         sleep(Duration::from_millis(500)).await;
@@ -251,9 +268,7 @@ async fn test_tls_cert_file_errors() {
         let server = ForgeServer::new(config, Arc::clone(&auth));
 
         let server_clone = server.clone();
-        let server_handle = tokio::spawn(async move {
-            server_clone.run().await
-        });
+        let server_handle = tokio::spawn(async move { server_clone.run().await });
 
         // Wait for startup attempt
         sleep(Duration::from_millis(500)).await;
@@ -273,8 +288,12 @@ async fn test_tls_cert_file_errors() {
                 // Server failed as expected - verify error message is clear
                 let error_msg = e.to_string();
                 assert!(
-                    error_msg.contains("certificate") || error_msg.contains("TLS") || error_msg.contains("PEM") || error_msg.contains("invalid"),
-                    "Error message should mention certificate/TLS/PEM issue, got: {}", error_msg
+                    error_msg.contains("certificate")
+                        || error_msg.contains("TLS")
+                        || error_msg.contains("PEM")
+                        || error_msg.contains("invalid"),
+                    "Error message should mention certificate/TLS/PEM issue, got: {}",
+                    error_msg
                 );
             }
             Err(_) => {
@@ -304,9 +323,7 @@ async fn test_tls_cert_file_errors() {
         let server = ForgeServer::new(config, Arc::clone(&auth));
 
         let server_clone = server.clone();
-        let _server_handle = tokio::spawn(async move {
-            server_clone.run().await
-        });
+        let _server_handle = tokio::spawn(async move { server_clone.run().await });
 
         // Wait for startup attempt
         sleep(Duration::from_millis(500)).await;
@@ -352,15 +369,14 @@ async fn test_tls_client_refuses_invalid_cert() {
         server_url: "wss://127.0.0.1:9030/ws".to_string(),
         user_id: "testuser".to_string(),
         password: "testpass".to_string(),
+        tls: None, // Use default TLS config for testing
     };
 
     let client = ForgeClient::new(client_config.clone());
     let client_clone = client.clone();
 
     // Attempt connection - should fail due to self-signed cert
-    let _connection_result = tokio::spawn(async move {
-        client_clone.connect_and_run().await
-    });
+    let _connection_result = tokio::spawn(async move { client_clone.connect_and_run().await });
 
     // Wait for connection attempt
     sleep(Duration::from_millis(2000)).await;
@@ -391,7 +407,10 @@ async fn test_wss_url_parsing() {
         assert!(url.starts_with("wss://"), "Should recognize WSS scheme");
         assert!(url.contains("://"), "Should have scheme separator");
         assert!(url.contains(":8443"), "Should contain explicit port");
-        assert!(url.contains("/ws"), "Should contain WebSocket endpoint path");
+        assert!(
+            url.contains("/ws"),
+            "Should contain WebSocket endpoint path"
+        );
     }
 
     // Test default WSS port (443) vs explicit port
@@ -413,14 +432,18 @@ async fn test_wss_url_parsing() {
         let (_temp_dir, cert_path, _key_path) = setup_test_certs().await;
 
         // Verify certificate exists and is valid PEM format
-        let cert_contents = std::fs::read_to_string(&cert_path)
-            .expect("Failed to read certificate");
+        let cert_contents =
+            std::fs::read_to_string(&cert_path).expect("Failed to read certificate");
 
         // Certificate should have valid PEM structure
-        assert!(cert_contents.contains("BEGIN CERTIFICATE"),
-                "Certificate should have PEM header");
-        assert!(cert_contents.contains("END CERTIFICATE"),
-                "Certificate should have PEM footer");
+        assert!(
+            cert_contents.contains("BEGIN CERTIFICATE"),
+            "Certificate should have PEM header"
+        );
+        assert!(
+            cert_contents.contains("END CERTIFICATE"),
+            "Certificate should have PEM footer"
+        );
 
         // Certificate should be non-empty and reasonable size
         assert!(cert_contents.len() > 100, "Certificate should have content");
@@ -437,7 +460,12 @@ async fn test_wss_url_parsing() {
         assert!(url.starts_with("wss://"));
 
         // Host:port extraction (simplified)
-        let host_port = url.strip_prefix("wss://").unwrap().split('/').next().unwrap();
+        let host_port = url
+            .strip_prefix("wss://")
+            .unwrap()
+            .split('/')
+            .next()
+            .unwrap();
         assert_eq!(host_port, "127.0.0.1:9001");
 
         // Path extraction - fix the logic to properly extract the path
@@ -453,6 +481,7 @@ async fn test_wss_url_parsing() {
             server_url: "wss://secure.forge.example:8443/ws".to_string(),
             user_id: "user".to_string(),
             password: "pass".to_string(),
+            tls: None, // Use default TLS config for testing
         };
 
         assert_eq!(client_config.user_id, "user");
@@ -474,26 +503,43 @@ async fn test_tls_certificate_loading() {
     assert!(key_path.exists(), "Private key file should exist");
 
     // Verify certificate file contents
-    let cert_contents = std::fs::read_to_string(&cert_path)
-        .expect("Failed to read certificate file");
-    assert!(cert_contents.contains("BEGIN CERTIFICATE"),
-            "Certificate should have PEM header");
-    assert!(cert_contents.contains("END CERTIFICATE"),
-            "Certificate should have PEM footer");
+    let cert_contents =
+        std::fs::read_to_string(&cert_path).expect("Failed to read certificate file");
+    assert!(
+        cert_contents.contains("BEGIN CERTIFICATE"),
+        "Certificate should have PEM header"
+    );
+    assert!(
+        cert_contents.contains("END CERTIFICATE"),
+        "Certificate should have PEM footer"
+    );
 
-    let key_contents = std::fs::read_to_string(&key_path)
-        .expect("Failed to read private key file");
-    assert!(key_contents.contains("BEGIN PRIVATE KEY") || key_contents.contains("BEGIN RSA PRIVATE KEY"),
-            "Private key should have PEM header");
-    assert!(key_contents.contains("END PRIVATE KEY") || key_contents.contains("END RSA PRIVATE KEY"),
-            "Private key should have PEM footer");
+    let key_contents = std::fs::read_to_string(&key_path).expect("Failed to read private key file");
+    assert!(
+        key_contents.contains("BEGIN PRIVATE KEY")
+            || key_contents.contains("BEGIN RSA PRIVATE KEY"),
+        "Private key should have PEM header"
+    );
+    assert!(
+        key_contents.contains("END PRIVATE KEY") || key_contents.contains("END RSA PRIVATE KEY"),
+        "Private key should have PEM footer"
+    );
 
     // Verify certificate is for the correct domain
     // Note: The domain is encoded in the certificate, not necessarily visible in PEM text
     // The certificate generation function ensures it's for localhost/127.0.0.1
-    assert!(cert_contents.len() > 100, "Certificate should have substantial content");
-    assert!(cert_contents.contains("BEGIN CERTIFICATE"), "Certificate should have PEM header");
-    assert!(cert_contents.contains("END CERTIFICATE"), "Certificate should have PEM footer");
+    assert!(
+        cert_contents.len() > 100,
+        "Certificate should have substantial content"
+    );
+    assert!(
+        cert_contents.contains("BEGIN CERTIFICATE"),
+        "Certificate should have PEM header"
+    );
+    assert!(
+        cert_contents.contains("END CERTIFICATE"),
+        "Certificate should have PEM footer"
+    );
 }
 
 /// Test that non-TLS configuration still works (regression test).
@@ -502,7 +548,7 @@ async fn test_websocket_non_tls_still_works() {
     let config = ServerConfig {
         bind_address: "127.0.0.1".to_string(),
         port: 9040,
-        tls: None,  // No TLS
+        tls: None, // No TLS
     };
 
     let auth: Arc<dyn AuthProvider> = Arc::new(TestAuthProvider::new());
@@ -527,6 +573,7 @@ async fn test_websocket_non_tls_still_works() {
         server_url: "ws://127.0.0.1:9040/ws".to_string(),
         user_id: "testuser".to_string(),
         password: "testpass".to_string(),
+        tls: None, // No TLS needed for plaintext connection
     };
 
     let client = ForgeClient::new(client_config);
@@ -621,6 +668,7 @@ async fn test_websocket_wss_client_connection() {
         server_url: "wss://127.0.0.1:9060/ws".to_string(),
         user_id: "testuser".to_string(),
         password: "testpass".to_string(),
+        tls: None, // Use default TLS config for testing
     };
 
     // Verify client config before using it

@@ -2,9 +2,9 @@
 //!
 //! Defines the message types sent over WebSocket between the server and clients.
 
-use forge_core::{UserRole, UserSession, WorkerStatus, BeadStatus, Priority};
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use forge_core::{BeadStatus, Priority, UserRole, UserSession, WorkerStatus};
+use serde::{Deserialize, Serialize};
 
 /// Message sent from server to client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,17 +18,32 @@ pub enum ServerMessage {
     /// State update (workers, beads, etc.)
     StateUpdate(StateUpdate),
     /// User joined the session
-    UserJoined { user: String, display_name: String, role: UserRole },
+    UserJoined {
+        user: String,
+        display_name: String,
+        role: UserRole,
+    },
     /// User left the session
     UserLeft { user: String },
     /// Bead assigned notification
-    BeadAssigned { bead_id: String, assigned_to: String, assigned_by: String },
+    BeadAssigned {
+        bead_id: String,
+        assigned_to: String,
+        assigned_by: String,
+    },
     /// Worker status changed
-    WorkerChanged { worker_id: String, status: WorkerStatus },
+    WorkerChanged {
+        worker_id: String,
+        status: WorkerStatus,
+    },
     /// Bead status changed
     BeadChanged { bead_id: String, status: BeadStatus },
     /// Chat message from another user
-    ChatMessage { from: String, message: String, timestamp: DateTime<Utc> },
+    ChatMessage {
+        from: String,
+        message: String,
+        timestamp: DateTime<Utc>,
+    },
     /// Error occurred
     Error { message: String },
     /// Ping to keep connection alive
@@ -40,7 +55,10 @@ pub enum ServerMessage {
 #[serde(tag = "type", content = "data")]
 pub enum ClientMessage {
     /// Authenticate with credentials
-    Authenticate { user_id: String, credentials: String },
+    Authenticate {
+        user_id: String,
+        credentials: String,
+    },
     /// Request full state sync
     SyncState,
     /// Assign bead to user

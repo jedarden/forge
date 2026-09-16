@@ -4,8 +4,8 @@
 //! Production deployments should use OAuth2 authentication via OAuthAuthProvider.
 
 use crate::ServerError;
-use forge_core::UserRole;
 use async_trait::async_trait;
+use forge_core::UserRole;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -22,7 +22,11 @@ pub struct AuthResult {
 #[async_trait]
 pub trait AuthProvider: Send + Sync {
     /// Authenticate a user with credentials.
-    async fn authenticate(&self, user_id: &str, credentials: &str) -> Result<AuthResult, ServerError>;
+    async fn authenticate(
+        &self,
+        user_id: &str,
+        credentials: &str,
+    ) -> Result<AuthResult, ServerError>;
 }
 
 /// Test authentication provider for integration testing.
@@ -47,23 +51,32 @@ impl TestAuthProvider {
         let mut users = HashMap::new();
 
         // Default test users that accept bearer tokens
-        users.insert("test_admin_token".to_string(), TestUser {
-            user_id: "admin".to_string(),
-            display_name: "Test Admin".to_string(),
-            role: UserRole::Admin,
-        });
+        users.insert(
+            "test_admin_token".to_string(),
+            TestUser {
+                user_id: "admin".to_string(),
+                display_name: "Test Admin".to_string(),
+                role: UserRole::Admin,
+            },
+        );
 
-        users.insert("test_operator_token".to_string(), TestUser {
-            user_id: "operator".to_string(),
-            display_name: "Test Operator".to_string(),
-            role: UserRole::Operator,
-        });
+        users.insert(
+            "test_operator_token".to_string(),
+            TestUser {
+                user_id: "operator".to_string(),
+                display_name: "Test Operator".to_string(),
+                role: UserRole::Operator,
+            },
+        );
 
-        users.insert("test_viewer_token".to_string(), TestUser {
-            user_id: "viewer".to_string(),
-            display_name: "Test Viewer".to_string(),
-            role: UserRole::Viewer,
-        });
+        users.insert(
+            "test_viewer_token".to_string(),
+            TestUser {
+                user_id: "viewer".to_string(),
+                display_name: "Test Viewer".to_string(),
+                role: UserRole::Viewer,
+            },
+        );
 
         Self {
             users: Arc::new(RwLock::new(users)),
@@ -79,11 +92,16 @@ impl Default for TestAuthProvider {
 
 #[async_trait]
 impl AuthProvider for TestAuthProvider {
-    async fn authenticate(&self, _user_id: &str, credentials: &str) -> Result<AuthResult, ServerError> {
+    async fn authenticate(
+        &self,
+        _user_id: &str,
+        credentials: &str,
+    ) -> Result<AuthResult, ServerError> {
         let users = self.users.read().await;
 
         // Accept bearer tokens for testing
-        let test_user = users.get(credentials)
+        let test_user = users
+            .get(credentials)
             .ok_or_else(|| ServerError::AuthenticationFailed("invalid test token".to_string()))?;
 
         Ok(AuthResult {
@@ -124,16 +142,37 @@ mod tests {
     #[test]
     fn test_permission_checks() {
         assert!(check_permission(UserRole::Viewer, PermissionAction::View));
-        assert!(!check_permission(UserRole::Viewer, PermissionAction::SpawnWorkers));
-        assert!(!check_permission(UserRole::Viewer, PermissionAction::ModifyConfig));
+        assert!(!check_permission(
+            UserRole::Viewer,
+            PermissionAction::SpawnWorkers
+        ));
+        assert!(!check_permission(
+            UserRole::Viewer,
+            PermissionAction::ModifyConfig
+        ));
 
         assert!(check_permission(UserRole::Operator, PermissionAction::View));
-        assert!(check_permission(UserRole::Operator, PermissionAction::SpawnWorkers));
-        assert!(!check_permission(UserRole::Operator, PermissionAction::ModifyConfig));
+        assert!(check_permission(
+            UserRole::Operator,
+            PermissionAction::SpawnWorkers
+        ));
+        assert!(!check_permission(
+            UserRole::Operator,
+            PermissionAction::ModifyConfig
+        ));
 
         assert!(check_permission(UserRole::Admin, PermissionAction::View));
-        assert!(check_permission(UserRole::Admin, PermissionAction::SpawnWorkers));
-        assert!(check_permission(UserRole::Admin, PermissionAction::ModifyConfig));
-        assert!(check_permission(UserRole::Admin, PermissionAction::ManageUsers));
+        assert!(check_permission(
+            UserRole::Admin,
+            PermissionAction::SpawnWorkers
+        ));
+        assert!(check_permission(
+            UserRole::Admin,
+            PermissionAction::ModifyConfig
+        ));
+        assert!(check_permission(
+            UserRole::Admin,
+            PermissionAction::ManageUsers
+        ));
     }
 }
