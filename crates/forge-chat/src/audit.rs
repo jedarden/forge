@@ -1,8 +1,8 @@
-//! Audit logging for chat commands.
+//! Audit logging for chat commands and the tool calls they trigger.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
@@ -102,6 +102,107 @@ impl AuditEntry {
     }
 }
 
+/// How confirmation was resolved for a tool invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfirmationOutcome {
+    /// The tool does not require confirmation; it executed directly.
+    NotRequired,
+
+    /// The tool requires confirmation; it did not execute and awaits approval.
+    Required,
+
+    /// The tool executed after the user approved the confirmation.
+    Approved,
+
+    /// The user declined the confirmation; the tool did not execute.
+    Declined,
+}
+
+/// Execution result recorded for a tool invocation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolAuditResult {
+    /// Whether the tool execution succeeded.
+    pub success: bool,
+
+    /// Human-readable result or error message.
+    pub message: String,
+}
+
+/// Audit record for a single tool call triggered by a chat command.
+///
+/// Written as one JSONL line to the configured audit log, alongside (and
+/// distinguishable from) the per-command [`AuditEntry`] records via the
+/// `record_type` discriminator.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolAuditEntry {
+    /// Record type discriminator, always `"tool_call"`.
+    #[serde(default = "default_tool_record_type")]
+    pub record_type: String,
+
+    /// When the tool invocation happened.
+    pub timestamp: DateTime<Utc>,
+
+    /// The user command that triggered the invocation.
+    pub command: String,
+
+    /// Provider that produced the tool call (e.g. "claude-api", "mock").
+    pub provider: String,
+
+    /// Name of the tool that was invoked.
+    pub tool: String,
+
+    /// Arguments the tool was invoked with.
+    pub arguments: serde_json::Value,
+
+    /// Execution result; absent when the tool never ran (e.g. pending or
+    /// declined confirmation).
+    pub result: Option<ToolAuditResult>,
+
+    /// How confirmation was resolved for this invocation.
+    pub confirmation: ConfirmationOutcome,
+}
+
+fn default_tool_record_type() -> String {
+    "tool_call".to_string()
+}
+
+impl ToolAuditEntry {
+    /// Create a new tool-call audit record.
+    pub fn new(
+        command: impl Into<String>,
+        provider: impl Into<String>,
+        tool: impl Into<String>,
+        arguments: serde_json::Value,
+    ) -> Self {
+        Self {
+            record_type: default_tool_record_type(),
+            timestamp: Utc::now(),
+            command: command.into(),
+            provider: provider.into(),
+            tool: tool.into(),
+            arguments,
+            result: None,
+            confirmation: ConfirmationOutcome::NotRequired,
+        }
+    }
+
+    /// Record an execution result.
+    pub fn with_result(mut self, success: bool, message: impl Into<String>) -> Self {
+        self.result = Some(ToolAuditResult {
+            success,
+            message: message.into(),
+        });
+        self
+    }
+
+    /// Set the confirmation outcome.
+    pub fn with_confirmation(mut self, confirmation: ConfirmationOutcome) -> Self {
+        self.confirmation = confirmation;
+        self
+    }
+}
+
 /// Audit logger for chat commands.
 pub struct AuditLogger {
     config: AuditConfig,
@@ -180,11 +281,48 @@ impl AuditLogger {
     }
 
     async fn write_entry(&self, entry: &AuditEntry) -> Result<()> {
+        self.write_line(serde_json::to_string(entry)?).await
+    }
+
+    /// Log a tool-call audit record.
+    ///
+    /// Honors the same [`AuditConfig`] switches as [`AuditLogger::log`]:
+    /// disabled loggers drop the record, `ErrorsOnly` keeps only failed
+    /// executions, and `CommandsOnly` strips the execution result.
+    pub async fn log_tool_call(&self, entry: &ToolAuditEntry) -> Result<()> {
+        if !self.config.enabled {
+            return Ok(());
+        }
+
+        // Check log level
+        match self.config.log_level {
+            AuditLogLevel::ErrorsOnly => {
+                // Only failed executions are interesting in errors-only mode
+                if !entry.result.as_ref().is_some_and(|r| !r.success) {
+                    return Ok(());
+                }
+            }
+            AuditLogLevel::CommandsOnly => {
+                // Log the invocation without its result payload
+                let mut stripped = entry.clone();
+                stripped.result = None;
+                return self.write_tool_entry(&stripped).await;
+            }
+            AuditLogLevel::All => {}
+        }
+
+        self.write_tool_entry(entry).await
+    }
+
+    async fn write_tool_entry(&self, entry: &ToolAuditEntry) -> Result<()> {
+        self.write_line(serde_json::to_string(entry)?).await
+    }
+
+    async fn write_line(&self, json: String) -> Result<()> {
         let Some(file) = &self.file else {
             return Ok(());
         };
 
-        let json = serde_json::to_string(entry)?;
         let line = format!("{}\n", json);
 
         let mut file = file.lock().await;
@@ -196,6 +334,16 @@ impl AuditLogger {
             .map_err(|e| ChatError::AuditError(format!("Failed to flush audit log: {}", e)))?;
 
         Ok(())
+    }
+
+    /// Read the tool-call records from the configured audit log.
+    ///
+    /// Returns an empty vector when logging is disabled.
+    pub async fn read_tool_entries(&self) -> Result<Vec<ToolAuditEntry>> {
+        match self.log_file() {
+            Some(path) => read_tool_entries_from(path).await,
+            None => Ok(vec![]),
+        }
     }
 
     /// Get the log file path.
@@ -211,6 +359,26 @@ impl AuditLogger {
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
     }
+}
+
+/// Read tool-call records from a JSONL audit log file.
+///
+/// Blank lines, malformed JSON, and records of the other entry kind (e.g.
+/// per-command [`AuditEntry`] lines sharing the same file) are skipped rather
+/// than returned as errors, so a truncated or partially corrupted log never
+/// breaks reads of the records that do parse.
+pub async fn read_tool_entries_from(path: &Path) -> Result<Vec<ToolAuditEntry>> {
+    let contents = match tokio::fs::read_to_string(path).await {
+        Ok(contents) => contents,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => return Err(e.into()),
+    };
+
+    Ok(contents
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect())
 }
 
 #[cfg(test)]
@@ -327,5 +495,173 @@ mod tests {
         let contents = tokio::fs::read_to_string(&log_path).await.unwrap();
         assert!(!contents.contains("success command"));
         assert!(contents.contains("error command"));
+    }
+
+    fn tool_entry(command: &str, tool: &str) -> ToolAuditEntry {
+        ToolAuditEntry::new(
+            command,
+            "mock",
+            tool,
+            serde_json::json!({"session_name": "glm-delta"}),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_tool_audit_entries_appended() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_path = temp_dir.path().join("chat-audit.jsonl");
+
+        let config = AuditConfig {
+            enabled: true,
+            log_file: log_path.clone(),
+            log_level: AuditLogLevel::All,
+        };
+        let logger = AuditLogger::new(config).await.unwrap();
+
+        // Two invocations append two lines, in order, without clobbering
+        logger
+            .log_tool_call(
+                &tool_entry("spawn a worker", "get_worker_status")
+                    .with_result(true, "Found 3 workers (2 healthy, 1 idle)"),
+            )
+            .await
+            .unwrap();
+        logger
+            .log_tool_call(
+                &tool_entry("kill glm-delta", "kill_worker")
+                    .with_confirmation(ConfirmationOutcome::Required),
+            )
+            .await
+            .unwrap();
+
+        let entries = read_tool_entries_from(&log_path).await.unwrap();
+        assert_eq!(entries.len(), 2);
+
+        assert_eq!(entries[0].record_type, "tool_call");
+        assert_eq!(entries[0].command, "spawn a worker");
+        assert_eq!(entries[0].provider, "mock");
+        assert_eq!(entries[0].tool, "get_worker_status");
+        assert_eq!(
+            entries[0].arguments,
+            serde_json::json!({"session_name": "glm-delta"})
+        );
+        assert_eq!(entries[0].confirmation, ConfirmationOutcome::NotRequired);
+        let result = entries[0].result.as_ref().unwrap();
+        assert!(result.success);
+        assert_eq!(result.message, "Found 3 workers (2 healthy, 1 idle)");
+
+        // A pending confirmation records that the tool never ran
+        assert_eq!(entries[1].tool, "kill_worker");
+        assert_eq!(entries[1].confirmation, ConfirmationOutcome::Required);
+        assert!(entries[1].result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_read_skips_malformed_lines() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_path = temp_dir.path().join("chat-audit.jsonl");
+
+        // A realistic mix: valid records interleaved with truncated writes,
+        // garbage, blank lines, and a valid command-level entry
+        let valid = serde_json::to_string(&tool_entry("first command", "get_task_queue")).unwrap();
+        tokio::fs::write(
+            &log_path,
+            format!(
+                "{}\nnot json at all\n{{\"truncated\":\n\n{{\"record_type\":\"command\"}}\n{}\n",
+                valid,
+                serde_json::to_string(
+                    &tool_entry("second command", "kill_worker")
+                        .with_confirmation(ConfirmationOutcome::Declined)
+                )
+                .unwrap()
+            ),
+        )
+        .await
+        .unwrap();
+
+        let entries = read_tool_entries_from(&log_path).await.unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].command, "first command");
+        assert_eq!(entries[0].tool, "get_task_queue");
+        assert_eq!(entries[1].command, "second command");
+        assert_eq!(entries[1].confirmation, ConfirmationOutcome::Declined);
+    }
+
+    #[tokio::test]
+    async fn test_read_missing_file_is_empty() {
+        let temp_dir = TempDir::new().unwrap();
+        let entries = read_tool_entries_from(&temp_dir.path().join("absent.jsonl"))
+            .await
+            .unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_tool_audit_disabled_writes_nothing() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_path = temp_dir.path().join("chat-audit.jsonl");
+
+        // AuditConfig::default honors `enabled`; a disabled logger must not
+        // create or write the file
+        let config = AuditConfig {
+            enabled: false,
+            log_file: log_path.clone(),
+            log_level: AuditLogLevel::All,
+        };
+        let logger = AuditLogger::new(config).await.unwrap();
+        assert!(!logger.is_enabled());
+        assert!(logger.log_file().is_none());
+
+        logger
+            .log_tool_call(&tool_entry("test", "get_worker_status").with_result(true, "ok"))
+            .await
+            .unwrap();
+
+        assert!(!log_path.exists());
+        assert!(logger.read_tool_entries().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_tool_audit_log_levels() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_path = temp_dir.path().join("chat-audit.jsonl");
+
+        // ErrorsOnly keeps only failed executions
+        let config = AuditConfig {
+            enabled: true,
+            log_file: log_path.clone(),
+            log_level: AuditLogLevel::ErrorsOnly,
+        };
+        let logger = AuditLogger::new(config).await.unwrap();
+        logger
+            .log_tool_call(&tool_entry("ok", "get_worker_status").with_result(true, "fine"))
+            .await
+            .unwrap();
+        logger
+            .log_tool_call(&tool_entry("bad", "spawn_worker").with_result(false, "boom"))
+            .await
+            .unwrap();
+
+        let entries = read_tool_entries_from(&log_path).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].command, "bad");
+
+        // CommandsOnly strips the result payload but keeps the invocation
+        tokio::fs::remove_file(&log_path).await.unwrap();
+        let config = AuditConfig {
+            enabled: true,
+            log_file: log_path.clone(),
+            log_level: AuditLogLevel::CommandsOnly,
+        };
+        let logger = AuditLogger::new(config).await.unwrap();
+        logger
+            .log_tool_call(&tool_entry("cmd", "get_worker_status").with_result(true, "fine"))
+            .await
+            .unwrap();
+
+        let entries = read_tool_entries_from(&log_path).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].command, "cmd");
+        assert!(entries[0].result.is_none());
     }
 }

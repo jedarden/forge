@@ -433,6 +433,51 @@ pub struct AuditEntry {
 
 **Log file location:** `~/.forge/chat-audit.jsonl`
 
+### Tool-Call Audit Records
+
+Every tool invocation triggered by a chat command is also logged as its own
+JSONL record in the same file, distinguished by a `record_type` of
+`"tool_call"`:
+
+```rust
+pub struct ToolAuditEntry {
+    pub record_type: String,                  // always "tool_call"
+    pub timestamp: DateTime<Utc>,
+    pub command: String,                      // user command that triggered it
+    pub provider: String,                     // e.g. "claude-api", "mock"
+    pub tool: String,                         // invoked tool name
+    pub arguments: serde_json::Value,         // arguments the tool ran with
+    pub result: Option<ToolAuditResult>,      // absent when the tool never ran
+    pub confirmation: ConfirmationOutcome,
+}
+
+pub struct ToolAuditResult {
+    pub success: bool,
+    pub message: String,
+}
+
+pub enum ConfirmationOutcome {
+    NotRequired,  // executed directly
+    Required,     // awaiting user approval; not executed
+    Approved,     // executed after approval
+    Declined,     // user declined; not executed
+}
+```
+
+The backend writes one record per tool call: executed tools carry a result,
+tools stopped for confirmation carry `confirmation: "required"` with no
+result, and a declined confirmation is recorded as `confirmation:
+"declined"`.
+
+`AuditConfig` governs these records the same way it governs command entries:
+`enabled: false` drops them, `log_level: "errors_only"` keeps only failed
+executions, and `log_level: "commands_only"` strips the result payload.
+
+Read them back with `forge_chat::read_tool_entries_from(path)` (or
+`AuditLogger::read_tool_entries()` for the configured file). The reader skips
+blank lines, malformed JSON, and command-level entries sharing the file, so a
+truncated or partially corrupted log never breaks reads of the valid records.
+
 ## Error Types
 
 ```rust

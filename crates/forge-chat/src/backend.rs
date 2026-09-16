@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{error, info};
 
-use crate::audit::{AuditEntry, AuditLogger};
+use crate::audit::{AuditEntry, AuditLogger, ConfirmationOutcome, ToolAuditEntry, ToolAuditResult};
 use crate::config::ChatConfig;
 use crate::context::{ContextProvider, ContextSource, DashboardContext, RealContextSource};
 use crate::error::{ChatError, Result};
@@ -329,9 +329,30 @@ impl ChatBackend {
         for call in &response.tool_calls {
             match self.tool_registry.execute(call, &context).await {
                 Ok(result) => {
+                    self.audit_tool_call(
+                        input,
+                        &provider_name,
+                        call,
+                        Some(ToolAuditResult {
+                            success: result.success,
+                            message: result.message.clone(),
+                        }),
+                        ConfirmationOutcome::NotRequired,
+                    )
+                    .await;
                     tool_results.push(result);
                 }
                 Err(ChatError::ConfirmationRequired(confirmation_json)) => {
+                    // The tool did not execute; record that it awaits approval
+                    self.audit_tool_call(
+                        input,
+                        &provider_name,
+                        call,
+                        None,
+                        ConfirmationOutcome::Required,
+                    )
+                    .await;
+
                     // Parse confirmation and return
                     if let Ok(confirmation) =
                         serde_json::from_str::<ActionConfirmation>(&confirmation_json)
@@ -341,6 +362,17 @@ impl ChatBackend {
                     }
                 }
                 Err(e) => {
+                    self.audit_tool_call(
+                        input,
+                        &provider_name,
+                        call,
+                        Some(ToolAuditResult {
+                            success: false,
+                            message: e.to_string(),
+                        }),
+                        ConfirmationOutcome::NotRequired,
+                    )
+                    .await;
                     tool_results.push(ToolResult::error(e.to_string()));
                 }
             }
@@ -441,6 +473,19 @@ impl ChatBackend {
     /// Confirm an action that requires confirmation.
     pub async fn confirm_action(&self, action: &str, confirmed: bool) -> Result<ChatResponse> {
         if !confirmed {
+            // Record the decline so the audit trail shows why the action
+            // never ran
+            let entry = ToolAuditEntry::new(
+                action,
+                self.provider.name(),
+                action,
+                serde_json::Value::Null,
+            )
+            .with_confirmation(ConfirmationOutcome::Declined);
+            if let Err(log_err) = self.audit_logger.log_tool_call(&entry).await {
+                error!("Failed to log tool call audit entry: {}", log_err);
+            }
+
             return Err(ChatError::ActionCancelled);
         }
 
@@ -457,6 +502,27 @@ impl ChatBackend {
     /// Get current rate limit usage.
     pub async fn rate_limit_usage(&self) -> crate::rate_limit::RateLimitUsage {
         self.rate_limiter.usage().await
+    }
+
+    /// Write one tool-call audit record.
+    ///
+    /// Audit failures are logged, never propagated — a broken audit sink
+    /// must not take down command processing.
+    async fn audit_tool_call(
+        &self,
+        command: &str,
+        provider: &str,
+        call: &ToolCall,
+        result: Option<ToolAuditResult>,
+        confirmation: ConfirmationOutcome,
+    ) {
+        let mut entry = ToolAuditEntry::new(command, provider, &call.name, call.parameters.clone());
+        entry.result = result;
+        entry.confirmation = confirmation;
+
+        if let Err(log_err) = self.audit_logger.log_tool_call(&entry).await {
+            error!("Failed to log tool call audit entry: {}", log_err);
+        }
     }
 
     async fn build_prompt(&self, input: &str, context: &DashboardContext) -> String {
@@ -561,5 +627,132 @@ mod tests {
 
         // Clear history should not panic
         backend.clear_history().await;
+    }
+
+    #[tokio::test]
+    async fn test_tool_call_audited_to_file() {
+        use crate::audit::read_tool_entries_from;
+        use crate::provider::MockProvider;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let log_path = temp_dir.path().join("chat-audit.jsonl");
+
+        let config = ChatConfig::default()
+            .with_audit_log(&log_path)
+            .with_provider(crate::config::ProviderConfig::Mock(
+                crate::config::MockConfig::default(),
+            ));
+        let mock = MockProvider::new();
+        mock.clear_responses().await;
+        mock.add_tool_call_response(
+            "get_worker_status".to_string(),
+            serde_json::json!({"status_filter": "all"}),
+        )
+        .await;
+
+        let backend = ChatBackend::with_provider(config, Box::new(mock))
+            .await
+            .unwrap();
+        let response = backend
+            .process_command("how many workers are running?")
+            .await
+            .unwrap();
+        assert!(response.success);
+        assert_eq!(response.tool_calls.len(), 1);
+
+        let entries = read_tool_entries_from(&log_path).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.record_type, "tool_call");
+        assert_eq!(entry.command, "how many workers are running?");
+        assert_eq!(entry.provider, "mock");
+        assert_eq!(entry.tool, "get_worker_status");
+        assert_eq!(entry.confirmation, ConfirmationOutcome::NotRequired);
+        let result = entry.result.as_ref().unwrap();
+        assert!(result.success);
+        assert!(result.message.contains("workers"));
+    }
+
+    #[tokio::test]
+    async fn test_unknown_tool_failure_audited() {
+        use crate::audit::read_tool_entries_from;
+        use crate::provider::MockProvider;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let log_path = temp_dir.path().join("chat-audit.jsonl");
+
+        let config = ChatConfig::default()
+            .with_audit_log(&log_path)
+            .with_provider(crate::config::ProviderConfig::Mock(
+                crate::config::MockConfig::default(),
+            ));
+        let mock = MockProvider::new();
+        mock.clear_responses().await;
+        mock.add_tool_call_response(
+            "no_such_tool".to_string(),
+            serde_json::json!({"irrelevant": true}),
+        )
+        .await;
+
+        let backend = ChatBackend::with_provider(config, Box::new(mock))
+            .await
+            .unwrap();
+        let response = backend.process_command("do the impossible").await.unwrap();
+
+        // The command still succeeds overall; the tool failure is what's audited
+        assert!(response.success);
+        let entries = read_tool_entries_from(&log_path).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].tool, "no_such_tool");
+        let result = entries[0].result.as_ref().unwrap();
+        assert!(!result.success);
+        assert!(result.message.contains("no_such_tool"));
+    }
+
+    #[tokio::test]
+    async fn test_confirmation_required_audited() {
+        use crate::audit::read_tool_entries_from;
+        use crate::context::MockContextSource;
+        use crate::provider::MockProvider;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let log_path = temp_dir.path().join("chat-audit.jsonl");
+
+        let config = ChatConfig::default().with_audit_log(&log_path);
+
+        // Built directly (rather than via a constructor) so the test can
+        // supply both the mock provider and a context that has the worker
+        // kill_worker needs in order to demand confirmation
+        let mock = MockProvider::new();
+        mock.clear_responses().await;
+        mock.add_tool_call_response(
+            "kill_worker".to_string(),
+            serde_json::json!({"session_name": "glm-alpha"}),
+        )
+        .await;
+        let backend = ChatBackend {
+            config: config.clone(),
+            provider: Box::new(mock),
+            rate_limiter: RateLimiter::new(config.rate_limit.clone()),
+            audit_logger: AuditLogger::new(config.audit.clone()).await.unwrap(),
+            tool_registry: ToolRegistry::with_builtin_tools(),
+            context_provider: Arc::new(ContextProvider::new(MockContextSource::with_sample_data())),
+            conversation_history: RwLock::new(Vec::new()),
+            worker_spawner: None,
+        };
+
+        let response = backend.process_command("kill glm-alpha").await.unwrap();
+        assert!(response.confirmation_required.is_some());
+
+        let entries = read_tool_entries_from(&log_path).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].command, "kill glm-alpha");
+        assert_eq!(entries[0].tool, "kill_worker");
+        assert_eq!(entries[0].confirmation, ConfirmationOutcome::Required);
+        // The tool never ran, so there is no result to record
+        assert!(entries[0].result.is_none());
     }
 }

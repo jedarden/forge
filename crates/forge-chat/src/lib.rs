@@ -6,7 +6,7 @@
 //! - [`ChatBackend`] - Main chat backend with Claude API integration
 //! - [`ChatTool`] - Trait for defining chat tools (read-only and action tools)
 //! - [`RateLimiter`] - Rate limiting (10 commands/min by default)
-//! - [`AuditLogger`] - JSONL audit logging for all commands
+//! - [`AuditLogger`] - JSONL audit logging for all commands and tool calls
 //! - [`ContextProvider`] - Dashboard context injection
 //!
 //! ## Tool Categories
@@ -57,10 +57,13 @@ pub mod spawner;
 pub mod tools;
 
 // Re-export main types
-pub use audit::{AuditEntry, AuditLogger};
+pub use audit::{
+    AuditEntry, AuditLogger, ConfirmationOutcome, ToolAuditEntry, ToolAuditResult,
+    read_tool_entries_from,
+};
 pub use backend::{ChatBackend, ChatResponse, StreamingChatChunk, estimate_cost_from_usage};
-pub use claude_api_types::StreamChunk;
 pub use claude_api::ClaudeApiProvider;
+pub use claude_api_types::StreamChunk;
 pub use config::{
     ChatConfig, ClaudeApiConfig, ClaudeCliConfig, MockConfig, OpencodeConfig, ProviderConfig,
     ProviderType,
