@@ -115,6 +115,10 @@ pub struct HealthMonitorConfig {
     /// Enable response ping check (SIGUSR1)
     pub enable_response_check: bool,
 
+    /// Enable Docker container-running check for tracked Docker workers
+    /// (see [`HealthMonitor::track_docker_worker`])
+    pub enable_container_check: bool,
+
     /// Response ping timeout in milliseconds
     pub response_timeout_ms: u64,
 
@@ -139,6 +143,7 @@ impl Default for HealthMonitorConfig {
             enable_task_check: true,
             task_stuck_threshold_mins: 30,
             enable_response_check: false, // Disabled by default - requires signal handling
+            enable_container_check: true,
             response_timeout_ms: DEFAULT_RESPONSE_TIMEOUT_MS,
             enable_auto_recovery: false, // Disabled by default per ADR 0014
             auto_restart_after_failures: DEFAULT_AUTO_RESTART_AFTER_FAILURES,
@@ -160,6 +165,8 @@ pub enum HealthCheckType {
     TaskProgress,
     /// Check if tmux session exists
     TmuxSession,
+    /// Check if the worker's Docker container is running
+    ContainerRunning,
     /// Check if worker responds to ping
     ResponseHealth,
 }
@@ -172,6 +179,7 @@ impl std::fmt::Display for HealthCheckType {
             Self::MemoryUsage => write!(f, "Memory"),
             Self::TaskProgress => write!(f, "Task"),
             Self::TmuxSession => write!(f, "Session"),
+            Self::ContainerRunning => write!(f, "Container"),
             Self::ResponseHealth => write!(f, "Response"),
         }
     }
@@ -191,6 +199,8 @@ pub enum HealthErrorType {
     StuckTask,
     /// Tmux session missing
     MissingSession,
+    /// Docker container missing (removed or never started)
+    MissingContainer,
     /// Worker not responding to ping
     Unresponsive,
     /// Unknown error
@@ -205,6 +215,7 @@ impl std::fmt::Display for HealthErrorType {
             Self::HighMemory => write!(f, "high memory"),
             Self::StuckTask => write!(f, "stuck task"),
             Self::MissingSession => write!(f, "missing session"),
+            Self::MissingContainer => write!(f, "missing container"),
             Self::Unresponsive => write!(f, "unresponsive"),
             Self::Unknown => write!(f, "unknown"),
         }
@@ -392,6 +403,10 @@ impl WorkerHealthStatus {
                     self.guidance
                         .push("Session missing - restart required".to_string());
                 }
+                HealthCheckType::ContainerRunning => {
+                    self.guidance
+                        .push("Container not running - restart required".to_string());
+                }
                 HealthCheckType::ResponseHealth => {
                     self.guidance
                         .push("Worker not responding - check if hung".to_string());
@@ -430,6 +445,10 @@ pub struct HealthMonitor {
     recovery_attempts: HashMap<String, u8>,
     /// Consecutive failure tracking per worker
     consecutive_failures: HashMap<String, u8>,
+    /// Docker containers tracked per worker id (Docker backend workers)
+    docker_containers: HashMap<String, String>,
+    /// Docker CLI binary used for container checks
+    docker_bin: PathBuf,
 }
 
 impl HealthMonitor {
@@ -449,6 +468,8 @@ impl HealthMonitor {
             log_dir,
             recovery_attempts: HashMap::new(),
             consecutive_failures: HashMap::new(),
+            docker_containers: HashMap::new(),
+            docker_bin: PathBuf::from(crate::docker::DEFAULT_DOCKER_BIN),
         })
     }
 
@@ -466,7 +487,34 @@ impl HealthMonitor {
             log_dir,
             recovery_attempts: HashMap::new(),
             consecutive_failures: HashMap::new(),
+            docker_containers: HashMap::new(),
+            docker_bin: PathBuf::from(crate::docker::DEFAULT_DOCKER_BIN),
         })
+    }
+
+    /// Override the docker CLI binary, primarily for isolated callers/tests.
+    pub fn with_docker_binary(mut self, bin: impl Into<PathBuf>) -> Self {
+        self.docker_bin = bin.into();
+        self
+    }
+
+    /// Track the container behind a Docker backend worker.
+    ///
+    /// Tracked workers get a [`HealthCheckType::ContainerRunning`] check in
+    /// addition to the status-file checks.
+    pub fn track_docker_worker(&mut self, worker_id: &str, container_name: &str) {
+        self.docker_containers
+            .insert(worker_id.to_string(), container_name.to_string());
+    }
+
+    /// Stop tracking a Docker backend worker (after stop/removal).
+    pub fn untrack_docker_worker(&mut self, worker_id: &str) {
+        self.docker_containers.remove(worker_id);
+    }
+
+    /// Get the container name tracked for a worker, if any.
+    pub fn docker_container(&self, worker_id: &str) -> Option<&str> {
+        self.docker_containers.get(worker_id).map(String::as_str)
     }
 
     /// Check health of all known workers.
@@ -527,6 +575,14 @@ impl HealthMonitor {
             status.add_result(result);
         }
 
+        // Docker backend workers: verify their container is still running
+        if self.config.enable_container_check
+            && let Some(container) = self.docker_container(&worker.worker_id)
+        {
+            let result = self.check_container_running(container);
+            status.add_result(result);
+        }
+
         // Update consecutive failure tracking
         if status.is_healthy {
             // Reset consecutive failures on healthy check
@@ -573,6 +629,38 @@ impl HealthMonitor {
         );
 
         status
+    }
+
+    /// Check if a tracked worker's Docker container is still running.
+    fn check_container_running(&self, container: &str) -> HealthCheckResult {
+        let output = Command::new(&self.docker_bin)
+            .args(["inspect", "--format", "{{.State.Status}}", container])
+            .output();
+
+        match output {
+            Ok(output) if output.status.success() => {
+                let state = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if state == "running" {
+                    HealthCheckResult::passed(HealthCheckType::ContainerRunning)
+                } else {
+                    HealthCheckResult::failed(
+                        HealthCheckType::ContainerRunning,
+                        HealthErrorType::DeadProcess,
+                        format!("Container {} is {}", container, state),
+                    )
+                }
+            }
+            Ok(_) => HealthCheckResult::failed(
+                HealthCheckType::ContainerRunning,
+                HealthErrorType::MissingContainer,
+                format!("Container {} does not exist", container),
+            ),
+            Err(e) => {
+                // Docker CLI itself unavailable - skip rather than fail
+                debug!("Docker unavailable for container check: {}", e);
+                HealthCheckResult::skipped(HealthCheckType::ContainerRunning)
+            }
+        }
     }
 
     /// Check if worker responds to ping (SIGUSR1).
@@ -1107,6 +1195,7 @@ mod tests {
         assert_eq!(HealthCheckType::MemoryUsage.to_string(), "Memory");
         assert_eq!(HealthCheckType::TaskProgress.to_string(), "Task");
         assert_eq!(HealthCheckType::TmuxSession.to_string(), "Session");
+        assert_eq!(HealthCheckType::ContainerRunning.to_string(), "Container");
         assert_eq!(HealthCheckType::ResponseHealth.to_string(), "Response");
     }
 
@@ -1119,6 +1208,10 @@ mod tests {
         assert_eq!(
             HealthErrorType::MissingSession.to_string(),
             "missing session"
+        );
+        assert_eq!(
+            HealthErrorType::MissingContainer.to_string(),
+            "missing container"
         );
         assert_eq!(HealthErrorType::Unresponsive.to_string(), "unresponsive");
     }
@@ -1329,5 +1422,153 @@ mod tests {
         assert!(deserialized.is_paused);
         assert!(deserialized.paused_at.is_some());
         assert_eq!(deserialized.pause_reason, Some("Test reason".to_string()));
+    }
+
+    // ============================================================
+    // Docker container health check tests
+    // ============================================================
+
+    fn docker_health_monitor(tmp: &TempDir, initial_state: Option<&str>) -> HealthMonitor {
+        let config = HealthMonitorConfig {
+            enable_pid_check: false,
+            enable_activity_check: false,
+            enable_memory_check: false,
+            enable_task_check: false,
+            enable_response_check: false,
+            ..Default::default()
+        };
+        let fake = crate::docker::fake::install(tmp.path(), initial_state);
+        HealthMonitor::with_dirs(config, tmp.path().join("status"), tmp.path().join("logs"))
+            .expect("Failed to create monitor")
+            .with_docker_binary(fake)
+    }
+
+    #[test]
+    fn test_container_running_check_passes() {
+        let tmp = TempDir::new().unwrap();
+        let mut monitor = docker_health_monitor(&tmp, Some("running"));
+        monitor.track_docker_worker("worker-d1", "forge-claude-code-sonnet-alpha");
+
+        assert_eq!(
+            monitor.docker_container("worker-d1"),
+            Some("forge-claude-code-sonnet-alpha")
+        );
+
+        let worker = WorkerStatusInfo {
+            worker_id: "worker-d1".to_string(),
+            status: WorkerStatus::Active,
+            ..Default::default()
+        };
+        let health = monitor.check_worker_health(&worker);
+
+        // Only the container check ran, and it passed
+        assert!(health.is_healthy);
+        assert_eq!(health.health_score, 1.0);
+        assert!(
+            health
+                .check_results
+                .iter()
+                .any(|r| r.check_type == HealthCheckType::ContainerRunning && r.passed)
+        );
+    }
+
+    #[test]
+    fn test_container_check_fails_when_exited() {
+        let tmp = TempDir::new().unwrap();
+        let mut monitor = docker_health_monitor(&tmp, Some("exited"));
+        monitor.track_docker_worker("worker-d1", "forge-claude-code-sonnet-alpha");
+
+        let worker = WorkerStatusInfo {
+            worker_id: "worker-d1".to_string(),
+            status: WorkerStatus::Active,
+            ..Default::default()
+        };
+        let health = monitor.check_worker_health(&worker);
+
+        assert!(!health.is_healthy);
+        let result = health
+            .check_results
+            .iter()
+            .find(|r| r.check_type == HealthCheckType::ContainerRunning)
+            .unwrap();
+        assert!(!result.passed);
+        assert_eq!(result.error_type, Some(HealthErrorType::DeadProcess));
+        assert!(health.guidance.iter().any(|g| g.contains("Container")));
+    }
+
+    #[test]
+    fn test_container_check_fails_when_missing() {
+        let tmp = TempDir::new().unwrap();
+        let mut monitor = docker_health_monitor(&tmp, None);
+        monitor.track_docker_worker("worker-d1", "forge-claude-code-sonnet-alpha");
+
+        let worker = WorkerStatusInfo {
+            worker_id: "worker-d1".to_string(),
+            status: WorkerStatus::Active,
+            ..Default::default()
+        };
+        let health = monitor.check_worker_health(&worker);
+
+        assert!(!health.is_healthy);
+        let result = health
+            .check_results
+            .iter()
+            .find(|r| r.check_type == HealthCheckType::ContainerRunning)
+            .unwrap();
+        assert!(!result.passed);
+        assert_eq!(result.error_type, Some(HealthErrorType::MissingContainer));
+    }
+
+    #[test]
+    fn test_untracked_worker_skips_container_check() {
+        let tmp = TempDir::new().unwrap();
+        let mut monitor = docker_health_monitor(&tmp, Some("running"));
+
+        // No track_docker_worker call: no container check appears at all
+        let worker = WorkerStatusInfo {
+            worker_id: "worker-tmux".to_string(),
+            status: WorkerStatus::Active,
+            ..Default::default()
+        };
+        let health = monitor.check_worker_health(&worker);
+
+        assert!(health.is_healthy);
+        assert!(health.check_results.is_empty());
+
+        // After untracking, the check disappears again
+        monitor.track_docker_worker("worker-tmux", "forge-x:1");
+        monitor.untrack_docker_worker("worker-tmux");
+        assert!(monitor.docker_container("worker-tmux").is_none());
+        let health = monitor.check_worker_health(&worker);
+        assert!(health.check_results.is_empty());
+    }
+
+    #[test]
+    fn test_disabled_container_check_skips_check() {
+        let tmp = TempDir::new().unwrap();
+        let config = HealthMonitorConfig {
+            enable_pid_check: false,
+            enable_activity_check: false,
+            enable_memory_check: false,
+            enable_task_check: false,
+            enable_response_check: false,
+            enable_container_check: false,
+            ..Default::default()
+        };
+        let fake = crate::docker::fake::install(tmp.path(), Some("running"));
+        let mut monitor =
+            HealthMonitor::with_dirs(config, tmp.path().join("status"), tmp.path().join("logs"))
+                .expect("Failed to create monitor")
+                .with_docker_binary(fake);
+        monitor.track_docker_worker("worker-d1", "forge-claude-code-sonnet-alpha");
+
+        // Tracking alone does not force the check when it is disabled.
+        let worker = WorkerStatusInfo {
+            worker_id: "worker-d1".to_string(),
+            status: WorkerStatus::Active,
+            ..Default::default()
+        };
+        let health = monitor.check_worker_health(&worker);
+        assert!(health.check_results.is_empty());
     }
 }

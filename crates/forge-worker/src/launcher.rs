@@ -1,10 +1,12 @@
 //! Worker launcher implementation using tokio::process.
 //!
 //! This module provides the [`WorkerLauncher`] type for spawning worker processes
-//! in tmux sessions using configurable launcher scripts.
+//! in tmux sessions using configurable launcher scripts, or as Docker
+//! containers managed directly (see [`crate::docker`]).
 
+use crate::docker;
 use crate::tmux;
-use crate::types::{LaunchConfig, LauncherOutput, SpawnRequest, WorkerHandle};
+use crate::types::{LaunchConfig, LauncherOutput, SpawnRequest, WorkerBackend, WorkerHandle};
 use forge_core::types::WorkerStatus;
 use forge_core::{ForgeError, Result};
 use forge_cost::CostDatabase;
@@ -38,8 +40,11 @@ fn build_launcher_args(config: &LaunchConfig, session_name: &str) -> Vec<String>
 
 /// Worker launcher for spawning and managing worker processes.
 ///
-/// The launcher uses external launcher scripts to spawn workers in tmux sessions.
-/// Launcher scripts must output JSON to stdout with worker information.
+/// The default backend uses external launcher scripts to spawn workers in
+/// tmux sessions; launcher scripts must output JSON to stdout with worker
+/// information. The Docker backend spawns containers directly and needs no
+/// script — set `WorkerBackend::Docker` plus a pinned image on the
+/// [`LaunchConfig`].
 #[derive(Debug)]
 pub struct WorkerLauncher {
     /// Active worker handles keyed by worker ID
@@ -48,6 +53,8 @@ pub struct WorkerLauncher {
     session_prefix: String,
     /// Cost database used to persist task predictions before launch.
     cost_db: Option<CostDatabase>,
+    /// Docker CLI binary used by the Docker backend.
+    docker_bin: PathBuf,
 }
 
 impl Default for WorkerLauncher {
@@ -63,6 +70,7 @@ impl WorkerLauncher {
             workers: Arc::new(RwLock::new(HashMap::new())),
             session_prefix: "forge-".into(),
             cost_db: Self::default_cost_database(),
+            docker_bin: PathBuf::from(docker::DEFAULT_DOCKER_BIN),
         }
     }
 
@@ -72,12 +80,19 @@ impl WorkerLauncher {
             workers: Arc::new(RwLock::new(HashMap::new())),
             session_prefix: prefix.into(),
             cost_db: Self::default_cost_database(),
+            docker_bin: PathBuf::from(docker::DEFAULT_DOCKER_BIN),
         }
     }
 
     /// Use an explicit cost database, primarily for isolated callers/tests.
     pub fn with_cost_database(mut self, db: CostDatabase) -> Self {
         self.cost_db = Some(db);
+        self
+    }
+
+    /// Override the docker CLI binary, primarily for isolated callers/tests.
+    pub fn with_docker_binary(mut self, bin: impl Into<PathBuf>) -> Self {
+        self.docker_bin = bin.into();
         self
     }
 
@@ -113,6 +128,11 @@ impl WorkerLauncher {
 
         let config = &request.config;
         let worker_id = &request.worker_id;
+
+        // Docker workers bypass launcher scripts entirely.
+        if config.is_docker() {
+            return self.spawn_docker(worker_id, config).await;
+        }
 
         // Validate launcher exists
         self.validate_launcher(&config.launcher_path).await?;
@@ -195,6 +215,101 @@ impl WorkerLauncher {
         info!(
             "Worker {} spawned successfully (PID: {}, session: {})",
             worker_id, launcher_output.pid, launcher_output.session
+        );
+
+        Ok(handle)
+    }
+
+    /// Spawn a worker as a Docker container.
+    ///
+    /// Mirrors the tmux flow: kill any stale container of the same name,
+    /// start the container from the configured pinned image with the
+    /// workspace bind-mounted, verify it is actually running, then track the
+    /// handle. The workspace must already exist — unlike `docker run`, the
+    /// tmux path fails fast on a missing working directory, and silently
+    /// creating a stray host directory would hide config mistakes.
+    async fn spawn_docker(&self, worker_id: &str, config: &LaunchConfig) -> Result<WorkerHandle> {
+        let image = config
+            .image
+            .as_deref()
+            .ok_or_else(|| ForgeError::WorkerSpawn {
+                worker_id: worker_id.to_string(),
+                message: "Docker backend requires an image (use with_docker_image)".into(),
+            })?;
+        docker::validate_image_ref(image)?;
+
+        if !config.workspace.exists() {
+            return Err(ForgeError::WorkerSpawn {
+                worker_id: worker_id.to_string(),
+                message: format!(
+                    "Workspace {} does not exist; cannot bind-mount it into the container",
+                    config.workspace.display()
+                ),
+            });
+        }
+
+        info!(
+            "Spawning worker {} with model {} in container image {}",
+            worker_id, config.model, image
+        );
+
+        let container_name = format!("{}{}", self.session_prefix, config.session_name);
+
+        // Check if a stale container already exists and remove it
+        if docker::container_exists(&self.docker_bin, &container_name).await? {
+            warn!("Container {} already exists, removing it", container_name);
+            docker::remove_container(&self.docker_bin, &container_name).await?;
+        }
+
+        docker::run_container(&self.docker_bin, config, &container_name, worker_id).await?;
+
+        // Verify the container is actually running before reporting success
+        let state = docker::inspect_state(&self.docker_bin, &container_name)
+            .await?
+            .ok_or_else(|| ForgeError::WorkerSpawn {
+                worker_id: worker_id.to_string(),
+                message: format!(
+                    "Container '{}' was created but cannot be inspected",
+                    container_name
+                ),
+            })?;
+
+        if state.status != "running" {
+            return Err(ForgeError::WorkerSpawn {
+                worker_id: worker_id.to_string(),
+                message: format!(
+                    "Container '{}' is not running after launch (state: {})",
+                    container_name, state.status
+                ),
+            });
+        }
+
+        // The container's init PID as seen from the host, when available
+        let mut handle = WorkerHandle::new(
+            worker_id.to_string(),
+            state.pid.unwrap_or(0),
+            container_name,
+            self.docker_bin.clone(),
+            config.model.clone(),
+            config.tier,
+            config.workspace.clone(),
+        )
+        .with_backend(WorkerBackend::Docker);
+
+        // Add bead assignment if present in the launch config (the Docker
+        // backend has no launcher-script output to carry one)
+        if let Some(ref bead_id) = config.bead_id {
+            handle = handle.with_bead(bead_id.clone(), bead_id.clone());
+        }
+
+        {
+            let mut workers = self.workers.write().await;
+            workers.insert(worker_id.to_string(), handle.clone());
+        }
+
+        info!(
+            "Worker {} spawned successfully (container: {}, backend: docker)",
+            worker_id, handle.session_name
         );
 
         Ok(handle)
@@ -366,10 +481,19 @@ impl WorkerLauncher {
         match handle {
             Some(handle) => {
                 info!(
-                    "Stopping worker {} (session: {})",
-                    worker_id, handle.session_name
+                    "Stopping worker {} (session: {}, backend: {})",
+                    worker_id, handle.session_name, handle.backend
                 );
-                tmux::kill_session(&handle.session_name).await?;
+                // Cleanup on kill: tmux workers lose their session; Docker
+                // workers are force-removed so no exited container lingers.
+                match handle.backend {
+                    WorkerBackend::Docker => {
+                        docker::remove_container(&self.docker_bin, &handle.session_name).await?;
+                    }
+                    WorkerBackend::Tmux => {
+                        tmux::kill_session(&handle.session_name).await?;
+                    }
+                }
 
                 // Remove from active workers
                 {
@@ -412,20 +536,56 @@ impl WorkerLauncher {
         };
 
         match handle {
-            Some(handle) => {
-                // Check if the tmux session still exists
-                if tmux::session_exists(&handle.session_name).await? {
-                    // Check if the process is still running
-                    let pid = tmux::get_session_pid(&handle.session_name).await?;
-                    match pid {
-                        Some(_) => Ok(WorkerStatus::Active),
-                        None => Ok(WorkerStatus::Failed),
+            Some(handle) => match handle.backend {
+                WorkerBackend::Docker => {
+                    // Map the container's observed state onto worker status;
+                    // a missing container means the worker has stopped.
+                    match docker::inspect_state(&self.docker_bin, &handle.session_name).await? {
+                        Some(state) => Ok(docker::state_to_worker_status(&state)),
+                        None => Ok(WorkerStatus::Stopped),
                     }
-                } else {
-                    // Session gone, worker has stopped
-                    Ok(WorkerStatus::Stopped)
                 }
-            }
+                WorkerBackend::Tmux => {
+                    // Check if the tmux session still exists
+                    if tmux::session_exists(&handle.session_name).await? {
+                        // Check if the process is still running
+                        let pid = tmux::get_session_pid(&handle.session_name).await?;
+                        match pid {
+                            Some(_) => Ok(WorkerStatus::Active),
+                            None => Ok(WorkerStatus::Failed),
+                        }
+                    } else {
+                        // Session gone, worker has stopped
+                        Ok(WorkerStatus::Stopped)
+                    }
+                }
+            },
+            None => Err(ForgeError::WorkerNotFound {
+                worker_id: worker_id.into(),
+            }),
+        }
+    }
+
+    /// Capture recent output from a worker's terminal.
+    ///
+    /// The backend-aware log path, mirroring [`Self::check_status`]'s
+    /// dispatch: tmux workers are read through `tmux capture-pane`, Docker
+    /// workers through `docker logs`. `lines` caps the capture to the most
+    /// recent N lines; `None` returns everything available.
+    #[instrument(level = "debug", skip(self), fields(worker_id = %worker_id))]
+    pub async fn worker_logs(&self, worker_id: &str, lines: Option<u32>) -> Result<String> {
+        let handle = {
+            let workers = self.workers.read().await;
+            workers.get(worker_id).cloned()
+        };
+
+        match handle {
+            Some(handle) => match handle.backend {
+                WorkerBackend::Docker => {
+                    docker::container_logs(&self.docker_bin, &handle.session_name, lines).await
+                }
+                WorkerBackend::Tmux => tmux::capture_pane(&handle.session_name, lines).await,
+            },
             None => Err(ForgeError::WorkerNotFound {
                 worker_id: worker_id.into(),
             }),
@@ -474,7 +634,8 @@ mod tests {
     use crate::types::LaunchConfig;
     use forge_core::types::WorkerTier;
     use forge_cost::{CostDatabase, TaskAssignment};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+    use tempfile::TempDir;
 
     #[test]
     fn test_launcher_creation() {
@@ -638,5 +799,206 @@ Initializing model...
         // Should try fallback parsing since no JSON found
         // This will fail because there's no valid session name
         assert!(result.is_err() || !result.unwrap().is_success());
+    }
+
+    // ------------------------------------------------------------
+    // Docker backend lifecycle (spawn / kill / status) via a fake docker CLI
+    // ------------------------------------------------------------
+
+    fn docker_test_config(session: &str, workspace: &Path, image: Option<&str>) -> LaunchConfig {
+        let mut config = LaunchConfig::new("/unused/launcher.sh", session, workspace, "sonnet");
+        config.backend = WorkerBackend::Docker;
+        if let Some(image) = image {
+            config = config.with_docker_image(image);
+        }
+        config
+    }
+
+    fn docker_test_launcher(tmp: &TempDir) -> WorkerLauncher {
+        let fake = crate::docker::fake::install(tmp.path(), None);
+        WorkerLauncher::new()
+            .with_cost_database(CostDatabase::open_in_memory().unwrap())
+            .with_docker_binary(fake)
+    }
+
+    #[tokio::test]
+    async fn test_spawn_status_and_kill_docker_worker() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let launcher = docker_test_launcher(&tmp);
+
+        // Spawn: handle records the docker backend and container identity
+        let handle = launcher
+            .spawn(SpawnRequest::new(
+                "worker-d1",
+                docker_test_config(
+                    "claude-code-sonnet-alpha",
+                    &workspace,
+                    Some("example/agent:1.2.3"),
+                ),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(handle.backend, WorkerBackend::Docker);
+        assert_eq!(handle.session_name, "forge-claude-code-sonnet-alpha");
+        assert_eq!(handle.pid, 4242);
+        assert!(launcher.get("worker-d1").await.is_some());
+
+        // Health: status check reports Active from the running container
+        let status = launcher.check_status("worker-d1").await.unwrap();
+        assert_eq!(status, WorkerStatus::Active);
+
+        // Kill: container is removed entirely, nothing left behind
+        launcher.stop("worker-d1").await.unwrap();
+        assert!(!crate::docker::fake::container_exists(tmp.path()));
+        assert!(launcher.get("worker-d1").await.is_none());
+
+        // Status after stop: worker no longer tracked
+        assert!(matches!(
+            launcher.check_status("worker-d1").await,
+            Err(ForgeError::WorkerNotFound { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_check_status_docker_worker_exited() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let launcher = docker_test_launcher(&tmp);
+
+        launcher
+            .spawn(SpawnRequest::new(
+                "worker-d2",
+                docker_test_config(
+                    "claude-code-sonnet-alpha",
+                    &workspace,
+                    Some("example/agent:1.2.3"),
+                ),
+            ))
+            .await
+            .unwrap();
+
+        // Container dies (e.g. OOM-kill): status check notices
+        crate::docker::fake::set_state(tmp.path(), "exited");
+        let status = launcher.check_status("worker-d2").await.unwrap();
+        assert_eq!(status, WorkerStatus::Stopped);
+
+        // Container vanishes entirely (removed out-of-band): also Stopped
+        crate::docker::fake::clear_state(tmp.path());
+        let status = launcher.check_status("worker-d2").await.unwrap();
+        assert_eq!(status, WorkerStatus::Stopped);
+    }
+
+    #[tokio::test]
+    async fn test_spawn_docker_requires_pinned_image() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let launcher = docker_test_launcher(&tmp);
+
+        // No image configured
+        let err = launcher
+            .spawn(SpawnRequest::new(
+                "worker-d3",
+                docker_test_config("s1", &workspace, None),
+            ))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("requires an image"), "{err}");
+
+        // Floating latest tag is rejected
+        let err = launcher
+            .spawn(SpawnRequest::new(
+                "worker-d4",
+                docker_test_config("s2", &workspace, Some("example/agent:latest")),
+            ))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("latest"), "{err}");
+
+        // Nothing was spawned
+        assert!(launcher.list().await.is_empty());
+        assert!(!crate::docker::fake::container_exists(tmp.path()));
+    }
+
+    #[tokio::test]
+    async fn test_spawn_docker_replaces_stale_container() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        // Pre-seed a stale container of the same name
+        let fake = crate::docker::fake::install(tmp.path(), Some("exited"));
+        let launcher = WorkerLauncher::new()
+            .with_cost_database(CostDatabase::open_in_memory().unwrap())
+            .with_docker_binary(fake);
+
+        launcher
+            .spawn(SpawnRequest::new(
+                "worker-d5",
+                docker_test_config(
+                    "claude-code-sonnet-alpha",
+                    &workspace,
+                    Some("example/agent:1.2.3"),
+                ),
+            ))
+            .await
+            .unwrap();
+
+        // The stale container was removed and a running one took its place
+        let status = launcher.check_status("worker-d5").await.unwrap();
+        assert_eq!(status, WorkerStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn test_spawn_docker_missing_workspace_fails() {
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("does-not-exist");
+        let launcher = docker_test_launcher(&tmp);
+
+        let err = launcher
+            .spawn(SpawnRequest::new(
+                "worker-d6",
+                docker_test_config("s3", &missing, Some("example/agent:1.2.3")),
+            ))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("does not exist"), "{err}");
+        assert!(!crate::docker::fake::container_exists(tmp.path()));
+    }
+
+    #[tokio::test]
+    async fn test_worker_logs_docker_backend() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let launcher = docker_test_launcher(&tmp);
+
+        launcher
+            .spawn(SpawnRequest::new(
+                "worker-d7",
+                docker_test_config(
+                    "claude-code-sonnet-alpha",
+                    &workspace,
+                    Some("example/agent:1.2.3"),
+                ),
+            ))
+            .await
+            .unwrap();
+
+        // Log capture flows through the backend-aware entry point.
+        let logs = launcher.worker_logs("worker-d7", Some(2)).await.unwrap();
+        assert_eq!(logs.lines().collect::<Vec<_>>(), vec!["working", "done"]);
+        let logs = launcher.worker_logs("worker-d7", None).await.unwrap();
+        assert!(logs.contains("forge-worker starting"), "{logs}");
+
+        // Unknown worker is the standard not-found error.
+        let err = launcher
+            .worker_logs("no-such-worker", None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ForgeError::WorkerNotFound { .. }));
     }
 }

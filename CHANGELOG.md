@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Docker Worker Backend** (`forge_worker::docker`): workers can now run in
+  FORGE-managed containers instead of tmux sessions. Set
+  `WorkerBackend::Docker` plus a pinned image on the `LaunchConfig` — the
+  launcher builds the container spec directly, no launcher script needed.
+  Containers are named after their session (`forge-` prefix, same convention
+  as tmux), labeled `forge.worker=true` for discovery, bind-mounted at the
+  workspace, and pinned to an explicit tag or digest (`:latest` and untagged
+  images are rejected at spawn time). The backend dispatches lifecycle
+  operations by backend: status checks map container state onto
+  `WorkerStatus` (`running` → Active, `paused` → Paused, `dead` → Failed,
+  …), `worker_logs` reads `docker logs` the way tmux workers read
+  `capture-pane`, and `rm -f` on kill leaves no exited containers behind.
+  Discovery (`discover_workers`) and the health monitor
+  (`ContainerRunning` check, gated by `enable_container_check`) both cover
+  Docker workers.
 - **Worker Pool** (`forge_worker::pool`): maintains a configurable number of
   ready ("warm spare") workers per model tier with automatic failover. When a
   member is detected dead or unhealthy — by the pool's own liveness probe or

@@ -1,12 +1,12 @@
-//! Tmux session discovery for workers.
+//! Worker discovery across backends.
 //!
-//! This module provides utilities for discovering active worker sessions from tmux,
-//! parsing session names to extract worker types, and returning structured data
-//! about active and idle workers.
+//! This module provides utilities for discovering active workers — tmux
+//! sessions and Docker containers alike — parsing their names to extract
+//! worker types, and returning structured data about active and idle workers.
 //!
-//! # Session Naming Convention
+//! # Naming Convention
 //!
-//! Worker sessions follow the pattern: `<executor>-<suffix>`
+//! Workers follow the pattern: `<executor>-<suffix>`
 //!
 //! Where executor patterns are:
 //! - `claude-code-glm-47` → GLM-4.7 model via z.ai proxy
@@ -14,6 +14,10 @@
 //! - `claude-code-opus` → Claude Opus 4.5
 //! - `claude-code-haiku` → Claude Haiku 4.5
 //! - `opencode-glm-47` → OpenCode with GLM-4.7
+//!
+//! tmux sessions are named `<executor>-<suffix>` directly; Docker containers
+//! carry the [`crate::docker::CONTAINER_NAME_PREFIX`] (`forge-`) in front of
+//! the same name.
 //!
 //! # Example
 //!
@@ -25,10 +29,11 @@
 //!     let result = discover_workers().await?;
 //!
 //!     for worker in &result.workers {
-//!         println!("{}: {} ({})",
+//!         println!("{}: {} ({}, backend {})",
 //!             worker.session_name,
 //!             worker.worker_type,
-//!             if worker.is_attached { "attached" } else { "detached" }
+//!             if worker.is_attached { "attached" } else { "detached" },
+//!             worker.backend
 //!         );
 //!     }
 //!
@@ -36,10 +41,13 @@
 //! }
 //! ```
 
+use crate::docker;
+use crate::types::WorkerBackend;
 use chrono::{DateTime, TimeZone, Utc};
 use forge_core::{ForgeError, Result};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::path::Path;
 use tokio::process::Command;
 use tracing::{debug, instrument, warn};
 
@@ -109,10 +117,10 @@ impl fmt::Display for WorkerType {
     }
 }
 
-/// Information about a discovered worker session.
+/// Information about a discovered worker session or container.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveredWorker {
-    /// The tmux session name
+    /// The tmux session name (or container name minus the `forge-` prefix)
     pub session_name: String,
     /// Parsed worker type from the session name
     pub worker_type: WorkerType,
@@ -126,6 +134,9 @@ pub struct DiscoveredWorker {
     pub suffix: String,
     /// The executor prefix (e.g., "claude-code-glm-47", "opencode-glm-47")
     pub executor: String,
+    /// Backend hosting this worker
+    #[serde(default)]
+    pub backend: WorkerBackend,
 }
 
 impl DiscoveredWorker {
@@ -244,6 +255,7 @@ fn parse_session_line(line: &str) -> Option<DiscoveredWorker> {
         is_attached: attached > 0,
         suffix,
         executor,
+        backend: WorkerBackend::Tmux,
     })
 }
 
@@ -262,12 +274,57 @@ fn extract_executor_and_suffix(session_name: &str) -> Option<(String, String)> {
     None
 }
 
-/// Discover all active worker sessions from tmux.
+/// Convert a FORGE worker container into a discovered worker.
 ///
-/// This queries `tmux list-sessions` and parses the output to find
-/// worker sessions matching known patterns.
+/// Container names carry the same `<prefix><executor>-<suffix>` convention as
+/// tmux sessions (`forge-claude-code-sonnet-alpha`); containers without a
+/// known worker executor prefix are ignored.
+fn worker_from_container(container: &docker::ContainerSummary) -> Option<DiscoveredWorker> {
+    let session_name = container.name.strip_prefix(docker::CONTAINER_NAME_PREFIX)?;
+    let (executor, suffix) = extract_executor_and_suffix(session_name)?;
+
+    Some(DiscoveredWorker {
+        session_name: session_name.to_string(),
+        worker_type: WorkerType::from_session_name(session_name),
+        created_at: container.created_at,
+        // Containers do not expose pane-activity timestamps; approximate
+        // with the creation time so age-based sorting still works.
+        last_activity: container.created_at,
+        is_attached: false,
+        suffix,
+        executor,
+        backend: WorkerBackend::Docker,
+    })
+}
+
+/// Discover FORGE worker containers from Docker.
+///
+/// Returns an empty list when Docker is unavailable (no CLI, no daemon) —
+/// discovery is best-effort across backends, and a missing Docker setup must
+/// not hide tmux workers.
+pub async fn discover_docker_workers() -> Vec<DiscoveredWorker> {
+    match docker::list_worker_containers(Path::new(docker::DEFAULT_DOCKER_BIN)).await {
+        Ok(containers) => containers
+            .iter()
+            .filter_map(worker_from_container)
+            .collect(),
+        Err(e) => {
+            debug!("Docker worker discovery unavailable: {}", e);
+            Vec::new()
+        }
+    }
+}
+
+/// Discover all active workers from tmux and Docker.
+///
+/// This queries `tmux list-sessions` and `docker ps` (label-filtered to
+/// FORGE-managed containers) and parses the output to find worker sessions
+/// matching known patterns.
 #[instrument(level = "debug")]
 pub async fn discover_workers() -> Result<DiscoveryResult> {
+    let mut workers: Vec<DiscoveredWorker>;
+
+    // tmux workers
     let output = Command::new("tmux")
         .args([
             "list-sessions",
@@ -281,22 +338,25 @@ pub async fn discover_workers() -> Result<DiscoveryResult> {
             message: format!("Failed to list tmux sessions: {}", e),
         })?;
 
-    if !output.status.success() {
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        workers = stdout.lines().filter_map(parse_session_line).collect();
+    } else {
         // No tmux server or no sessions is not an error
         let stderr = String::from_utf8_lossy(&output.stderr);
         if stderr.contains("no server running") || stderr.contains("no sessions") {
             debug!("No tmux sessions found");
-            return Ok(DiscoveryResult::default());
+            workers = Vec::new();
+        } else {
+            return Err(ForgeError::WorkerSpawn {
+                worker_id: "discovery".into(),
+                message: format!("tmux list-sessions failed: {}", stderr.trim()),
+            });
         }
-
-        return Err(ForgeError::WorkerSpawn {
-            worker_id: "discovery".into(),
-            message: format!("tmux list-sessions failed: {}", stderr.trim()),
-        });
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let workers: Vec<DiscoveredWorker> = stdout.lines().filter_map(parse_session_line).collect();
+    // Docker workers, merged alongside the tmux ones
+    workers.extend(discover_docker_workers().await);
 
     // Build statistics
     let mut by_type = std::collections::HashMap::new();
@@ -313,7 +373,7 @@ pub async fn discover_workers() -> Result<DiscoveryResult> {
     }
 
     debug!(
-        "Discovered {} worker sessions ({} attached, {} detached)",
+        "Discovered {} workers ({} attached, {} detached)",
         workers.len(),
         attached_count,
         detached_count
@@ -466,6 +526,7 @@ mod tests {
             is_attached: false,
             suffix: "test".into(),
             executor: "claude-code-glm-47".into(),
+            backend: WorkerBackend::Tmux,
         };
 
         assert!(worker.age().contains('h'));
@@ -484,6 +545,7 @@ mod tests {
             is_attached: false,
             suffix: "test".into(),
             executor: "claude-code-glm-47".into(),
+            backend: WorkerBackend::Tmux,
         };
         assert!(!active.is_idle(300)); // 5 minute threshold
 
@@ -496,6 +558,7 @@ mod tests {
             is_attached: false,
             suffix: "test".into(),
             executor: "claude-code-glm-47".into(),
+            backend: WorkerBackend::Tmux,
         };
         assert!(idle.is_idle(300)); // 5 minute threshold
     }
@@ -512,6 +575,7 @@ mod tests {
                 is_attached: true,
                 suffix: "alpha".into(),
                 executor: "claude-code-glm-47".into(),
+                backend: WorkerBackend::Tmux,
             },
             DiscoveredWorker {
                 session_name: "claude-code-opus-bravo".into(),
@@ -521,6 +585,7 @@ mod tests {
                 is_attached: false,
                 suffix: "bravo".into(),
                 executor: "claude-code-opus".into(),
+                backend: WorkerBackend::Tmux,
             },
         ];
 
@@ -543,5 +608,59 @@ mod tests {
         assert_eq!(result.detached_workers().len(), 1);
 
         assert_eq!(result.idle_workers(300).len(), 1); // Only opus is idle
+    }
+
+    #[test]
+    fn test_worker_from_container() {
+        let container = docker::ContainerSummary {
+            name: "forge-claude-code-sonnet-alpha".into(),
+            image: "example/agent:1.2.3".into(),
+            created_at: Utc::now(),
+        };
+
+        let worker = worker_from_container(&container).unwrap();
+        assert_eq!(worker.session_name, "claude-code-sonnet-alpha");
+        assert_eq!(worker.worker_type, WorkerType::Sonnet);
+        assert_eq!(worker.executor, "claude-code-sonnet");
+        assert_eq!(worker.suffix, "alpha");
+        assert_eq!(worker.backend, WorkerBackend::Docker);
+        assert!(!worker.is_attached);
+    }
+
+    #[test]
+    fn test_worker_from_container_ignores_non_workers() {
+        let now = Utc::now();
+        let summary = |name: &str| docker::ContainerSummary {
+            name: name.into(),
+            image: "example/agent:1.2.3".into(),
+            created_at: now,
+        };
+
+        // Not FORGE-prefixed
+        assert!(worker_from_container(&summary("random-container")).is_none());
+        // FORGE-prefixed but no known executor pattern
+        assert!(worker_from_container(&summary("forge-some-other-thing")).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_discover_docker_workers_via_fake_cli() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let fake = crate::docker::fake::install(tmp.path(), Some("running"));
+
+        let containers = docker::list_worker_containers(&fake).await.unwrap();
+        assert_eq!(containers.len(), 1);
+
+        let workers: Vec<DiscoveredWorker> = containers
+            .iter()
+            .filter_map(worker_from_container)
+            .collect();
+        assert_eq!(workers.len(), 1);
+        assert_eq!(workers[0].session_name, "claude-code-sonnet-alpha");
+        assert_eq!(workers[0].backend, WorkerBackend::Docker);
+        assert_eq!(workers[0].worker_type, WorkerType::Sonnet);
+        // The container name parses with the same executor/suffix convention
+        // as tmux sessions, prefix stripped.
+        assert_eq!(workers[0].executor, "claude-code-sonnet");
+        assert_eq!(workers[0].suffix, "alpha");
     }
 }

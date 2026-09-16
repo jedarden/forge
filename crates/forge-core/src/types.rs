@@ -36,7 +36,10 @@ pub enum WorkerStatus {
 impl WorkerStatus {
     /// Returns true if the worker is considered healthy.
     pub fn is_healthy(&self) -> bool {
-        matches!(self, Self::Active | Self::Idle | Self::Starting | Self::Paused)
+        matches!(
+            self,
+            Self::Active | Self::Idle | Self::Starting | Self::Paused
+        )
     }
 
     /// Returns true if the worker is paused.
@@ -149,6 +152,38 @@ impl std::fmt::Display for WorkerTier {
             Self::Premium => write!(f, "premium"),
             Self::Standard => write!(f, "standard"),
             Self::Budget => write!(f, "budget"),
+        }
+    }
+}
+
+/// The execution backend hosting a worker.
+///
+/// FORGE can spawn workers either in tmux sessions (driven by launcher
+/// scripts) or as managed Docker containers (see `forge_worker::docker`).
+/// Handles and discovery results record which backend hosts a worker so
+/// lifecycle operations dispatch correctly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum WorkerBackend {
+    /// Worker runs in a tmux session managed by a launcher script.
+    #[default]
+    Tmux,
+    /// Worker runs inside a FORGE-managed Docker container.
+    Docker,
+}
+
+impl WorkerBackend {
+    /// Returns true if workers on this backend are Docker containers.
+    pub fn is_docker(&self) -> bool {
+        matches!(self, Self::Docker)
+    }
+}
+
+impl std::fmt::Display for WorkerBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Tmux => write!(f, "tmux"),
+            Self::Docker => write!(f, "docker"),
         }
     }
 }

@@ -9,6 +9,14 @@ use forge_cost::TaskAssignment;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// The execution backend hosting a worker.
+///
+/// Re-exported from [`forge_core::types`] so handles, discovery results, and
+/// launch configs across the workspace share one definition: FORGE workers
+/// run either in a tmux session on the host (the default, driven by launcher
+/// scripts) or in a Docker container managed directly by [`crate::docker`].
+pub use forge_core::types::WorkerBackend;
+
 /// Handle to a running worker process.
 ///
 /// Contains all information needed to track and manage a worker.
@@ -36,6 +44,8 @@ pub struct WorkerHandle {
     pub bead_id: Option<BeadId>,
     /// Optional bead title for display
     pub bead_title: Option<String>,
+    /// Backend hosting this worker (tmux session or Docker container)
+    pub backend: WorkerBackend,
 }
 
 impl WorkerHandle {
@@ -61,6 +71,7 @@ impl WorkerHandle {
             workspace: workspace.into(),
             bead_id: None,
             bead_title: None,
+            backend: WorkerBackend::default(),
         }
     }
 
@@ -68,6 +79,12 @@ impl WorkerHandle {
     pub fn with_bead(mut self, bead_id: impl Into<BeadId>, bead_title: impl Into<String>) -> Self {
         self.bead_id = Some(bead_id.into());
         self.bead_title = Some(bead_title.into());
+        self
+    }
+
+    /// Set the backend hosting this worker.
+    pub fn with_backend(mut self, backend: WorkerBackend) -> Self {
+        self.backend = backend;
         self
     }
 
@@ -139,6 +156,15 @@ pub struct LaunchConfig {
     pub timeout_secs: u64,
     /// Optional bead ID to assign this worker to
     pub bead_id: Option<BeadId>,
+    /// Execution backend (tmux launcher script by default, or Docker)
+    pub backend: WorkerBackend,
+    /// Docker image reference for the Docker backend. Must be pinned to an
+    /// explicit tag or digest — validated at spawn time.
+    pub image: Option<String>,
+    /// Command to run inside a Docker container. When unset, the container
+    /// stays alive with a keepalive command so the orchestrator manages its
+    /// lifecycle.
+    pub container_command: Option<String>,
 }
 
 impl LaunchConfig {
@@ -158,6 +184,9 @@ impl LaunchConfig {
             env: Vec::new(),
             timeout_secs: 30,
             bead_id: None,
+            backend: WorkerBackend::default(),
+            image: None,
+            container_command: None,
         }
     }
 
@@ -185,9 +214,32 @@ impl LaunchConfig {
         self
     }
 
+    /// Set the execution backend.
+    pub fn with_backend(mut self, backend: WorkerBackend) -> Self {
+        self.backend = backend;
+        self
+    }
+
+    /// Set the pinned Docker image for the Docker backend.
+    pub fn with_docker_image(mut self, image: impl Into<String>) -> Self {
+        self.image = Some(image.into());
+        self
+    }
+
+    /// Set the command to run inside a Docker container.
+    pub fn with_container_command(mut self, command: impl Into<String>) -> Self {
+        self.container_command = Some(command.into());
+        self
+    }
+
     /// Check if this launch config has a bead assignment.
     pub fn has_bead(&self) -> bool {
         self.bead_id.is_some()
+    }
+
+    /// Check if this config targets the Docker backend.
+    pub fn is_docker(&self) -> bool {
+        self.backend.is_docker()
     }
 }
 
@@ -283,5 +335,55 @@ mod tests {
         assert_eq!(config.tier, WorkerTier::Premium);
         assert_eq!(config.timeout_secs, 60);
         assert_eq!(config.env.len(), 1);
+        assert_eq!(config.backend, WorkerBackend::Tmux);
+        assert!(!config.is_docker());
+    }
+
+    #[test]
+    fn test_worker_backend_default_and_display() {
+        assert_eq!(WorkerBackend::default(), WorkerBackend::Tmux);
+        assert_eq!(WorkerBackend::Tmux.to_string(), "tmux");
+        assert_eq!(WorkerBackend::Docker.to_string(), "docker");
+        assert!(WorkerBackend::Docker.is_docker());
+        assert!(!WorkerBackend::Tmux.is_docker());
+    }
+
+    #[test]
+    fn test_docker_launch_config_builder() {
+        let config = LaunchConfig::new("/unused.sh", "test-session", "/workspace", "sonnet")
+            .with_backend(WorkerBackend::Docker)
+            .with_docker_image("example/agent:1.2.3")
+            .with_container_command("sleep infinity");
+
+        assert!(config.is_docker());
+        assert_eq!(config.image.as_deref(), Some("example/agent:1.2.3"));
+        assert_eq!(config.container_command.as_deref(), Some("sleep infinity"));
+    }
+
+    #[test]
+    fn test_worker_handle_backend_defaults_to_tmux() {
+        let handle = WorkerHandle::new(
+            "worker-1",
+            1,
+            "forge-worker-1",
+            "/path/to/launcher.sh",
+            "sonnet",
+            WorkerTier::Standard,
+            "/home/user/project",
+        )
+        .with_backend(WorkerBackend::Docker);
+
+        assert_eq!(handle.backend, WorkerBackend::Docker);
+
+        let handle = WorkerHandle::new(
+            "worker-2",
+            2,
+            "forge-worker-2",
+            "/path/to/launcher.sh",
+            "sonnet",
+            WorkerTier::Standard,
+            "/home/user/project",
+        );
+        assert_eq!(handle.backend, WorkerBackend::Tmux);
     }
 }

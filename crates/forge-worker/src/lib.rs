@@ -1,18 +1,20 @@
 //! Worker management for FORGE.
 //!
 //! This crate handles spawning, monitoring, and managing AI coding workers
-//! running in tmux sessions.
+//! running in tmux sessions or Docker containers.
 //!
 //! # Overview
 //!
-//! Workers are autonomous AI coding agents that run in tmux sessions. This crate
+//! Workers are autonomous AI coding agents. This crate
 //! provides the infrastructure to:
 //!
-//! - Spawn workers using configurable launcher scripts
+//! - Spawn workers using configurable launcher scripts (tmux) or directly
+//!   from a pinned image (Docker, see [`docker`])
 //! - Track worker PIDs and session names
 //! - Parse JSON output from launchers
 //! - Manage worker lifecycle (start, stop, status check)
-//! - **Discover active workers** from existing tmux sessions
+//! - **Discover active workers** from existing tmux sessions and Docker
+//!   containers
 //! - **Read bead queues** from workspaces for task allocation
 //!
 //! # Architecture
@@ -23,17 +25,19 @@
 //! │  (spawn, stop, list) │
 //! └──────────┬───────────┘
 //!            │
-//!            ▼
-//! ┌──────────────────────┐
-//! │   Launcher Script    │
-//! │  (JSON output)       │
-//! └──────────┬───────────┘
-//!            │
-//!            ▼
-//! ┌──────────────────────┐
-//! │   tmux Session       │
-//! │  (worker process)    │
-//! └──────────────────────┘
+//!     ┌──────┴───────┐
+//!     ▼              ▼
+//! ┌────────────┐  ┌──────────────────────┐
+//! │  docker.rs │  │   Launcher Script    │
+//! │ (container)│  │  (JSON output)       │
+//! └─────┬──────┘  └──────────┬───────────┘
+//!       │                    │
+//!       ▼                    ▼
+//! ┌────────────┐  ┌──────────────────────┐
+//! │  Container │  │   tmux Session       │
+//! │ (bind-mount│  │  (worker process)    │
+//! │ workspace) │  └──────────────────────┘
+//! └────────────┘
 //! ```
 //!
 //! # Session Discovery
@@ -140,6 +144,7 @@ pub mod bead_scheduler;
 pub mod complexity;
 pub mod crash_recovery;
 pub mod discovery;
+pub mod docker;
 pub mod health;
 pub mod launcher;
 #[cfg(test)]
@@ -173,7 +178,13 @@ pub use crash_recovery::{
     CRASH_WINDOW_SECS, CrashAction, CrashRecord, CrashRecoveryConfig, CrashRecoveryManager,
     MAX_CRASHES_IN_WINDOW,
 };
-pub use discovery::{DiscoveredWorker, DiscoveryResult, WorkerType, discover_workers};
+pub use discovery::{
+    DiscoveredWorker, DiscoveryResult, WorkerType, discover_docker_workers, discover_workers,
+};
+pub use docker::{
+    CONTAINER_NAME_PREFIX, ContainerState, ContainerSummary, DEFAULT_DOCKER_BIN, WORKER_LABEL,
+    container_logs, list_worker_containers, state_to_worker_status, validate_image_ref,
+};
 pub use health::{
     DEFAULT_CHECK_INTERVAL_SECS, DEFAULT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MEMORY_KILL_LIMIT_MB,
     DEFAULT_MEMORY_LIMIT_MB, DEFAULT_STALE_THRESHOLD_SECS, HealthCheckResult, HealthCheckType,
@@ -198,4 +209,4 @@ pub use router::{
     RouterStats, RoutingDecision, RoutingReason, SubscriptionQuota, TaskMetadata,
 };
 pub use scorer::{ScoreComponents, ScoredBead, ScoringConfig, TaskScorer};
-pub use types::{LaunchConfig, LauncherOutput, SpawnRequest, WorkerHandle};
+pub use types::{LaunchConfig, LauncherOutput, SpawnRequest, WorkerBackend, WorkerHandle};
