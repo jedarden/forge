@@ -196,10 +196,43 @@ async fn test_activity_log_tool_execution() {
     assert!(result.data["events"].as_array().is_some());
 }
 
+/// Spawner test double that reports success without touching tmux.
+///
+/// The real launcher wiring is covered by the launcher protocol tests; the
+/// tool-level tests only need a spawner that accepts the request.
+struct StubWorkerSpawner;
+
+#[async_trait::async_trait]
+impl forge_chat::WorkerSpawner for StubWorkerSpawner {
+    async fn spawn_workers(
+        &self,
+        worker_type: &str,
+        count: usize,
+        workspace: Option<&std::path::PathBuf>,
+    ) -> Result<Vec<forge_chat::SpawnResult>, String> {
+        let workspace = workspace
+            .cloned()
+            .unwrap_or_else(|| std::path::PathBuf::from("/tmp/forge-test-workspace"));
+        Ok((0..count)
+            .map(|i| forge_chat::SpawnResult {
+                worker_id: format!("stub-{}-{}", worker_type, i),
+                session_name: format!("forge-stub-{}-{}", worker_type, i),
+                pid: 4242 + i as u32,
+                worker_type: worker_type.to_string(),
+                workspace: workspace.clone(),
+            })
+            .collect())
+    }
+}
+
 #[tokio::test]
 async fn test_spawn_worker_tool_small_count_no_confirmation() {
     let registry = ToolRegistry::with_builtin_tools();
-    let context = create_rich_context();
+    let mut context = create_rich_context();
+
+    // The tool errors out when no spawner is configured; attach a stub so
+    // the no-confirmation spawn path itself is what's under test.
+    context.worker_spawner = Some(Arc::new(StubWorkerSpawner));
 
     // Spawning 1 worker should not require confirmation
     let call = ToolCall {
