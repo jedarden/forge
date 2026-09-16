@@ -556,7 +556,7 @@ mod tests {
     #[tokio::test]
     async fn test_crash_recovery_manager_creation() {
         let manager = CrashRecoveryManager::new();
-        assert_eq!(manager.config.auto_restart_enabled, false); // Disabled by default
+        assert!(!manager.config.auto_restart_enabled); // Disabled by default
         assert_eq!(manager.config.max_crashes_in_window, 3);
     }
 
@@ -673,7 +673,7 @@ mod tests {
         manager
             .crash_history
             .entry("worker-1".to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(old_record);
 
         // Add recent crash

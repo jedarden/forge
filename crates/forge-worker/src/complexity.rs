@@ -1401,8 +1401,10 @@ mod tests {
         let db = Arc::new(forge_cost::CostDatabase::open_in_memory().unwrap());
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("config.yaml");
-        let mut config = ForgeConfig::default();
-        config.auto_calibrate = false;
+        let config = ForgeConfig {
+            auto_calibrate: false,
+            ..ForgeConfig::default()
+        };
         config.save_to(&config_path).unwrap();
 
         let job = ComplexityCalibrationJob::new(db, ComplexityConfig::default())

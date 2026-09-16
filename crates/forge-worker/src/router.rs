@@ -1266,7 +1266,7 @@ mod tests {
 
         // With load balancing, should use multiple models
         // (At least 2 different models for 10 tasks)
-        assert!(models_used.len() >= 1, "Should use at least one model");
+        assert!(!models_used.is_empty(), "Should use at least one model");
     }
 
     #[test]

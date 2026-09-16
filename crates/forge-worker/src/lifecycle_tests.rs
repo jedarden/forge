@@ -90,14 +90,14 @@ mod tests {
     #[test]
     fn test_spawn_multiple_workers_config_generation() {
         // Test generating configs for multiple workers
-        let models = vec!["sonnet", "sonnet", "sonnet"];
+        let models = ["sonnet", "sonnet", "sonnet"];
         let configs: Vec<LaunchConfig> = models
             .iter()
             .enumerate()
             .map(|(i, &model)| {
                 LaunchConfig::new(
                     "/test/launcher.sh",
-                    &format!("forge-sonnet-{}", i),
+                    format!("forge-sonnet-{}", i),
                     "/workspace",
                     model,
                 )
@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn test_spawn_multiple_workers_different_models() {
         // Test generating configs for multiple workers with different models
-        let models = vec!["sonnet", "haiku", "opus"];
+        let models = ["sonnet", "haiku", "opus"];
         let configs: Vec<(String, LaunchConfig)> = models
             .iter()
             .enumerate()
@@ -125,7 +125,7 @@ mod tests {
                 };
                 let config = LaunchConfig::new(
                     "/test/launcher.sh",
-                    &format!("forge-{}-{}", model, i),
+                    format!("forge-{}-{}", model, i),
                     "/workspace",
                     model,
                 )
