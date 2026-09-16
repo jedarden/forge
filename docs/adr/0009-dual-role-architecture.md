@@ -5,6 +5,12 @@
 **Deciders**: FORGE Architecture Team
 **Supersedes**: Implicit assumptions in ADR 0005, ADR 0007
 
+> **Note (2026-09-16)**: The bead-store and CLI references below predate the
+> bead-rs migration. `.beads/*.jsonl` is now the bead-rs checkpoint
+> (`.beads/checkpoint/`) and the `br` CLI is now the canonical `bead` CLI.
+> [ADR 0020](0020-bead-write-authority.md) is the authority on store format
+> and write access.
+
 ---
 
 ## Context
@@ -14,7 +20,7 @@ FORGE was initially conceived as a TUI dashboard for monitoring AI workers. Thro
 ### Usage Patterns Observed
 
 **Primary usage (90%)**:
-1. User creates beads via `br create` for tasks
+1. User creates beads via `bead create` for tasks
 2. User invokes FORGE to spawn autonomous workers for those beads
 3. FORGE monitors worker progress unattended
 4. Workers complete beads and exit
@@ -73,9 +79,9 @@ This insight fundamentally reorders priorities:
 ```bash
 # 1. User creates beads for multi-step task
 cd /path/to/project
-br create "Fetch API data" --priority P0
-br create "Analyze results" --priority P1 --deps depends_on:bd-abc
-br create "Generate report" --priority P2 --deps depends_on:bd-def
+bead create --title "Fetch API data" --priority 0
+bead create --title "Analyze results" --priority 1   # then: bead dep add <analyze-id> bd-abc
+bead create --title "Generate report" --priority 2   # then: bead dep add <report-id> bd-def
 
 # 2. User invokes FORGE in orchestration mode
 forge orchestrate --workspace=/path/to/project --workers=3 --model=sonnet
@@ -89,7 +95,7 @@ forge orchestrate --workspace=/path/to/project --workers=3 --model=sonnet
 # - Exits when all beads closed
 
 # 3. User reviews results later
-br list --status closed
+bead list --status closed
 ```
 
 **Key characteristics**:
@@ -365,10 +371,14 @@ FORGE Orchestration Engine (Primary)
 ```bash
 # User creates beads for complex analysis task
 cd ~/trading-analysis
-br create "Fetch order history" --priority P0
-br create "Analyze execution failures" --priority P0
-br create "Identify duplicate orders" --priority P1
-br create "Generate execution report" --priority P2 --deps depends_on:bd-abc,bd-def,bd-ghi
+bead create --title "Fetch order history" --priority 0
+bead create --title "Analyze execution failures" --priority 0
+bead create --title "Identify duplicate orders" --priority 1
+bead create --title "Generate execution report" --priority 2
+# then block the report on its three prerequisites:
+bead dep add <report-id> bd-abc
+bead dep add <report-id> bd-def
+bead dep add <report-id> bd-ghi
 
 # User runs FORGE in orchestration mode
 forge orchestrate \
@@ -388,8 +398,8 @@ forge orchestrate \
 # 8. Exits when all beads closed
 
 # User reviews results
-br list --status closed
-br show bd-jkl  # Read generated report
+bead list --status closed
+bead show bd-jkl  # Read generated report
 ```
 
 **Result**: Fully automated bead processing, no user intervention needed.

@@ -30,6 +30,7 @@ Architecture Decision Records document significant architectural decisions made 
 | [0017](0017-tmux-based-testing-with-cleanup.md) | Tmux-Based Testing with Agent Control and Cleanup | Accepted | 2026-02-13 |
 | [0018](0018-worker-crash-recovery.md) | Worker Crash Recovery | Accepted | 2026-02-13 |
 | [0019](0019-closed-loop-complexity-calibration.md) | Closed-Loop Complexity Calibration from Cost/Outcome Data | Proposed | 2026-07-20 |
+| [0020](0020-bead-write-authority.md) | Bead-rs Write Authority and CLI Normalization | Accepted | 2026-09-16 |
 
 ## ADR Statuses
 

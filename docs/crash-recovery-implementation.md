@@ -12,7 +12,7 @@
 Core features:
 - **Crash Detection**: Detects process death via PID check failures
 - **Crash Tracking**: Records crash events with timestamps and metadata
-- **Assignee Clearing**: Automatically clears bead assignees via `br` CLI
+- **Assignee Clearing**: Automatically clears bead assignees via `bead` CLI
 - **Rate Limiting**: Prevents crash loops (max 3 crashes/10min)
 - **Auto-Restart Logic**: Determines when to restart vs notify only
 
@@ -96,13 +96,13 @@ Changes:
 ### Bead Assignee Clearing
 ```bash
 # Check if bead has assignee
-br show <bead-id> --format=json
+bead show <bead-id> --json
 
-# Clear assignee
-br update <bead-id> --assignee ""
+# Release a claimed bead (in_progress → open/unassigned, one atomic step)
+bead release <bead-id>
 
-# Reset status to open
-br update <bead-id> --status open
+# Clear assignee on an open bead
+bead update <bead-id> --clear-assignee
 ```
 
 ### Rate Limiting Algorithm
@@ -254,10 +254,10 @@ async fn restart_worker(&mut self, worker_id: &str) -> Result<()> {
 3. **Test Assignee Clearing**
    ```bash
    # Start worker with bead assignment
-   br assign <bead-id> <worker-id>
+   bead update <bead-id> --status in_progress --assignee <worker-id>
 
    # Verify bead has assignee
-   br show <bead-id>
+   bead show <bead-id>
 
    # Kill worker
    tmux kill-session -t <worker-session>
@@ -350,22 +350,22 @@ if !health.is_healthy {
 
 ### CPU
 - **Crash detection**: Uses existing HealthMonitor PID checks
-- **br CLI calls**: Only on crash events (rare)
+- **bead CLI calls**: Only on crash events (rare)
 - **Rate limiting**: O(n) where n = crashes in window (~1-3)
 - **Total CPU impact**: < 0.1% in normal operation
 
 ### Latency
 - **Crash detection**: Immediate (piggybacks on health checks)
-- **Assignee clearing**: ~50-100ms (br CLI execution)
+- **Assignee clearing**: ~50-100ms (bead CLI execution)
 - **Auto-restart**: ~2-5s (worker spawn time)
 
 ## Known Limitations
 
-1. **br CLI Dependency**: Requires `br` command to be available
-   - Mitigation: Gracefully degrade if `br` fails
+1. **bead CLI Dependency**: Requires `bead` command to be available
+   - Mitigation: Gracefully degrade if `bead` fails
 
 2. **Race Conditions**: Bead could be modified externally during crash
-   - Mitigation: `br` provides atomic operations
+   - Mitigation: `bead` provides atomic operations
 
 3. **False Positives**: Could clear assignee if process legitimately stopped
    - Mitigation: Only trigger on PID check failure (process dead)
@@ -408,6 +408,8 @@ check polling frequency, notification UI/UX, and worker restart workflows.
 
 - **Task**: `fg-2eq2.6` - Implement worker crash recovery
 - **ADR**: `docs/adr/0018-worker-crash-recovery.md`
+- **ADR 0020**: `docs/adr/0020-bead-write-authority.md` - the `bead` CLI is the
+  sole write authority over the store; assignee clearing only invokes the CLI
 - **Code**: `crates/forge-worker/src/crash_recovery.rs`
 - **Tests**: 13 unit tests, all passing
 - **Commit**: `732733e` - feat(fg-2eq2.6): Implement worker crash recovery module
@@ -427,9 +429,10 @@ requirements in bead fg-2eq2.6:
    - Distinguishes crashes from other health issues (stale activity, high memory)
 
 2. ✅ **Clear stale assignee**
-   - Implemented via `clear_bead_assignee()` using `br` CLI
-   - Executes `br update <bead-id> --assignee ""`
-   - Updates bead status back to `open`
+   - Implemented via `clear_bead_assignee()` using the `bead` CLI
+   - Executes `bead release <bead-id>` (claimed → open/unassigned in one
+     atomic step), falling back to `bead update <bead-id> --clear-assignee`
+     for an open bead
 
 3. ✅ **Update bead status**
    - Automatically resets status from `in_progress` to `open` on crash

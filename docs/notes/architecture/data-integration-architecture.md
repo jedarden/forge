@@ -1,9 +1,15 @@
 # Data Integration Architecture for forge-tui
 
 **Date**: 2026-02-08
-**Status**: Draft
+**Status**: Draft (superseded in part — see note)
 **Related**: ADR 0008 (Real-Time Update Architecture)
 **Bead**: fg-29n
+
+> **Note (2026-09-16)**: The task-queue integration described in Phase 4
+> predates the bead-rs migration. FORGE now reads the bead-rs checkpoint
+> (`.beads/checkpoint/`) directly and applies all writes through the
+> canonical `bead` CLI — see [ADR 0020](../../adr/0020-bead-write-authority.md);
+> the earlier "`br` CLI via JSONL watching" phrasing below is historical.
 
 ---
 

@@ -69,15 +69,20 @@ This document identifies areas where the FORGE design is incomplete or under-spe
 **Decisions made**:
 
 #### 2a. Bead Backend Integration
-- **FORGE reads `.beads/*.jsonl` files directly** (read-only)
-- `br` CLI is write authority - all mutations via `br update`
+- **FORGE reads the workspace bead store directly** (read-only):
+  `forge_core::bead_store` parses both the bead-rs checkpoint
+  (`.beads/checkpoint/` — the snapshot named by `current.json`'s
+  `active_root`, with `forensic.jsonl` as fallback and `objects/*.jsonl`
+  holding immutable snapshots) and the legacy flat `issues.jsonl`
+- `bead` CLI is write authority - all mutations via `bead update`/`bead close`/
+  `bead release` (ADR 0007, clarified by ADR 0020)
 - No direct SQLite access (avoids locking conflicts)
 
 #### 2b. Task Assignment Algorithm
 - **FORGE suggests, workers decide**
 - Greedy assignment: match worker tier to bead priority (P0→Premium, P1→Standard, etc.)
-- Workers autonomous: can ignore suggestions, use `br ready` to pull tasks
-- No automatic assignment - user confirms via chat or manual `br update`
+- Workers autonomous: can ignore suggestions, use `bead list --ready` to pull tasks
+- No automatic assignment - user confirms via chat or manual `bead update`
 
 #### 2c. Task Value Scoring Implementation
 - **FORGE calculates scores** using algorithm:
@@ -88,9 +93,9 @@ This document identifies areas where the FORGE design is incomplete or under-spe
 - Configurable weights in `~/.forge/config.yaml`
 
 #### 2d. Dependency Resolution
-- **`br` CLI enforces dependencies**
+- **`bead` CLI enforces dependencies**
 - FORGE visualizes dependency graph, highlights blocked tasks
-- `br ready` shows only unblocked tasks
+- `bead list --ready` shows only unblocked tasks
 - FORGE never overrides dependency rules
 
 **Impact**: ✅ **UNBLOCKED** - Task queue display and routing ready

@@ -87,7 +87,9 @@ See `scripts/launchers/bead-worker-launcher.sh` for a complete reference impleme
 
 Forge will:
 
-1. **Read bead queues** from `.beads/*.jsonl` files
+1. **Read bead queues** from the bead-rs checkpoint
+   (`.beads/checkpoint/`), never by editing store files — the `bead` CLI is
+   the sole write authority (ADR 0020)
 2. **Identify ready beads** (unblocked, not deferred, not in_progress)
 3. **Call launchers** with `--bead-ref=<bead-id>` parameter
 4. **Monitor workers** via status files (existing mechanism)
@@ -204,7 +206,9 @@ tmux new-session -d -s "forge-sonnet-alpha" \
 
 - ADR 0005: Launcher Protocol
 - ADR 0007: Bead Integration
-- beads_rust: https://github.com/Dicklesworthstone/beads_rust
+- [ADR 0020: Bead Write Authority](0020-bead-write-authority.md) - store
+  format and write access authority for everything above
+- [bead CLI (bead-rs)](https://git.ardenone.com/jedarden/bead-rs) - Issue tracker
 - bead-worker.sh: Reference bead worker implementation
 
 ## Appendix: Launcher Output Format
@@ -250,3 +254,6 @@ Status files MUST include bead_id:
 ## Changelog
 
 - 2026-02-08: Initial ADR creation
+- 2026-09-16: Store reads use the bead-rs checkpoint (`.beads/checkpoint/`)
+  and the `bead` CLI is the sole write authority, per ADR 0020; fenced
+  `bead close`/`bead release` transitions added

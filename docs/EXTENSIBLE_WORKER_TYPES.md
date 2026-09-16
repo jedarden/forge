@@ -66,7 +66,9 @@ Workers may include a `metadata` object with type-specific data:
 
 ### Bead Worker (Reference Implementation)
 
-**Purpose**: Processes beads from `br` CLI issue tracker
+**Purpose**: Processes beads from the workspace bead store (bead-rs
+checkpoint, read by FORGE; the `bead` CLI is the sole write authority —
+ADR 0020)
 
 **Metadata Fields**:
 - `type`: Always `"bead_worker"`
@@ -381,5 +383,6 @@ The bead-worker implementation serves as the reference for other worker types.
 
 **See also**:
 - ADR 0005: Dumb Orchestrator Architecture
+- ADR 0020: Bead-rs Write Authority and CLI Normalization
 - INTEGRATION_GUIDE.md: Complete integration documentation
 - bead-worker.sh: Reference implementation

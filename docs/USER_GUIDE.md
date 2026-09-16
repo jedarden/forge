@@ -493,7 +493,11 @@ R
 
 ### Managing Tasks
 
-FORGE integrates with **Beads** - a task/bead tracking system stored in `.beads/*.jsonl` files.
+FORGE integrates with **Beads** - a task/bead tracking system. FORGE reads each
+workspace's bead-rs checkpoint (`.beads/checkpoint/`, holding `current.json`,
+`forensic.jsonl`, and `objects/*.jsonl`) directly and never edits store files
+itself: every status change is applied through the `bead` CLI, which is the
+sole write authority (see [ADR 0020](./adr/0020-bead-write-authority.md)).
 
 #### Viewing Tasks
 

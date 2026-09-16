@@ -8100,8 +8100,9 @@ mod tests {
         let buffer = render_app(&mut app, 100, 30);
 
         assert!(
-            buffer_contains(&buffer, "FORGE v0.3.0"),
-            "Header should contain FORGE v0.3.0 title"
+            buffer_contains(&buffer, concat!("FORGE v", env!("CARGO_PKG_VERSION"))),
+            "Header should contain FORGE v{} title",
+            env!("CARGO_PKG_VERSION")
         );
     }
 
@@ -8174,7 +8175,10 @@ mod tests {
         assert!(buffer.area.height == 20);
 
         // Should render header and some content
-        assert!(buffer_contains(&buffer, "FORGE v0.3.0"));
+        assert!(buffer_contains(
+            &buffer,
+            concat!("FORGE v", env!("CARGO_PKG_VERSION"))
+        ));
     }
 
     #[test]
@@ -8188,7 +8192,10 @@ mod tests {
         assert!(buffer.area.height == 50);
 
         // Should render content
-        assert!(buffer_contains(&buffer, "FORGE v0.3.0"));
+        assert!(buffer_contains(
+            &buffer,
+            concat!("FORGE v", env!("CARGO_PKG_VERSION"))
+        ));
     }
 
     #[test]

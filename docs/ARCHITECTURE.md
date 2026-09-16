@@ -520,11 +520,12 @@ FORGE integrates with the beads issue tracking system for task management.
 │           │                                                     │
 │           ▼                                                     │
 │  ┌────────────────────────────────────────────────────────────┐ │
-│  │              br CLI queries (with timeout)                 │ │
-│  │  br ready --format json                                    │ │
-│  │  br blocked --format json                                  │ │
-│  │  br list --status in_progress --format json                │ │
-│  │  br stats --format json                                    │ │
+│  │   Direct bead store reads (forge_core::bead_store)         │ │
+│  │   bead-rs checkpoint (.beads/checkpoint/) or legacy        │ │
+│  │   flat .beads/issues.jsonl — no CLI subprocess             │ │
+│  │                                                            │ │
+│  │   ready / blocked / in-progress buckets and statistics     │ │
+│  │   are computed locally with `bead list --ready` semantics  │ │
 │  └────────────────────────────────────────────────────────────┘ │
 │                                                                 │
 │  ┌─────────────────┐                                            │
@@ -605,13 +606,17 @@ pub struct Bead {
 
 ### 5. Beads as External CLI
 
-**Decision**: Shell out to `br` CLI instead of embedding library.
+**Decision**: Read the workspace bead store directly (`forge_core::bead_store`,
+which parses both the bead-rs checkpoint and the legacy flat `issues.jsonl`);
+shell out to the `bead` CLI only for writes, which stay the CLI's exclusive
+territory (ADR 0007, ADR 0020).
 
 **Rationale**:
 - Beads has its own release cycle
 - Reduces coupling
-- Users can use br independently
-- Timeout protection prevents UI blocking
+- Users can use bead independently
+- Store reads need no subprocess, so they cannot block the UI
+- Timeout protection on the write-path CLI calls prevents UI blocking
 
 ### 6. Responsive Layout System
 
@@ -652,7 +657,7 @@ Achieved through:
 
 - 50ms poll timeout for input events
 - Non-blocking chat API calls
-- 2s timeout for br CLI commands
+- 2s timeout for bead CLI commands (writes only)
 - Dirty flag to avoid unnecessary redraws
 
 ---
@@ -669,9 +674,11 @@ Achieved through:
 
 ## Related Documentation
 
-- [Chat Backend Architecture](./CHAT_BACKEND.md) - Detailed chat system design
-- [Worker Protocol](./WORKER_PROTOCOL.md) - Launcher script specification
-- [Beads Integration](./BEADS_INTEGRATION.md) - Task queue details
+- [Chat Backend Architecture](./CHAT_BACKEND_ARCHITECTURE.md) - Detailed chat system design
+- [Launcher Protocol](./LAUNCHER_PROTOCOL.md) - Launcher script specification
+- [Bead-Aware Launcher Protocol](./BEAD_LAUNCHER_PROTOCOL.md) - Task queue details
+- [ADR 0007: Bead Integration Strategy](./adr/0007-bead-integration-strategy.md) - Bead integration model
+- [ADR 0020: Bead Write Authority](./adr/0020-bead-write-authority.md) - Bead store format and write access
 
 ---
 

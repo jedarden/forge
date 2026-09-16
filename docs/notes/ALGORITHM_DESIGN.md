@@ -547,9 +547,13 @@ control-panel calibrate
 
 ## Integration with Beads
 
+Examples below use the canonical `bead` CLI (bead-rs), which is the sole
+write authority over the store; FORGE reads the bead-rs checkpoint
+(`.beads/checkpoint/`) read-only — see ADR 0020.
+
 ```bash
 # Beads automatically trigger assignment
-br create "Fix auth bug" --priority P0 --labels security,backend
+bead create --title "Fix auth bug" --priority 0 --labels security,backend
 
 # Pool optimizer:
 # 1. Reads bead metadata
@@ -560,7 +564,7 @@ br create "Fix auth bug" --priority P0 --labels security,backend
 # 6. Updates learning models
 
 # Check assignment
-br show po-123
+bead show po-123
 # Assigned: Sonnet 4.5 | Value: 79/100 | Status: in_progress
 ```
 

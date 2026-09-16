@@ -87,8 +87,9 @@ complete references and code-location detail.
 ## Other improvement ideas from this review (2026-07-20)
 
 Not architecturally significant enough to warrant their own ADR; filed as
-`artifact-improvement`-labeled beads instead (see `bf list --label
-artifact-improvement` in this repo's `.beads/` workspace):
+`artifact-improvement`-labeled beads instead (see `bead list --label
+artifact-improvement` in this repo's `.beads/` workspace; store layout and
+CLI write authority are defined in ADR 0020):
 
 - Persist predicted complexity score at spawn time — Phase 1 groundwork for
   ADR-19.

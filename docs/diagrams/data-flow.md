@@ -121,22 +121,18 @@ sequenceDiagram
 sequenceDiagram
     participant TUI as TUI App
     participant Manager as BeadManager
-    participant CLI as br CLI
-    participant JSONL as .beads/*.jsonl
+    participant Store as bead store
+    participant CLI as bead CLI (writes only)
 
     loop Every 30 seconds
         TUI->>Manager: poll_updates()
-        Manager->>CLI: br ready --format json
-        CLI->>JSONL: Read bead files
-        JSONL-->>CLI: Bead data
-        CLI-->>Manager: JSON output
-        Manager->>Manager: Parse ready beads
+        Manager->>Store: read_all_beads() — no subprocess
+        Note over Store: bead-rs checkpoint .beads/checkpoint/:<br/>current.json → active snapshot in objects/*.jsonl<br/>(fallback: forensic.jsonl)<br/>or legacy flat .beads/issues.jsonl (read-only compat)
+        Store-->>Manager: Bead data
+        Manager->>Manager: Compute ready / blocked / in-progress<br/>(bead list --ready semantics)
 
-        Manager->>CLI: br blocked --format json
-        CLI-->>Manager: Blocked beads
-
-        Manager->>CLI: br list --status in_progress
-        CLI-->>Manager: In-progress beads
+        Manager->>CLI: timeout_task() → bead release
+        CLI-->>Store: Atomic claim release
 
         Manager-->>TUI: WorkspaceBeads
         TUI->>TUI: Update task panel
@@ -208,7 +204,7 @@ graph TB
     subgraph "Data Sources"
         StatusFiles[Status Files<br/>~/.forge/status/]
         LogFiles[Log Files<br/>~/.forge/logs/]
-        BeadFiles[Bead Files<br/>.beads/*.jsonl]
+        BeadFiles[Bead Checkpoint<br/>.beads/checkpoint/]
         ConfigFile[Config File<br/>~/.forge/config.yaml]
     end
 
@@ -253,6 +249,10 @@ graph TB
 
 ## Related Documentation
 
-- [Architecture Overview](./ARCHITECTURE.md) - System design
+- [Architecture Overview](../ARCHITECTURE.md) - System design
 - [Worker Lifecycle](./worker-lifecycle.md) - Worker state machine
 - [Event Flow](./event-flow.md) - Event handling pipeline
+- [ADR 0020: Bead Write Authority](../adr/0020-bead-write-authority.md) -
+  bead store format and write access
+- [ADR 0007: Bead Integration Strategy](../adr/0007-bead-integration-strategy.md) -
+  read-only consumer model

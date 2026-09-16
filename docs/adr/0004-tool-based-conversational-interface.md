@@ -4,6 +4,10 @@
 **Status**: Accepted
 **Deciders**: Jed Arden, Claude Sonnet 4.5
 
+> **Note (2026-09-16)**: The `br` CLI authority mentioned below is now the
+> canonical `bead` CLI (bead-rs). [ADR 0020](0020-bead-write-authority.md) is
+> the authority on store format and write access.
+
 ---
 
 ## Context
@@ -550,7 +554,7 @@ list_capabilities()
   "tool_calls": [
     {"tool": "show_warning", "args": {
       "message": "Priority inversion detected: P2 beads blocking P0 work",
-      "details": "bd-xyz (P2) blocks 2 P0 beads. Consider running: br update bd-xyz --priority P0"
+      "details": "bd-xyz (P2) blocks 2 P0 beads. Consider running: bead update bd-xyz --priority 0"
     }},
     {"tool": "highlight_beads", "args": {"bead_ids": ["bd-xyz", "bd-uvw"], "reason": "blocking_critical_work"}}
   ],

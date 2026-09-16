@@ -4,6 +4,12 @@
 **Date**: 2026-02-07
 **Deciders**: FORGE Architecture Team
 
+> **Note (2026-09-16)**: The bead-store and CLI references below predate the
+> bead-rs migration. `.beads/*.jsonl` is now the bead-rs checkpoint
+> (`.beads/checkpoint/`) and the `br` CLI is now the canonical `bead` CLI.
+> [ADR 0020](0020-bead-write-authority.md) is the authority on store format
+> and write access.
+
 ---
 
 ## Context

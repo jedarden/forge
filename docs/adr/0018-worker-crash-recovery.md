@@ -3,6 +3,10 @@
 ## Status
 Accepted
 
+**Clarified 2026-09-16**: assignee clearing invokes the canonical `bead` CLI
+(bead-rs); the `bead` CLI is the sole write authority over the store — see
+[ADR 0020](0020-bead-write-authority.md).
+
 ## Context
 Workers (AI coding agents running in tmux sessions) can crash unexpectedly due to:
 - Process termination (kill signal, OOM, hardware failure)
@@ -53,9 +57,10 @@ pub struct CrashRecord {
 
 ### 3. Automatic Assignee Clearing
 When a crash is detected:
-1. Check if bead has an assignee: `br show <bead-id> --format=json`
-2. Clear the assignee: `br update <bead-id> --assignee ""`
-3. Reset status: `br update <bead-id> --status open`
+1. Check if bead has an assignee: `bead show <bead-id> --json`
+2. Release a claimed bead in one atomic step: `bead release <bead-id>`
+   (in_progress → open/unassigned)
+3. For an open bead that is merely assigned: `bead update <bead-id> --clear-assignee`
 
 This allows other workers to pick up the task immediately.
 
@@ -113,21 +118,21 @@ pub struct CrashRecoveryConfig {
 
 ### Negative
 1. **Complexity**: Adds another state machine to manage
-2. **br CLI Dependency**: Requires `br` command to be available
+2. **bead CLI Dependency**: Requires `bead` command to be available
 3. **Race Conditions**: Possible if bead is modified externally during crash recovery
 4. **False Positives**: Could clear assignee if process is legitimately stopped
 
 ### Mitigation
-- **Race Conditions**: Use `br`'s atomic operations
+- **Race Conditions**: Use `bead`'s atomic operations
 - **False Positives**: Only clear assignee if PID check fails (process dead)
-- **br CLI Availability**: Gracefully degrade if `br` command fails
+- **bead CLI Availability**: Gracefully degrade if `bead` command fails
 
 ## Implementation Details
 
 ### Phase 1: Core Module ✅
 - [x] Implement `CrashRecoveryManager`
 - [x] Add crash detection logic
-- [x] Implement assignee clearing via `br` CLI
+- [x] Implement assignee clearing via `bead` CLI
 - [x] Add rate limiting logic
 - [x] Write comprehensive unit tests
 
@@ -149,6 +154,8 @@ pub struct CrashRecoveryConfig {
 
 ## References
 - Issue: `fg-2eq2.6` - Implement worker crash recovery
+- [ADR 0020: Bead Write Authority](0020-bead-write-authority.md) - store
+  format and write access
 - Code: `crates/forge-worker/src/crash_recovery.rs`
 - Tests: `crates/forge-worker/src/crash_recovery.rs#tests`
 

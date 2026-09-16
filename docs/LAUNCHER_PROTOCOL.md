@@ -72,7 +72,7 @@ On failure, launchers MUST output:
 
 When `--bead-ref` is provided, the launcher MUST:
 
-1. **Fetch bead data** using `br show <bead-id> --format json`
+1. **Fetch bead data** using `bead show <bead-id> --json`
 2. **Parse bead JSON** to extract:
    - `id`: Bead identifier
    - `title`: Bead title
@@ -180,7 +180,7 @@ scripts/launchers/bead-worker-launcher.sh
 
 This script demonstrates:
 - Argument parsing for standard and bead-aware modes
-- Bead data fetching using `br show`
+- Bead data fetching using `bead show`
 - Prompt construction with bead context
 - tmux session spawning
 - Status file creation
@@ -260,6 +260,9 @@ The following environment variables are set by FORGE when launching:
 
 ## See Also
 
-- [ADR 0015: Bead-Aware Launcher Protocol](docs/adr/0015-bead-aware-launcher-protocol.md)
-- [ADR 0005: Dumb Orchestrator](docs/adr/0005-dumb-orchestrator.md)
-- [EXTENSIBLE_WORKER_TYPES.md](docs/EXTENSIBLE_WORKER_TYPES.md)
+- [ADR 0015: Bead-Aware Launcher Protocol](adr/0015-bead-aware-launcher-protocol.md)
+- [ADR 0005: Dumb Orchestrator](adr/0005-dumb-orchestrator-architecture.md)
+- [ADR 0007: Bead Integration Strategy](adr/0007-bead-integration-strategy.md)
+- [ADR 0020: Bead Write Authority](adr/0020-bead-write-authority.md) -
+  the `bead` CLI is the sole write authority over the store
+- [EXTENSIBLE_WORKER_TYPES.md](EXTENSIBLE_WORKER_TYPES.md)

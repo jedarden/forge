@@ -73,6 +73,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   OpenSSL headers (`libssl-dev`/`openssl-devel`), which are absent on
   codinghome and in CI gate containers. TLS/WSS integration tests pass against
   the statically linked build.
+- **Version-assert drift in TUI header tests**: three `forge-tui` tests
+  hard-coded `FORGE v0.3.0` and broke on every version bump; they now derive
+  the expected title from `CARGO_PKG_VERSION`.
+
+### Documentation
+- **Bead-rs doc alignment** (ADR 0020): the user guide, data-flow diagram,
+  crash-recovery docs, launcher protocol, and algorithm/plan notes now
+  describe the bead-rs checkpoint layout (`.beads/checkpoint/` —
+  `current.json`, `forensic.jsonl`, `objects/*.jsonl`) and the canonical
+  `bead` CLI as sole write authority; no remaining doc instructs reading flat
+  JSONL or invoking `br`/`bf`. Historical ADRs 0004/0008/0009 carry a dated
+  superseded-by-ADR-0020 note, and ADR 0020 is now listed in the ADR index.
 
 ## [0.3.0] - 2026-05-04
 
