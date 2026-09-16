@@ -35,11 +35,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Count records with worker_id
     println!("\n=== Cost data ===");
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM api_calls WHERE worker_id IS NOT NULL",
-        [],
-        |row| row.get(0)
-    ).unwrap_or(0);
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM api_calls WHERE worker_id IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
     println!("Records with worker_id: {}", count);
 
     // Show costs by worker
@@ -50,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
          WHERE worker_id IS NOT NULL
          GROUP BY worker_id
          ORDER BY SUM(cost_usd) DESC
-         LIMIT 5"
+         LIMIT 5",
     )?;
 
     let rows = stmt.query_map([], |row| {

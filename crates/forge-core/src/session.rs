@@ -200,7 +200,8 @@ impl UserSession {
     /// Check if the session is stale (should be disconnected).
     pub fn is_stale(&self, stale_timeout_seconds: i64) -> bool {
         let idle_duration = Utc::now() - self.last_activity;
-        idle_duration.num_seconds() > stale_timeout_seconds && self.status == SessionStatus::Disconnected
+        idle_duration.num_seconds() > stale_timeout_seconds
+            && self.status == SessionStatus::Disconnected
     }
 }
 
@@ -223,7 +224,7 @@ impl SessionManager {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            idle_timeout_seconds: 300, // 5 minutes
+            idle_timeout_seconds: 300,   // 5 minutes
             stale_timeout_seconds: 3600, // 1 hour
         }
     }
@@ -239,9 +240,10 @@ impl SessionManager {
 
     /// Register a new user session.
     pub fn register_session(&self, session: UserSession) -> Result<()> {
-        let mut sessions = self.sessions.lock().map_err(|e| {
-            ForgeError::session_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let mut sessions = self
+            .sessions
+            .lock()
+            .map_err(|e| ForgeError::session_error(format!("failed to acquire lock: {}", e)))?;
 
         let session_id = session.session_id.clone();
         let user_id = session.user_id.clone();
@@ -259,9 +261,10 @@ impl SessionManager {
 
     /// Unregister a session (user disconnects).
     pub fn unregister_session(&self, session_id: &str) -> Result<Option<UserSession>> {
-        let mut sessions = self.sessions.lock().map_err(|e| {
-            ForgeError::session_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let mut sessions = self
+            .sessions
+            .lock()
+            .map_err(|e| ForgeError::session_error(format!("failed to acquire lock: {}", e)))?;
 
         let session = sessions.remove(session_id);
 
@@ -278,9 +281,10 @@ impl SessionManager {
 
     /// Update activity for a session.
     pub fn update_activity(&self, session_id: &str) -> Result<()> {
-        let mut sessions = self.sessions.lock().map_err(|e| {
-            ForgeError::session_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let mut sessions = self
+            .sessions
+            .lock()
+            .map_err(|e| ForgeError::session_error(format!("failed to acquire lock: {}", e)))?;
 
         if let Some(session) = sessions.get_mut(session_id) {
             session.update_activity();
@@ -291,9 +295,10 @@ impl SessionManager {
 
     /// Update the current view for a session.
     pub fn update_view(&self, session_id: &str, view: impl Into<String>) -> Result<()> {
-        let mut sessions = self.sessions.lock().map_err(|e| {
-            ForgeError::session_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let mut sessions = self
+            .sessions
+            .lock()
+            .map_err(|e| ForgeError::session_error(format!("failed to acquire lock: {}", e)))?;
 
         if let Some(session) = sessions.get_mut(session_id) {
             session.set_view(view);
@@ -304,9 +309,10 @@ impl SessionManager {
 
     /// Get all active sessions.
     pub fn get_sessions(&self) -> Result<Vec<UserSession>> {
-        let sessions = self.sessions.lock().map_err(|e| {
-            ForgeError::session_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|e| ForgeError::session_error(format!("failed to acquire lock: {}", e)))?;
 
         // Update idle status before returning
         let mut result = Vec::new();
@@ -321,18 +327,20 @@ impl SessionManager {
 
     /// Get a specific session by ID.
     pub fn get_session(&self, session_id: &str) -> Result<Option<UserSession>> {
-        let sessions = self.sessions.lock().map_err(|e| {
-            ForgeError::session_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|e| ForgeError::session_error(format!("failed to acquire lock: {}", e)))?;
 
         Ok(sessions.get(session_id).cloned())
     }
 
     /// Get sessions for a specific user.
     pub fn get_user_sessions(&self, user_id: &str) -> Result<Vec<UserSession>> {
-        let sessions = self.sessions.lock().map_err(|e| {
-            ForgeError::session_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|e| ForgeError::session_error(format!("failed to acquire lock: {}", e)))?;
 
         let user_sessions: Vec<_> = sessions
             .values()
@@ -345,8 +353,9 @@ impl SessionManager {
 
     /// Check if a user has permission to perform an action.
     pub fn check_permission(&self, session_id: &str, action: SessionAction) -> Result<bool> {
-        let session = self.get_session(session_id)?
-            .ok_or_else(|| ForgeError::session_error(format!("session not found: {}", session_id)))?;
+        let session = self.get_session(session_id)?.ok_or_else(|| {
+            ForgeError::session_error(format!("session not found: {}", session_id))
+        })?;
 
         Ok(match action {
             SessionAction::SpawnWorker => session.role.can_spawn_workers(),
@@ -359,9 +368,10 @@ impl SessionManager {
 
     /// Clean up stale sessions.
     pub fn cleanup_stale(&self) -> Result<usize> {
-        let mut sessions = self.sessions.lock().map_err(|e| {
-            ForgeError::session_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let mut sessions = self
+            .sessions
+            .lock()
+            .map_err(|e| ForgeError::session_error(format!("failed to acquire lock: {}", e)))?;
 
         let initial_count = sessions.len();
         sessions.retain(|_, session| !session.is_stale(self.stale_timeout_seconds));
@@ -376,9 +386,10 @@ impl SessionManager {
 
     /// Get session count.
     pub fn session_count(&self) -> Result<usize> {
-        let sessions = self.sessions.lock().map_err(|e| {
-            ForgeError::session_error(format!("failed to acquire lock: {}", e))
-        })?;
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|e| ForgeError::session_error(format!("failed to acquire lock: {}", e)))?;
 
         Ok(sessions.len())
     }
@@ -482,8 +493,16 @@ mod tests {
         manager.register_session(admin_session).unwrap();
         manager.register_session(viewer_session).unwrap();
 
-        assert!(manager.check_permission("admin", SessionAction::ModifyConfig).unwrap());
-        assert!(!manager.check_permission("viewer", SessionAction::ModifyConfig).unwrap());
+        assert!(
+            manager
+                .check_permission("admin", SessionAction::ModifyConfig)
+                .unwrap()
+        );
+        assert!(
+            !manager
+                .check_permission("viewer", SessionAction::ModifyConfig)
+                .unwrap()
+        );
     }
 
     #[test]

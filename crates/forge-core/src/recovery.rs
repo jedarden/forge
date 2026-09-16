@@ -29,11 +29,11 @@
 //! });
 //! ```
 
+use rand::Rng;
 use std::future::Future;
 use std::thread;
 use std::time::Duration;
 use tracing::{debug, info, warn};
-use rand::Rng;
 
 /// Configuration for retry behavior with exponential backoff.
 #[derive(Debug, Clone)]
@@ -102,8 +102,7 @@ impl RetryConfig {
 
     /// Calculate delay for a given attempt number with jitter.
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
-        let base_delay = self.initial_delay.as_secs_f64()
-            * self.multiplier.powi(attempt as i32);
+        let base_delay = self.initial_delay.as_secs_f64() * self.multiplier.powi(attempt as i32);
 
         let capped_delay = base_delay.min(self.max_delay.as_secs_f64());
 
@@ -111,7 +110,9 @@ impl RetryConfig {
         let jitter_range = capped_delay * 0.25;
         let mut rng = rand::rng();
         let jitter = rng.random_range(-jitter_range..jitter_range);
-        let final_delay = (capped_delay + jitter).max(0.0).min(self.max_delay.as_secs_f64());
+        let final_delay = (capped_delay + jitter)
+            .max(0.0)
+            .min(self.max_delay.as_secs_f64());
 
         Duration::from_secs_f64(final_delay)
     }

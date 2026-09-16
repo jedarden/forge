@@ -394,9 +394,8 @@ impl StatusWriter {
                 source: e,
             })?;
 
-            serde_json::from_str(&content).unwrap_or_else(|_| {
-                WorkerStatusInfo::new(worker_id, status)
-            })
+            serde_json::from_str(&content)
+                .unwrap_or_else(|_| WorkerStatusInfo::new(worker_id, status))
         } else {
             WorkerStatusInfo::new(worker_id, status)
         };
@@ -449,11 +448,7 @@ impl StatusWriter {
     ///
     /// The pause reason is stored in the status file and can be displayed
     /// in health reports and monitoring tools.
-    pub fn pause_worker_with_reason(
-        &self,
-        worker_id: &str,
-        reason: Option<&str>,
-    ) -> Result<()> {
+    pub fn pause_worker_with_reason(&self, worker_id: &str, reason: Option<&str>) -> Result<()> {
         let path = self.status_file_path(worker_id);
 
         // Read existing status if file exists, otherwise create new
@@ -464,9 +459,8 @@ impl StatusWriter {
                 source: e,
             })?;
 
-            serde_json::from_str(&content).unwrap_or_else(|_| {
-                WorkerStatusInfo::new(worker_id, WorkerStatus::Paused)
-            })
+            serde_json::from_str(&content)
+                .unwrap_or_else(|_| WorkerStatusInfo::new(worker_id, WorkerStatus::Paused))
         } else {
             WorkerStatusInfo::new(worker_id, WorkerStatus::Paused)
         };
@@ -495,9 +489,8 @@ impl StatusWriter {
                 source: e,
             })?;
 
-            serde_json::from_str(&content).unwrap_or_else(|_| {
-                WorkerStatusInfo::new(worker_id, WorkerStatus::Idle)
-            })
+            serde_json::from_str(&content)
+                .unwrap_or_else(|_| WorkerStatusInfo::new(worker_id, WorkerStatus::Idle))
         } else {
             WorkerStatusInfo::new(worker_id, WorkerStatus::Idle)
         };

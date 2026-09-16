@@ -89,7 +89,13 @@ impl TaskPerfMetrics {
     }
 
     /// Mark task as completed.
-    pub fn completed(mut self, success: bool, input_tokens: i64, output_tokens: i64, cost_usd: f64) -> Self {
+    pub fn completed(
+        mut self,
+        success: bool,
+        input_tokens: i64,
+        output_tokens: i64,
+        cost_usd: f64,
+    ) -> Self {
         let end_time = Utc::now();
         self.end_time = Some(end_time);
         self.success = success;
@@ -264,6 +270,10 @@ impl WorkerPerfTracker {
 
     /// Get total tokens across all completed tasks.
     pub fn total_tokens(&self) -> i64 {
-        self.completed_tasks.values().flatten().map(|t| t.total_tokens()).sum()
+        self.completed_tasks
+            .values()
+            .flatten()
+            .map(|t| t.total_tokens())
+            .sum()
     }
 }

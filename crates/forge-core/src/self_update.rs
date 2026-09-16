@@ -139,13 +139,14 @@ pub async fn check_for_update(current_version: &str) -> crate::Result<UpdateStat
             message: format!("Failed to create HTTP client: {}", e),
         })?;
 
-    let response = client
-        .get(GITHUB_RELEASES_API)
-        .send()
-        .await
-        .map_err(|e| ForgeError::UpdateCheck {
-            message: format!("Failed to fetch releases: {}", e),
-        })?;
+    let response =
+        client
+            .get(GITHUB_RELEASES_API)
+            .send()
+            .await
+            .map_err(|e| ForgeError::UpdateCheck {
+                message: format!("Failed to fetch releases: {}", e),
+            })?;
 
     if !response.status().is_success() {
         return Err(ForgeError::UpdateCheck {
@@ -153,15 +154,15 @@ pub async fn check_for_update(current_version: &str) -> crate::Result<UpdateStat
         });
     }
 
-    let release: GitHubRelease = response
-        .json()
-        .await
-        .map_err(|e| ForgeError::UpdateCheck {
-            message: format!("Failed to parse release response: {}", e),
-        })?;
+    let release: GitHubRelease = response.json().await.map_err(|e| ForgeError::UpdateCheck {
+        message: format!("Failed to parse release response: {}", e),
+    })?;
 
     // Parse version from tag (e.g., "v0.1.9" -> "0.1.9")
-    let latest_version = release.tag_name.strip_prefix('v').unwrap_or(&release.tag_name);
+    let latest_version = release
+        .tag_name
+        .strip_prefix('v')
+        .unwrap_or(&release.tag_name);
 
     info!("Latest version: {}", latest_version);
 
@@ -191,7 +192,9 @@ pub async fn check_for_update(current_version: &str) -> crate::Result<UpdateStat
         info!("Fetching SHA256SUMS from {}", checksums.download_url);
         fetch_checksum_from_url(&checksums.download_url, asset_name).await?
     } else {
-        warn!("No SHA256SUMS asset found in release - proceeding without checksum verification (INSECURE)");
+        warn!(
+            "No SHA256SUMS asset found in release - proceeding without checksum verification (INSECURE)"
+        );
         String::new()
     };
 
@@ -233,12 +236,9 @@ async fn fetch_checksum_from_url(checksums_url: &str, asset_name: &str) -> crate
         });
     }
 
-    let checksums_text = response
-        .text()
-        .await
-        .map_err(|e| ForgeError::UpdateCheck {
-            message: format!("Failed to read SHA256SUMS response: {}", e),
-        })?;
+    let checksums_text = response.text().await.map_err(|e| ForgeError::UpdateCheck {
+        message: format!("Failed to read SHA256SUMS response: {}", e),
+    })?;
 
     // Parse the SHA256SUMS file (format: "<checksum>  <filename>")
     for line in checksums_text.lines() {
@@ -254,10 +254,7 @@ async fn fetch_checksum_from_url(checksums_url: &str, asset_name: &str) -> crate
     }
 
     Err(ForgeError::UpdateCheck {
-        message: format!(
-            "Checksum not found for {} in SHA256SUMS file",
-            asset_name
-        ),
+        message: format!("Checksum not found for {} in SHA256SUMS file", asset_name),
     })
 }
 
@@ -298,7 +295,10 @@ pub async fn perform_update(
     // Verify the downloaded file is a valid executable and check the checksum
     verify_binary(&staging_file, expected_checksum)?;
 
-    info!("Update download complete! Binary staged at {:?}", staging_file);
+    info!(
+        "Update download complete! Binary staged at {:?}",
+        staging_file
+    );
 
     Ok(UpdateResult::Success {
         old_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -341,10 +341,7 @@ pub fn restart_with_new_binary() -> crate::Result<()> {
     // Get the final install path (e.g., ~/.cargo/bin/forge)
     let install_path = get_install_path(&current_exe)?;
 
-    info!(
-        "Will exec staging binary and install to {:?}",
-        install_path
-    );
+    info!("Will exec staging binary and install to {:?}", install_path);
 
     // Set env vars directly in the process before execv() — exec inherits
     // the current environment. We must set these here (not on a Command
@@ -389,17 +386,18 @@ pub fn check_and_perform_self_install() -> crate::Result<Option<PathBuf>> {
         // Auto-restart path: env vars from old process
         info!("Detected auto-restart environment - performing self-install");
 
-        let install_path_str = env::var("FORGE_INSTALL_PATH").map_err(|_| {
-            ForgeError::UpdateInstall {
+        let install_path_str =
+            env::var("FORGE_INSTALL_PATH").map_err(|_| ForgeError::UpdateInstall {
                 message: "FORGE_INSTALL_PATH not set".to_string(),
-            }
-        })?;
-        let staging_path_str = env::var("FORGE_STAGING_PATH").map_err(|_| {
-            ForgeError::UpdateInstall {
+            })?;
+        let staging_path_str =
+            env::var("FORGE_STAGING_PATH").map_err(|_| ForgeError::UpdateInstall {
                 message: "FORGE_STAGING_PATH not set".to_string(),
-            }
-        })?;
-        (PathBuf::from(staging_path_str), PathBuf::from(install_path_str))
+            })?;
+        (
+            PathBuf::from(staging_path_str),
+            PathBuf::from(install_path_str),
+        )
     } else if let Some(staged) = has_staged_update() {
         // Manual restart path: stale staging file detected
         info!("Detected staged update from previous session - installing");
@@ -425,10 +423,7 @@ pub fn check_and_perform_self_install() -> crate::Result<Option<PathBuf>> {
         return Ok(None);
     }
 
-    info!(
-        "Installing from {:?} to {:?}",
-        staging_path, install_path
-    );
+    info!("Installing from {:?} to {:?}", staging_path, install_path);
 
     // Create backup of old binary
     let backup_path = install_path.with_extension("old");
@@ -546,11 +541,10 @@ fn exec_binary(path: &Path, args: &[String]) -> crate::Result<()> {
     use std::os::unix::ffi::OsStrExt;
 
     // Convert path to CString
-    let path_cstring = CString::new(path.as_os_str().as_bytes()).map_err(|e| {
-        ForgeError::UpdateInstall {
+    let path_cstring =
+        CString::new(path.as_os_str().as_bytes()).map_err(|e| ForgeError::UpdateInstall {
             message: format!("Failed to convert path to CString: {}", e),
-        }
-    })?;
+        })?;
 
     // Convert args to CString array
     let mut c_args: Vec<CString> = vec![path_cstring.clone()];
@@ -632,9 +626,10 @@ async fn download_file(
 
         match chunk {
             Some(chunk) => {
-                file.write_all(&chunk).map_err(|e| ForgeError::UpdateDownload {
-                    message: format!("Failed to write to temp file: {}", e),
-                })?;
+                file.write_all(&chunk)
+                    .map_err(|e| ForgeError::UpdateDownload {
+                        message: format!("Failed to write to temp file: {}", e),
+                    })?;
 
                 downloaded += chunk.len() as u64;
 
@@ -738,7 +733,14 @@ fn verify_binary(path: &Path, expected_checksum: &str) -> crate::Result<()> {
         warn!("No checksum provided - skipping cryptographic verification (INSECURE)");
     }
 
-    info!("Binary verification passed (valid ELF{})", if expected_checksum.is_empty() { "" } else { ", checksum verified" });
+    info!(
+        "Binary verification passed (valid ELF{})",
+        if expected_checksum.is_empty() {
+            ""
+        } else {
+            ", checksum verified"
+        }
+    );
     Ok(())
 }
 
@@ -764,15 +766,9 @@ fn get_asset_name_for_platform() -> &'static str {
 ///
 /// Uses semantic versioning comparison (major.minor.patch).
 fn is_newer_version(current: &str, latest: &str) -> crate::Result<bool> {
-    let current_parts: Vec<u32> = current
-        .split('.')
-        .filter_map(|s| s.parse().ok())
-        .collect();
+    let current_parts: Vec<u32> = current.split('.').filter_map(|s| s.parse().ok()).collect();
 
-    let latest_parts: Vec<u32> = latest
-        .split('.')
-        .filter_map(|s| s.parse().ok())
-        .collect();
+    let latest_parts: Vec<u32> = latest.split('.').filter_map(|s| s.parse().ok()).collect();
 
     if current_parts.is_empty() || latest_parts.is_empty() {
         return Err(ForgeError::UpdateCheck {
@@ -838,7 +834,9 @@ pub fn save_current_version(version: &str) -> crate::Result<()> {
 /// Read the last known version from ~/.forge/version.
 pub fn read_last_version() -> Option<String> {
     let version_file = get_version_file_path();
-    fs::read_to_string(&version_file).ok().map(|s| s.trim().to_string())
+    fs::read_to_string(&version_file)
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 /// Mark startup as in progress by creating a marker file.

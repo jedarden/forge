@@ -139,7 +139,9 @@ impl WorkerActivity {
     /// Get the time since activity as a human-readable string.
     pub fn activity_age_string(&self) -> String {
         match self.time_since_activity {
-            Some(d) if d.num_hours() >= 1 => format!("{}h {}m", d.num_hours(), d.num_minutes() % 60),
+            Some(d) if d.num_hours() >= 1 => {
+                format!("{}h {}m", d.num_hours(), d.num_minutes() % 60)
+            }
             Some(d) if d.num_minutes() >= 1 => format!("{}m", d.num_minutes()),
             Some(d) => format!("{}s", d.num_seconds()),
             None => "N/A".to_string(),
@@ -248,9 +250,8 @@ impl HeartbeatWriter {
 
         // Create heartbeat directory if it doesn't exist
         if !heartbeat_dir.exists() {
-            fs::create_dir_all(&heartbeat_dir).map_err(|e| {
-                ForgeError::io("creating heartbeat directory", &heartbeat_dir, e)
-            })?;
+            fs::create_dir_all(&heartbeat_dir)
+                .map_err(|e| ForgeError::io("creating heartbeat directory", &heartbeat_dir, e))?;
         }
 
         Ok(Self {
@@ -268,26 +269,21 @@ impl HeartbeatWriter {
     /// Write a heartbeat.
     pub fn write(&self, data: &HeartbeatData) -> Result<()> {
         let path = self.heartbeat_path();
-        let json = serde_json::to_string_pretty(data).map_err(|e| {
-            ForgeError::parse(format!("Failed to serialize heartbeat: {}", e))
-        })?;
+        let json = serde_json::to_string_pretty(data)
+            .map_err(|e| ForgeError::parse(format!("Failed to serialize heartbeat: {}", e)))?;
 
         // Write atomically using a temp file
         let temp_path = path.with_extension("tmp");
-        let mut file = fs::File::create(&temp_path).map_err(|e| {
-            ForgeError::io("creating heartbeat temp file", &temp_path, e)
-        })?;
-        file.write_all(json.as_bytes()).map_err(|e| {
-            ForgeError::io("writing heartbeat", &temp_path, e)
-        })?;
-        file.sync_all().map_err(|e| {
-            ForgeError::io("syncing heartbeat", &temp_path, e)
-        })?;
+        let mut file = fs::File::create(&temp_path)
+            .map_err(|e| ForgeError::io("creating heartbeat temp file", &temp_path, e))?;
+        file.write_all(json.as_bytes())
+            .map_err(|e| ForgeError::io("writing heartbeat", &temp_path, e))?;
+        file.sync_all()
+            .map_err(|e| ForgeError::io("syncing heartbeat", &temp_path, e))?;
         drop(file);
 
-        fs::rename(&temp_path, &path).map_err(|e| {
-            ForgeError::io("renaming heartbeat file", &path, e)
-        })?;
+        fs::rename(&temp_path, &path)
+            .map_err(|e| ForgeError::io("renaming heartbeat file", &path, e))?;
 
         debug!(worker_id = %self.worker_id, "Heartbeat written");
         Ok(())
@@ -307,16 +303,16 @@ impl HeartbeatWriter {
 
     /// Get the heartbeat file path.
     pub fn heartbeat_path(&self) -> PathBuf {
-        self.heartbeat_dir.join(format!("{}.heartbeat", self.worker_id))
+        self.heartbeat_dir
+            .join(format!("{}.heartbeat", self.worker_id))
     }
 
     /// Remove the heartbeat file (on clean shutdown).
     pub fn remove(&self) -> Result<()> {
         let path = self.heartbeat_path();
         if path.exists() {
-            fs::remove_file(&path).map_err(|e| {
-                ForgeError::io("removing heartbeat file", &path, e)
-            })?;
+            fs::remove_file(&path)
+                .map_err(|e| ForgeError::io("removing heartbeat file", &path, e))?;
             debug!(worker_id = %self.worker_id, "Heartbeat file removed");
         }
         Ok(())
@@ -341,7 +337,10 @@ impl ActivityMonitor {
 
     /// Read heartbeat data for a worker.
     pub fn read_heartbeat(&self, worker_id: &str) -> Option<HeartbeatData> {
-        let path = self.config.heartbeat_dir.join(format!("{}.heartbeat", worker_id));
+        let path = self
+            .config
+            .heartbeat_dir
+            .join(format!("{}.heartbeat", worker_id));
 
         if !path.exists() {
             return None;
@@ -435,7 +434,9 @@ impl ActivityMonitor {
         let heartbeat = self.read_heartbeat(worker_id);
 
         let time_since_activity = last_activity.map(|t| now.signed_duration_since(t));
-        let time_since_heartbeat = heartbeat.as_ref().map(|hb| now.signed_duration_since(hb.timestamp));
+        let time_since_heartbeat = heartbeat
+            .as_ref()
+            .map(|hb| now.signed_duration_since(hb.timestamp));
 
         let state = self.classify_activity(worker_id, has_task, last_activity, worker_status);
 
@@ -446,7 +447,9 @@ impl ActivityMonitor {
                     .map(|d| format!("{} minutes", d.num_minutes()))
                     .unwrap_or_else(|| "unknown time".to_string())
             )),
-            ActivityState::Unresponsive => Some("Worker is not responding. Check process health.".to_string()),
+            ActivityState::Unresponsive => {
+                Some("Worker is not responding. Check process health.".to_string())
+            }
             _ => None,
         };
 
@@ -489,7 +492,10 @@ impl ActivityMonitor {
     }
 
     /// Find workers that are potentially stuck.
-    pub fn find_stuck_workers(&self, workers: &[(String, bool, Option<DateTime<Utc>>, String)]) -> Vec<WorkerActivity> {
+    pub fn find_stuck_workers(
+        &self,
+        workers: &[(String, bool, Option<DateTime<Utc>>, String)],
+    ) -> Vec<WorkerActivity> {
         workers
             .iter()
             .filter_map(|(worker_id, has_task, last_activity, status)| {
@@ -632,7 +638,7 @@ mod tests {
         // Worker with task and recent activity = Working
         let state = monitor.classify_activity(
             "worker-1",
-            true, // has task
+            true,             // has task
             Some(Utc::now()), // recent activity
             "active",
         );
@@ -691,11 +697,13 @@ mod tests {
         fs::write(
             config.heartbeat_dir.join("worker-1.heartbeat"),
             serde_json::to_string(&data1).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
         fs::write(
             config.heartbeat_dir.join("worker-2.heartbeat"),
             serde_json::to_string(&data2).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let monitor = ActivityMonitor::new(config);
         let heartbeats = monitor.scan_all_heartbeats();
