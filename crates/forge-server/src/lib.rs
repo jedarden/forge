@@ -40,28 +40,30 @@
 //!
 //! For testing purposes, `SimpleAuth` is available but deprecated for production use.
 
-pub mod auth;
-pub mod session;
-pub mod websocket;
 pub mod assignment;
-pub mod protocol;
+pub mod auth;
+pub mod cert_gen;
 pub mod client;
 pub mod oauth_auth;
+pub mod protocol;
 pub mod server_config;
+pub mod session;
 pub mod tls_validation;
-pub mod cert_gen;
+pub mod websocket;
 
-pub use session::{SessionManager, SessionRegistry};
 pub use assignment::BeadAssignmentTracker;
 pub use auth::{AuthProvider, AuthResult, TestAuthProvider};
 pub use oauth_auth::{OAuthAuthProvider, OAuthConfig, OAuthProvider};
+pub use session::{SessionManager, SessionRegistry};
 
 // SimpleAuth has been removed - use OAuthAuthProvider for all deployments
 // For testing, use OAuthAuthProvider::with_defaults() which provides test credentials
-pub use protocol::{ServerMessage, ClientMessage, StateUpdate, ServerState};
+pub use client::{ClientConfig, ClientStateSnapshot, ConnectedUser, ForgeClient};
+pub use protocol::{ClientMessage, ServerMessage, ServerState, StateUpdate};
+pub use server_config::{
+    ServerYamlConfig, load_server_yaml_config, merge_config_with_cli_overrides,
+};
 pub use websocket::{ForgeServer, ServerConfig, TlsConfig, create_server};
-pub use client::{ForgeClient, ClientConfig, ClientStateSnapshot, ConnectedUser};
-pub use server_config::{load_server_yaml_config, merge_config_with_cli_overrides, ServerYamlConfig};
 
 use forge_core::ForgeError;
 
@@ -114,8 +116,13 @@ pub enum ServerError {
     #[error("certificate expiring soon: certificate expires on {0} ({1} days remaining)")]
     CertificateExpiringSoon(String, i64),
 
-    #[error("domain mismatch: certificate is for '{cert_domain}' but server is configured for '{server_domain}'")]
-    DomainMismatch { cert_domain: String, server_domain: String },
+    #[error(
+        "domain mismatch: certificate is for '{cert_domain}' but server is configured for '{server_domain}'"
+    )]
+    DomainMismatch {
+        cert_domain: String,
+        server_domain: String,
+    },
 
     #[error("certificate chain error: {0}")]
     CertificateChainError(String),
@@ -125,10 +132,23 @@ pub enum ServerError {
 
     #[error("TLS validation failed: {0}")]
     TlsValidationFailed(String),
+
+    /// A TLS handshake with a peer failed mid-negotiation. Raised by
+    /// [`ForgeClient`] when the connector is valid but the exchange with the
+    /// server did not complete.
+    #[error("TLS handshake error: {0}")]
+    TlsHandshakeError(String),
+
+    /// The TLS connector could not be built at all (bad config, no root
+    /// store). Raised by [`ForgeClient`] before any connection is attempted.
+    #[error("TLS configuration error: {0}")]
+    TlsConfigurationError(String),
 }
 
 impl From<ServerError> for ForgeError {
     fn from(err: ServerError) -> Self {
-        ForgeError::Internal { message: err.to_string() }
+        ForgeError::Internal {
+            message: err.to_string(),
+        }
     }
 }
