@@ -143,6 +143,20 @@ routing:
 #       # model: sonnet                  # defaults to the tier's stock model
 #       # workspace: ~/myproject         # defaults to the home directory
 #       # launcher: ~/.forge/launcher.sh
+
+# Bead dispatch: let the control loop turn a bead queue into running
+# workers — on its cadence it picks the next ready bead, claims it in the
+# bead store, and launches a worker with --bead-ref=<bead-id>.
+# Off by default; a disabled loop never dispatches.
+# bead_dispatch:
+#   enabled: true
+#   interval_secs: 30         # how often the loop polls the queues
+#   max_in_flight: 1          # concurrent bead workers (max 16)
+#   refused_retry_secs: 300   # cool-down before retrying a refused bead
+#   workspaces:
+#     - ~/myproject
+#   # launcher: ~/.forge/launcher.sh  # defaults to ~/.forge/launcher.sh
+#   # model: sonnet                    # defaults to sonnet
 "#,
         version = version,
         binary_path = binary_path,
@@ -237,6 +251,20 @@ routing:
 #       # model: sonnet                  # defaults to the tier's stock model
 #       # workspace: ~/myproject         # defaults to the home directory
 #       # launcher: ~/.forge/launcher.sh
+
+# Bead dispatch: let the control loop turn a bead queue into running
+# workers — on its cadence it picks the next ready bead, claims it in the
+# bead store, and launches a worker with --bead-ref=<bead-id>.
+# Off by default; a disabled loop never dispatches.
+# bead_dispatch:
+#   enabled: true
+#   interval_secs: 30         # how often the loop polls the queues
+#   max_in_flight: 1          # concurrent bead workers (max 16)
+#   refused_retry_secs: 300   # cool-down before retrying a refused bead
+#   workspaces:
+#     - ~/myproject
+#   # launcher: ~/.forge/launcher.sh  # defaults to ~/.forge/launcher.sh
+#   # model: sonnet                    # defaults to sonnet
 "#,
         version = version,
         binary_path = binary_path,
@@ -549,5 +577,69 @@ mod tests {
         let content = fs::read_to_string(config_path).unwrap();
         assert!(content.contains("chat_backend:"));
         assert!(content.contains("command: claude"));
+    }
+
+    /// Both generated configs must stay valid YAML, and the commented-out
+    /// opt-in sections (worker_pool, bead_dispatch) must not activate
+    /// anything: `forge init` output keeps those features off. The
+    /// documented template must also be schema-accurate — uncommenting it
+    /// yields a `bead_dispatch` section the parser accepts, so the example
+    /// can never silently drift from [`BeadDispatchConfig`].
+    #[test]
+    fn test_generated_configs_are_valid_yaml_with_opt_ins_off() {
+        let tool = create_test_tool("claude-code");
+        for content in [
+            generate_claude_config(&tool),
+            generate_opencode_config(&tool),
+        ] {
+            let parsed: serde_yaml::Value =
+                serde_yaml::from_str(&content).expect("generated config must be valid YAML");
+            assert!(parsed.get("worker_pool").is_none());
+            assert!(parsed.get("bead_dispatch").is_none());
+            assert!(content.contains("# bead_dispatch:"));
+
+            // Uncomment the documented bead_dispatch block (from its header
+            // to the end of the template) and check it parses into the
+            // values it advertises. Strip `# ` rather than a bare `#`: the
+            // header must end up flush left like the other top-level keys —
+            // YAML block mappings reject keys at a new indentation.
+            let mut in_section = false;
+            let uncommented: String = content
+                .lines()
+                .map(|line| {
+                    if line == "# bead_dispatch:" {
+                        in_section = true;
+                        return "bead_dispatch:".to_string();
+                    }
+                    if in_section && line.starts_with("# ") {
+                        line.replacen("# ", "", 1)
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let enabled: serde_yaml::Value = serde_yaml::from_str(&uncommented)
+                .expect("uncommenting the documented bead_dispatch block must stay valid YAML");
+            let dispatch = enabled
+                .get("bead_dispatch")
+                .expect("uncommented template activates bead_dispatch");
+            assert_eq!(
+                dispatch.get("enabled").and_then(|v| v.as_bool()),
+                Some(true)
+            );
+            assert_eq!(
+                dispatch.get("interval_secs").and_then(|v| v.as_u64()),
+                Some(30)
+            );
+            assert_eq!(
+                dispatch.get("max_in_flight").and_then(|v| v.as_u64()),
+                Some(1)
+            );
+            assert_eq!(
+                dispatch.get("refused_retry_secs").and_then(|v| v.as_u64()),
+                Some(300)
+            );
+        }
     }
 }
