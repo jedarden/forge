@@ -120,11 +120,17 @@ pub fn handle_config_error_interactive(error: &ConfigError) -> io::Result<bool> 
         "1" => {
             if let Err(e) = reset_to_defaults(&error.path) {
                 eprintln!("❌ Failed to reset config: {}", e);
-                eprintln!("   You can manually restore from: {}", get_backup_path(&error.path).display());
+                eprintln!(
+                    "   You can manually restore from: {}",
+                    get_backup_path(&error.path).display()
+                );
                 return Ok(false);
             }
             eprintln!("✅ Configuration reset to defaults");
-            eprintln!("   Previous config backed up to: {}", get_backup_path(&error.path).display());
+            eprintln!(
+                "   Previous config backed up to: {}",
+                get_backup_path(&error.path).display()
+            );
             eprintln!();
             Ok(true)
         }
@@ -136,7 +142,10 @@ pub fn handle_config_error_interactive(error: &ConfigError) -> io::Result<bool> 
         }
         "3" | "" => {
             eprintln!("Exiting. Please fix the config file and try again.");
-            eprintln!("Backup available at: {}", get_backup_path(&error.path).display());
+            eprintln!(
+                "Backup available at: {}",
+                get_backup_path(&error.path).display()
+            );
             Ok(false)
         }
         _ => {

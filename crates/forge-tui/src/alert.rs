@@ -76,9 +76,9 @@ impl AlertType {
     /// Get the default severity for this alert type.
     pub fn default_severity(&self) -> AlertSeverity {
         match self {
-            AlertType::WorkerCrashed
-            | AlertType::WorkerZombie
-            | AlertType::RecoveryExhausted => AlertSeverity::Critical,
+            AlertType::WorkerCrashed | AlertType::WorkerZombie | AlertType::RecoveryExhausted => {
+                AlertSeverity::Critical
+            }
             AlertType::WorkerStale
             | AlertType::TaskStuck
             | AlertType::WorkerUnresponsive
@@ -150,11 +150,7 @@ pub struct HealthAlert {
 
 impl HealthAlert {
     /// Create a new alert.
-    pub fn new(
-        id: u64,
-        alert_type: AlertType,
-        worker_id: impl Into<String>,
-    ) -> Self {
+    pub fn new(id: u64, alert_type: AlertType, worker_id: impl Into<String>) -> Self {
         Self {
             id,
             alert_type,
@@ -221,7 +217,11 @@ impl HealthAlert {
     /// Format for detailed display.
     pub fn format_detail(&self) -> String {
         let time = self.created_at.format("%H:%M:%S");
-        let ack_status = if self.acknowledged { "acknowledged" } else { "active" };
+        let ack_status = if self.acknowledged {
+            "acknowledged"
+        } else {
+            "active"
+        };
         let count_info = if self.occurrence_count > 1 {
             format!(" (occurred {} times)", self.occurrence_count)
         } else {
@@ -337,8 +337,12 @@ impl AlertManager {
                 alert.acknowledge();
                 // Update counts
                 match alert.severity {
-                    AlertSeverity::Critical => self.critical_count = self.critical_count.saturating_sub(1),
-                    AlertSeverity::Warning => self.warning_count = self.warning_count.saturating_sub(1),
+                    AlertSeverity::Critical => {
+                        self.critical_count = self.critical_count.saturating_sub(1)
+                    }
+                    AlertSeverity::Warning => {
+                        self.warning_count = self.warning_count.saturating_sub(1)
+                    }
                     AlertSeverity::Info => {}
                 }
             }
@@ -356,8 +360,12 @@ impl AlertManager {
                 count += 1;
                 // Update counts
                 match alert.severity {
-                    AlertSeverity::Critical => self.critical_count = self.critical_count.saturating_sub(1),
-                    AlertSeverity::Warning => self.warning_count = self.warning_count.saturating_sub(1),
+                    AlertSeverity::Critical => {
+                        self.critical_count = self.critical_count.saturating_sub(1)
+                    }
+                    AlertSeverity::Warning => {
+                        self.warning_count = self.warning_count.saturating_sub(1)
+                    }
                     AlertSeverity::Info => {}
                 }
             }
@@ -390,8 +398,12 @@ impl AlertManager {
                 // Update counts
                 if !alert.acknowledged {
                     match alert.severity {
-                        AlertSeverity::Critical => self.critical_count = self.critical_count.saturating_sub(1),
-                        AlertSeverity::Warning => self.warning_count = self.warning_count.saturating_sub(1),
+                        AlertSeverity::Critical => {
+                            self.critical_count = self.critical_count.saturating_sub(1)
+                        }
+                        AlertSeverity::Warning => {
+                            self.warning_count = self.warning_count.saturating_sub(1)
+                        }
                         AlertSeverity::Info => {}
                     }
                 }
@@ -426,10 +438,7 @@ impl AlertManager {
 
     /// Get all active alerts (unacknowledged and acknowledged).
     pub fn active_alerts(&self) -> Vec<&HealthAlert> {
-        self.alerts
-            .values()
-            .filter(|a| a.is_active)
-            .collect()
+        self.alerts.values().filter(|a| a.is_active).collect()
     }
 
     /// Get unacknowledged alerts only.
@@ -505,11 +514,7 @@ impl AlertManager {
 
     /// Prune oldest resolved alerts.
     fn prune_oldest_resolved(&mut self) {
-        let mut resolved: Vec<_> = self
-            .alerts
-            .iter()
-            .filter(|(_, a)| !a.is_active)
-            .collect();
+        let mut resolved: Vec<_> = self.alerts.iter().filter(|(_, a)| !a.is_active).collect();
         resolved.sort_by_key(|(_, a)| a.created_at);
 
         let to_remove: Vec<u64> = resolved
@@ -644,9 +649,7 @@ impl AlertNotifier {
     fn can_ring_bell(&self) -> bool {
         match self.last_bell {
             None => true,
-            Some(last) => {
-                last.elapsed().as_secs() >= self.bell_interval_secs
-            }
+            Some(last) => last.elapsed().as_secs() >= self.bell_interval_secs,
         }
     }
 

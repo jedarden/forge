@@ -390,7 +390,12 @@ impl<'a> MetricsPanel<'a> {
         if self.data.realtime.has_data() {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("⚡ Live", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "⚡ Live",
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(" "),
                 Span::styled(
                     format!("{} API calls", self.data.realtime.total_calls),
@@ -495,7 +500,11 @@ impl<'a> MetricsPanel<'a> {
 
         // Sort by total cost (descending) to show most expensive models first
         let mut sorted_models = models.clone();
-        sorted_models.sort_by(|a, b| b.total_cost_usd.partial_cmp(&a.total_cost_usd).unwrap_or(std::cmp::Ordering::Equal));
+        sorted_models.sort_by(|a, b| {
+            b.total_cost_usd
+                .partial_cmp(&a.total_cost_usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let rows: Vec<Row> = sorted_models
             .iter()
@@ -651,7 +660,9 @@ impl<'a> MetricsPanel<'a> {
         lines.push(Line::from(vec![
             Span::styled(
                 "Worker Efficiency",
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw(" (7-day)"),
         ]));
@@ -707,7 +718,6 @@ impl<'a> MetricsPanel<'a> {
         let paragraph = Paragraph::new(lines);
         paragraph.render(area, buf);
     }
-
 }
 
 impl Widget for MetricsPanel<'_> {
@@ -805,9 +815,9 @@ impl MetricsPanel<'_> {
         let left_layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(4),  // Summary
-                Constraint::Min(10),    // Histogram (24h)
-                Constraint::Length(4),  // 7-day Trend
+                Constraint::Length(4), // Summary
+                Constraint::Min(10),   // Histogram (24h)
+                Constraint::Length(4), // 7-day Trend
             ])
             .split(columns[0]);
 
@@ -815,8 +825,8 @@ impl MetricsPanel<'_> {
         let right_layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(8),  // Model comparison
-                Constraint::Min(6),  // Worker efficiency
+                Constraint::Min(8), // Model comparison
+                Constraint::Min(6), // Worker efficiency
             ])
             .split(columns[1]);
 

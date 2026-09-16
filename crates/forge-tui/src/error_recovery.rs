@@ -225,17 +225,30 @@ impl ErrorRecoveryManager {
 
     /// Get recent errors (last N errors).
     pub fn recent_errors(&self, count: usize) -> Vec<&RecordedError> {
-        self.errors.iter().rev().take(count).collect::<Vec<_>>().into_iter().rev().collect()
+        self.errors
+            .iter()
+            .rev()
+            .take(count)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect()
     }
 
     /// Get errors by category.
     pub fn errors_by_category(&self, category: ErrorCategory) -> Vec<&RecordedError> {
-        self.errors.iter().filter(|e| e.category == category).collect()
+        self.errors
+            .iter()
+            .filter(|e| e.category == category)
+            .collect()
     }
 
     /// Get errors by severity.
     pub fn errors_by_severity(&self, severity: ErrorSeverity) -> Vec<&RecordedError> {
-        self.errors.iter().filter(|e| e.severity == severity).collect()
+        self.errors
+            .iter()
+            .filter(|e| e.severity == severity)
+            .collect()
     }
 
     /// Get count of errors by category.
@@ -245,18 +258,24 @@ impl ErrorRecoveryManager {
 
     /// Check if there are any fatal errors.
     pub fn has_fatal_errors(&self) -> bool {
-        self.errors.iter().any(|e| e.severity == ErrorSeverity::Fatal)
+        self.errors
+            .iter()
+            .any(|e| e.severity == ErrorSeverity::Fatal)
     }
 
     /// Get the most recent fatal error (if any).
     pub fn latest_fatal(&self) -> Option<&RecordedError> {
-        self.errors.iter().rev().find(|e| e.severity == ErrorSeverity::Fatal)
+        self.errors
+            .iter()
+            .rev()
+            .find(|e| e.severity == ErrorSeverity::Fatal)
     }
 
     /// Clear acknowledged errors older than the specified duration.
     pub fn cleanup_old_errors(&mut self, max_age_secs: u64) {
         let cutoff = Instant::now() - std::time::Duration::from_secs(max_age_secs);
-        self.errors.retain(|e| !e.acknowledged || e.timestamp > cutoff);
+        self.errors
+            .retain(|e| !e.acknowledged || e.timestamp > cutoff);
     }
 
     /// Get total error count.

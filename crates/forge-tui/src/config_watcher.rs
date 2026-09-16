@@ -27,7 +27,7 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tracing::{debug, info, warn};
 
 // Re-export config types from forge-config crate
-pub use forge_config::{ForgeConfig, ConfigLoadError, config_path};
+pub use forge_config::{ConfigLoadError, ForgeConfig, config_path};
 
 /// Default debounce duration for config changes (50ms).
 pub const DEFAULT_DEBOUNCE_MS: u64 = 50;
@@ -172,7 +172,9 @@ impl ConfigWatcher {
 
         // Watch the parent directory (more reliable than watching file directly)
         let watch_path = config_path.parent().unwrap_or(&config_path);
-        watcher.watch(watch_path, RecursiveMode::NonRecursive).ok()?;
+        watcher
+            .watch(watch_path, RecursiveMode::NonRecursive)
+            .ok()?;
 
         info!("Started watching config file: {:?}", config_path);
 

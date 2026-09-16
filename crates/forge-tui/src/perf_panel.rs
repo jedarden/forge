@@ -17,7 +17,10 @@ pub struct PerfPanel<'a> {
 
 impl<'a> PerfPanel<'a> {
     pub fn new(metrics: &'a PerfMetrics) -> Self {
-        Self { metrics, focused: false }
+        Self {
+            metrics,
+            focused: false,
+        }
     }
     pub fn focused(mut self, focused: bool) -> Self {
         self.focused = focused;
@@ -59,7 +62,10 @@ impl Widget for PerfPanel<'_> {
             .borders(Borders::ALL)
             .border_type(border_type)
             .border_style(border_style)
-            .title(Span::styled(format!(" {} FORGE Performance ", focus_icon), title_style));
+            .title(Span::styled(
+                format!(" {} FORGE Performance ", focus_icon),
+                title_style,
+            ));
 
         let inner = block.inner(area);
         block.render(area, buf);
@@ -84,48 +90,92 @@ impl Widget for PerfPanel<'_> {
         let loop_samples = self.metrics.event_loop_samples();
         let loop_sparkline = if !loop_samples.is_empty() {
             render_sparkline(&loop_samples, inner.width.saturating_sub(2) as usize)
-        } else { "No data".to_string() };
+        } else {
+            "No data".to_string()
+        };
 
         let render_samples = self.metrics.render_time_samples();
         let render_sparkline = if !render_samples.is_empty() {
             render_sparkline(&render_samples, inner.width.saturating_sub(2) as usize)
-        } else { "No data".to_string() };
+        } else {
+            "No data".to_string()
+        };
 
         let lines = vec![
             Line::from(vec![
                 Span::styled("Health: ", Style::default().fg(Color::Gray)),
-                Span::styled(health.label(), Style::default().fg(health_color).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    health.label(),
+                    Style::default()
+                        .fg(health_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("   "),
                 Span::styled(format!("{:.1} FPS", fps), Style::default().fg(Color::Cyan)),
             ]),
             Line::from(""),
-            Line::from(vec![
-                Span::styled("Event Loop ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            ]),
-            Line::from(Span::styled(loop_sparkline, Style::default().fg(Color::Green))),
+            Line::from(vec![Span::styled(
+                "Event Loop ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(Span::styled(
+                loop_sparkline,
+                Style::default().fg(Color::Green),
+            )),
             Line::from(vec![
                 Span::styled("Avg: ", Style::default().fg(Color::Gray)),
                 Span::styled(format_us(avg_loop), Style::default().fg(Color::White)),
                 Span::raw("  "),
                 Span::styled("P95: ", Style::default().fg(Color::Gray)),
-                Span::styled(format_us(p95_loop), if p95_loop < 16667 { Color::Green } else { Color::Red }),
+                Span::styled(
+                    format_us(p95_loop),
+                    if p95_loop < 16667 {
+                        Color::Green
+                    } else {
+                        Color::Red
+                    },
+                ),
             ]),
             Line::from(""),
-            Line::from(vec![
-                Span::styled("Render Time ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
-            ]),
-            Line::from(Span::styled(render_sparkline, Style::default().fg(Color::Magenta))),
+            Line::from(vec![Span::styled(
+                "Render Time ",
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(Span::styled(
+                render_sparkline,
+                Style::default().fg(Color::Magenta),
+            )),
             Line::from(vec![
                 Span::styled("Avg: ", Style::default().fg(Color::Gray)),
                 Span::styled(format_us(avg_render), Style::default().fg(Color::White)),
                 Span::raw("  "),
                 Span::styled("P95: ", Style::default().fg(Color::Gray)),
-                Span::styled(format_us(p95_render), if p95_render < 8000 { Color::Green } else { Color::Yellow }),
+                Span::styled(
+                    format_us(p95_render),
+                    if p95_render < 8000 {
+                        Color::Green
+                    } else {
+                        Color::Yellow
+                    },
+                ),
             ]),
             Line::from(""),
             Line::from(vec![
                 Span::styled("Memory: ", Style::default().fg(Color::Gray)),
-                Span::styled(format!("{} MB", memory_mb), if memory_mb < 200 { Color::Green } else if memory_mb < 500 { Color::Yellow } else { Color::Red }),
+                Span::styled(
+                    format!("{} MB", memory_mb),
+                    if memory_mb < 200 {
+                        Color::Green
+                    } else if memory_mb < 500 {
+                        Color::Yellow
+                    } else {
+                        Color::Red
+                    },
+                ),
             ]),
             Line::from(""),
             Line::from(vec![
@@ -143,7 +193,9 @@ impl Widget for PerfPanel<'_> {
 }
 
 fn render_sparkline(values: &[u64], width: usize) -> String {
-    if values.is_empty() { return " ".repeat(width); }
+    if values.is_empty() {
+        return " ".repeat(width);
+    }
     let blocks = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
     let max = values.iter().cloned().fold(0u64, u64::max);
     let min = values.iter().cloned().fold(u64::MAX, u64::min);
@@ -153,14 +205,22 @@ fn render_sparkline(values: &[u64], width: usize) -> String {
     for i in 0..width {
         let idx = ((i as f64) * step).min(values.len() as f64 - 1.0) as usize;
         let val = values[idx];
-        let normalized = if range > 0.0 { ((val.saturating_sub(min)) as f64 / range).clamp(0.0, 1.0) } else { 0.5 };
+        let normalized = if range > 0.0 {
+            ((val.saturating_sub(min)) as f64 / range).clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
         result.push(blocks[((normalized * 7.0).round() as usize).min(7)]);
     }
     result
 }
 
 fn format_us(us: u64) -> String {
-    if us < 1_000 { format!("{}μs", us) }
-    else if us < 1_000_000 { format!("{:.2}ms", us as f64 / 1_000.0) }
-    else { format!("{:.2}s", us as f64 / 1_000_000.0) }
+    if us < 1_000 {
+        format!("{}μs", us)
+    } else if us < 1_000_000 {
+        format!("{:.2}ms", us as f64 / 1_000.0)
+    } else {
+        format!("{:.2}s", us as f64 / 1_000_000.0)
+    }
 }

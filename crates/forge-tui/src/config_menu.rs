@@ -6,11 +6,11 @@
 //! - Worker settings (defaults, timeouts)
 
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
-    Frame,
 };
 
 use forge_config::ForgeConfig;
@@ -78,19 +78,15 @@ impl ConfigInputType {
     /// Validate and normalize input for this type.
     pub fn validate(&self, input: &str) -> Result<String, String> {
         match self {
-            ConfigInputType::Integer => {
-                input.parse::<u64>()
-                    .map(|v| v.to_string())
-                    .map_err(|_| "Must be a positive integer".to_string())
-            }
-            ConfigInputType::Float => {
-                input.parse::<f64>()
-                    .map(|v| v.to_string())
-                    .map_err(|_| "Must be a number".to_string())
-            }
-            ConfigInputType::Text => {
-                Ok(input.to_string())
-            }
+            ConfigInputType::Integer => input
+                .parse::<u64>()
+                .map(|v| v.to_string())
+                .map_err(|_| "Must be a positive integer".to_string()),
+            ConfigInputType::Float => input
+                .parse::<f64>()
+                .map(|v| v.to_string())
+                .map_err(|_| "Must be a number".to_string()),
+            ConfigInputType::Text => Ok(input.to_string()),
             ConfigInputType::Select { options } => {
                 // Check if input matches an option (case-insensitive)
                 let input_lower = input.to_lowercase();
@@ -133,7 +129,11 @@ pub fn build_settings_items(config: &ForgeConfig) -> Vec<ConfigMenuItem> {
         },
         ConfigMenuItem {
             label: "Theme",
-            value: config.theme.name.clone().unwrap_or_else(|| "default".to_string()),
+            value: config
+                .theme
+                .name
+                .clone()
+                .unwrap_or_else(|| "default".to_string()),
             description: "Color theme",
             editable: true,
             input_type: ConfigInputType::Select {
@@ -161,7 +161,11 @@ pub fn build_budget_items(config: &ForgeConfig) -> Vec<ConfigMenuItem> {
     vec![
         ConfigMenuItem {
             label: "Cost Tracking",
-            value: if config.cost_tracking.enabled { "enabled".to_string() } else { "disabled".to_string() },
+            value: if config.cost_tracking.enabled {
+                "enabled".to_string()
+            } else {
+                "disabled".to_string()
+            },
             description: "Enable/disable cost tracking",
             editable: true,
             input_type: ConfigInputType::Select {
@@ -170,7 +174,9 @@ pub fn build_budget_items(config: &ForgeConfig) -> Vec<ConfigMenuItem> {
         },
         ConfigMenuItem {
             label: "Monthly Budget",
-            value: config.cost_tracking.monthly_budget_usd
+            value: config
+                .cost_tracking
+                .monthly_budget_usd
                 .map(|v| format!("${:.2}", v))
                 .unwrap_or_else(|| "Not set".to_string()),
             description: "Monthly budget limit in USD",
@@ -236,7 +242,11 @@ pub fn build_worker_items(config: &ForgeConfig) -> Vec<ConfigMenuItem> {
         },
         ConfigMenuItem {
             label: "Auto-Recovery",
-            value: if config.auto_recovery.enabled { "enabled".to_string() } else { "disabled".to_string() },
+            value: if config.auto_recovery.enabled {
+                "enabled".to_string()
+            } else {
+                "disabled".to_string()
+            },
             description: "Enable automatic recovery actions",
             editable: true,
             input_type: ConfigInputType::Select {
@@ -274,14 +284,13 @@ pub struct ConfigMenuParams<'a> {
 }
 
 /// Draw a configuration menu overlay.
-pub fn draw_config_menu(
-    frame: &mut Frame,
-    params: ConfigMenuParams<'_>,
-) {
+pub fn draw_config_menu(frame: &mut Frame, params: ConfigMenuParams<'_>) {
     // Calculate overlay dimensions
     let overlay_width = 70.min(params.area.width.saturating_sub(4));
     let content_height = params.items.len() as u16 + 6; // header + items + footer
-    let overlay_height = content_height.max(12).min(params.area.height.saturating_sub(4));
+    let overlay_height = content_height
+        .max(12)
+        .min(params.area.height.saturating_sub(4));
     let overlay_x = (params.area.width - overlay_width) / 2;
     let overlay_y = (params.area.height - overlay_height) / 2;
 
@@ -295,7 +304,11 @@ pub fn draw_config_menu(
 
     // Title with hotkey hint
     lines.push(Line::from(Span::styled(
-        format!("{} Configuration [{}]", params.menu_type.title(), params.menu_type.hotkey()),
+        format!(
+            "{} Configuration [{}]",
+            params.menu_type.title(),
+            params.menu_type.hotkey()
+        ),
         Style::default()
             .fg(params.theme.colors.header)
             .add_modifier(Modifier::BOLD),
@@ -331,7 +344,12 @@ pub fn draw_config_menu(
                     .bg(params.theme.colors.hotkey)
                     .add_modifier(Modifier::SLOW_BLINK),
             );
-            lines.push(Line::from(vec![label_span, Span::raw(" "), input_span, cursor_span]));
+            lines.push(Line::from(vec![
+                label_span,
+                Span::raw(" "),
+                input_span,
+                cursor_span,
+            ]));
         } else {
             // Normal display mode
             let label_style = if is_selected {

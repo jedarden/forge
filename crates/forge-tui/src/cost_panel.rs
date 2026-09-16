@@ -100,7 +100,7 @@ impl Default for BudgetConfig {
         Self {
             monthly_limit: 500.0, // $500/month default
             daily_limit: None,
-            warning_threshold: 80.0,  // 80% triggers warning
+            warning_threshold: 80.0, // 80% triggers warning
             critical_threshold: 90.0,
         }
     }
@@ -615,7 +615,9 @@ impl<'a> CostPanel<'a> {
                 Span::styled("Savings: ", Style::default().fg(Color::Green)),
                 Span::styled(
                     format_usd(self.data.savings_achieved),
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" achieved"),
             ]));
@@ -653,7 +655,12 @@ impl<'a> CostPanel<'a> {
         if self.data.realtime.has_data() {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("⚡ Live", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "⚡ Live",
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(" "),
                 Span::styled(
                     format!("{} calls", self.data.realtime.total_calls),
@@ -793,8 +800,7 @@ impl<'a> CostPanel<'a> {
     /// Render optimization recommendations.
     fn render_recommendations(&self, area: Rect, buf: &mut Buffer) {
         if self.data.recommendations.is_empty() {
-            let msg =
-                Paragraph::new("No recommendations").style(Style::default().fg(Color::Gray));
+            let msg = Paragraph::new("No recommendations").style(Style::default().fg(Color::Gray));
             msg.render(area, buf);
             return;
         }
@@ -932,7 +938,10 @@ impl<'a> CostPanel<'a> {
                     Style::default().fg(Color::Gray),
                 ),
                 Span::raw(" "),
-                Span::styled(format_usd(worker.total_cost_usd), Style::default().fg(cost_color)),
+                Span::styled(
+                    format_usd(worker.total_cost_usd),
+                    Style::default().fg(cost_color),
+                ),
                 Span::raw("  "),
                 Span::styled(task, Style::default().fg(Color::DarkGray)),
             ]));
@@ -1032,16 +1041,20 @@ impl Widget for CostPanel<'_> {
         }
 
         // Layout: Summary | Worker Costs | Model Table | Trend | Recommendations
-        let rec_height = if self.data.has_recommendations() { 5 } else { 0 };
+        let rec_height = if self.data.has_recommendations() {
+            5
+        } else {
+            0
+        };
         let worker_height = if self.data.has_worker_costs() { 8 } else { 0 };
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(11),     // Summary (increased for week line)
+                Constraint::Length(11),            // Summary (increased for week line)
                 Constraint::Length(worker_height), // Worker costs
-                Constraint::Min(5),         // Model table
-                Constraint::Length(4),      // Trend sparkline
-                Constraint::Length(rec_height), // Recommendations
+                Constraint::Min(5),                // Model table
+                Constraint::Length(4),             // Trend sparkline
+                Constraint::Length(rec_height),    // Recommendations
             ])
             .split(inner);
 

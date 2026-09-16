@@ -46,7 +46,6 @@ pub mod cost_panel;
 pub mod data;
 pub mod error_recovery;
 pub mod event;
-pub mod routing_panel;
 #[cfg(test)]
 mod integration_tests;
 pub mod log;
@@ -54,6 +53,7 @@ pub mod log_watcher;
 pub mod metrics_panel;
 pub mod perf_metrics;
 pub mod perf_panel;
+pub mod routing_panel;
 pub mod sessions_panel;
 pub mod status;
 pub mod subscription_panel;
@@ -62,7 +62,10 @@ pub mod view;
 pub mod widget;
 pub mod worker_panel;
 
-pub use config_menu::{ConfigInputType, ConfigMenuItem, ConfigMenuType, build_budget_items, build_settings_items, build_worker_items, draw_config_menu};
+pub use config_menu::{
+    ConfigInputType, ConfigMenuItem, ConfigMenuType, build_budget_items, build_settings_items,
+    build_worker_items, draw_config_menu,
+};
 pub use config_watcher::{ConfigEvent, ConfigLoadError, ConfigWatcher, ForgeConfig};
 pub use widget::{
     HotkeyHints, ProgressBar, ProgressColorMode, ProgressFillStyle, QuickAction, QuickActionType,
@@ -70,40 +73,38 @@ pub use widget::{
     render_sparkline_i64,
 };
 
+pub use activity_panel::{
+    ActivityEntry, ActivityEventType, ActivityLogData, ActivityPanel, ActivitySummaryCompact,
+    DEFAULT_ACTIVITY_CAPACITY,
+};
+pub use alert::{AlertBadge, AlertManager, AlertSeverity, AlertType, HealthAlert};
 pub use app::{App, AppResult, ClientConfig};
 pub use bead::{Bead, BeadManager, BeadStats};
 pub use cost_panel::{
     BudgetAlertLevel, BudgetConfig, CostPanel, CostPanelData, CostSummaryCompact,
 };
 pub use data::{DataManager, WorkerData};
+pub use error_recovery::{
+    ErrorCategory, ErrorRecoveryManager, ErrorSeverity, RecordedError, SharedErrorRecoveryManager,
+    chat_backend_guidance, db_locked_guidance, invalid_config_guidance, network_timeout_guidance,
+    worker_crash_guidance,
+};
 pub use event::{AppEvent, InputHandler, WorkerExecutor};
 pub use log::{LogBuffer, LogEntry, LogEvent, LogLevel, LogTailer, LogTailerConfig};
 pub use log_watcher::{
-    LogWatcher, LogWatcherConfig, LogWatcherError, LogWatcherEvent, RealtimeMetrics,
-    DEFAULT_DEBOUNCE_MS, DEFAULT_LOG_DIR, DEFAULT_POLL_INTERVAL_MS,
-};
-pub use activity_panel::{
-    ActivityEntry, ActivityEventType, ActivityLogData, ActivityPanel, ActivitySummaryCompact,
-    DEFAULT_ACTIVITY_CAPACITY,
-};
-pub use alert::{
-    AlertBadge, AlertManager, AlertSeverity, AlertType, HealthAlert,
+    DEFAULT_DEBOUNCE_MS, DEFAULT_LOG_DIR, DEFAULT_POLL_INTERVAL_MS, LogWatcher, LogWatcherConfig,
+    LogWatcherError, LogWatcherEvent, RealtimeMetrics,
 };
 pub use metrics_panel::{MetricsPanel, MetricsPanelData, MetricsSummaryCompact};
 pub use perf_metrics::{HealthStatus, PerfAlert, PerfAlertType, PerfMetrics, get_memory_rss};
 pub use perf_panel::PerfPanel;
+pub use routing_panel::{RoutingData, RoutingPanel};
+pub use sessions_panel::SessionsPanel;
 pub use status::{StatusEvent, StatusWatcher, StatusWatcherConfig, WorkerStatusFile};
 pub use subscription_panel::{
     SubscriptionAction, SubscriptionData, SubscriptionPanel, SubscriptionService,
     SubscriptionStatus, SubscriptionSummaryCompact, format_subscription_summary,
 };
-pub use sessions_panel::{SessionsPanel};
 pub use theme::{Theme, ThemeColors, ThemeManager, ThemeName};
 pub use view::{FocusPanel, LayoutMode, View};
 pub use worker_panel::{WorkerPanel, format_health_summary_narrow};
-pub use routing_panel::{RoutingData, RoutingPanel};
-pub use error_recovery::{
-    ErrorCategory, ErrorRecoveryManager, ErrorSeverity, RecordedError, SharedErrorRecoveryManager,
-    db_locked_guidance, invalid_config_guidance, network_timeout_guidance, worker_crash_guidance,
-    chat_backend_guidance,
-};

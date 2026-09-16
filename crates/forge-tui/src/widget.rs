@@ -298,18 +298,16 @@ impl<'a> Widget for QuickActionsPanel<'a> {
         lines.push(Line::from(""));
         lines.push(Line::from(legend));
 
-        let paragraph = Paragraph::new(lines)
-            .style(content_style)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(border_type)
-                    .border_style(border_style)
-                    .title(Span::styled(
-                        format!(" {} Quick Actions ", focus_icon),
-                        title_style,
-                    )),
-            );
+        let paragraph = Paragraph::new(lines).style(content_style).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(border_type)
+                .border_style(border_style)
+                .title(Span::styled(
+                    format!(" {} Quick Actions ", focus_icon),
+                    title_style,
+                )),
+        );
 
         paragraph.render(area, buf);
     }
@@ -923,17 +921,15 @@ impl Widget for FocusablePanel<'_> {
             Style::default().fg(Color::DarkGray)
         };
 
-        let paragraph = Paragraph::new(self.content)
-            .style(content_style)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(border_style)
-                    .title(Span::styled(
-                        format!(" {} {} ", focus_icon, self.title),
-                        title_style,
-                    )),
-            );
+        let paragraph = Paragraph::new(self.content).style(content_style).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(border_style)
+                .title(Span::styled(
+                    format!(" {} {} ", focus_icon, self.title),
+                    title_style,
+                )),
+        );
 
         paragraph.render(area, buf);
     }

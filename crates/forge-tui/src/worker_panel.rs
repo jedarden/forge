@@ -71,9 +71,10 @@ impl<'a> WorkerPanel<'a> {
             Some(h) => {
                 let color = Self::health_color(h);
                 let indicator = h.health_indicator();
-                vec![
-                    Span::styled(indicator, Style::default().fg(color).add_modifier(Modifier::BOLD)),
-                ]
+                vec![Span::styled(
+                    indicator,
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                )]
             }
             None => vec![Span::styled("?", Style::default().fg(Color::DarkGray))],
         }
@@ -112,7 +113,9 @@ impl<'a> WorkerPanel<'a> {
             // Healthy count (green)
             summary_spans.push(Span::styled(
                 format!("{} ", healthy),
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
             ));
             summary_spans.push(Span::styled("●", Style::default().fg(Color::Green)));
             summary_spans.push(Span::raw(" | "));
@@ -120,7 +123,9 @@ impl<'a> WorkerPanel<'a> {
             // Degraded count (yellow)
             summary_spans.push(Span::styled(
                 format!("{} ", degraded),
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             ));
             summary_spans.push(Span::styled("◐", Style::default().fg(Color::Yellow)));
             summary_spans.push(Span::raw(" | "));
@@ -145,7 +150,9 @@ impl<'a> WorkerPanel<'a> {
             // Working count (green)
             activity_spans.push(Span::styled(
                 format!("{} ", working),
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
             ));
             activity_spans.push(Span::styled("⟳", Style::default().fg(Color::Green)));
             activity_spans.push(Span::raw(" | "));
@@ -153,7 +160,9 @@ impl<'a> WorkerPanel<'a> {
             // Idle count (cyan)
             activity_spans.push(Span::styled(
                 format!("{} ", idle),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ));
             activity_spans.push(Span::styled("💤", Style::default().fg(Color::Cyan)));
 
@@ -164,7 +173,10 @@ impl<'a> WorkerPanel<'a> {
                     format!("{} ", stuck),
                     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                 ));
-                activity_spans.push(Span::styled("⚠️STUCK", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)));
+                activity_spans.push(Span::styled(
+                    "⚠️STUCK",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ));
             }
 
             lines.push(Line::from(activity_spans));
@@ -177,12 +189,16 @@ impl<'a> WorkerPanel<'a> {
                 Span::raw("Paused: "),
                 Span::styled(
                     format!("{} ", paused_count),
-                    Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled("⏸", Style::default().fg(Color::Magenta)),
                 Span::styled(
                     " PAUSED",
-                    Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
                 ),
             ];
             lines.push(Line::from(paused_spans));
@@ -191,10 +207,10 @@ impl<'a> WorkerPanel<'a> {
         lines.push(Line::raw(""));
 
         // Table header (with selection column)
-        lines.push(Line::from(vec![
-            Span::styled("┌───┬───┬─────────────────┬──────────┬──────────┬─────────────┐",
-                Style::default().fg(Color::DarkGray)),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            "┌───┬───┬─────────────────┬──────────┬──────────┬─────────────┐",
+            Style::default().fg(Color::DarkGray),
+        )]));
         lines.push(Line::from(vec![
             Span::styled("│S│", Style::default().fg(Color::DarkGray)),
             Span::styled(" H ", Style::default().fg(Color::DarkGray)),
@@ -208,10 +224,10 @@ impl<'a> WorkerPanel<'a> {
             Span::styled("Task", Style::default().fg(Color::White)),
             Span::styled("        │", Style::default().fg(Color::DarkGray)),
         ]));
-        lines.push(Line::from(vec![
-            Span::styled("├───┼───┼─────────────────┼──────────┼──────────┼─────────────┤",
-                Style::default().fg(Color::DarkGray)),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            "├───┼───┼─────────────────┼──────────┼──────────┼─────────────┤",
+            Style::default().fg(Color::DarkGray),
+        )]));
 
         // Sort workers by ID
         let mut workers: Vec<_> = self.data.workers.values().collect();
@@ -230,7 +246,9 @@ impl<'a> WorkerPanel<'a> {
 
             // Determine row style based on state
             let row_style = if is_selected && self.focused {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
             } else if is_paused {
                 Style::default().fg(Color::Magenta)
             } else {
@@ -257,7 +275,10 @@ impl<'a> WorkerPanel<'a> {
             let (status, status_style) = if is_paused {
                 ("Paused".to_string(), Style::default().fg(Color::Magenta))
             } else if is_stuck {
-                ("STUCK".to_string(), Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+                (
+                    "STUCK".to_string(),
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                )
             } else {
                 (format_status(&worker.status), row_style)
             };
@@ -276,7 +297,12 @@ impl<'a> WorkerPanel<'a> {
             };
 
             let mut row_spans = vec![
-                Span::styled(sel_indicator, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    sel_indicator,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(" ", Style::default().fg(Color::DarkGray)),
             ];
             row_spans.extend(health_spans);
@@ -287,15 +313,20 @@ impl<'a> WorkerPanel<'a> {
                 row_spans.extend(vec![
                     Span::styled(format!(" │ {:<15} │ {:<8} │ ", worker_id, model), row_style),
                     Span::styled(format!("{:<8}", status), status_style),
-                    Span::styled(format!(" │ {:<11} │", task), Style::default().fg(Color::Red)),
+                    Span::styled(
+                        format!(" │ {:<11} │", task),
+                        Style::default().fg(Color::Red),
+                    ),
                 ]);
                 row_spans
             } else {
-                row_spans.extend(vec![
-                    Span::styled(format!(" │ {:<15} │ {:<8} │ {:<8} │ {:<11} │",
-                        worker_id, model, status, task),
-                        row_style),
-                ]);
+                row_spans.extend(vec![Span::styled(
+                    format!(
+                        " │ {:<15} │ {:<8} │ {:<8} │ {:<11} │",
+                        worker_id, model, status, task
+                    ),
+                    row_style,
+                )]);
                 row_spans
             };
 
@@ -303,10 +334,10 @@ impl<'a> WorkerPanel<'a> {
         }
 
         // Table footer
-        lines.push(Line::from(vec![
-            Span::styled("└───┴───┴─────────────────┴──────────┴──────────┴─────────────┘",
-                Style::default().fg(Color::DarkGray)),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            "└───┴───┴─────────────────┴──────────┴──────────┴─────────────┘",
+            Style::default().fg(Color::DarkGray),
+        )]));
 
         // Show count if more than 10
         if self.data.workers.len() > 10 {

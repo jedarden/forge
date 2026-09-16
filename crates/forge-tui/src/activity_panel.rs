@@ -382,7 +382,10 @@ impl<'a> ActivityPanel<'a> {
             ActivityEventType::Warning => Color::Yellow,
             _ => Color::White,
         };
-        spans.push(Span::styled(entry.message.clone(), Style::default().fg(msg_color)));
+        spans.push(Span::styled(
+            entry.message.clone(),
+            Style::default().fg(msg_color),
+        ));
 
         Line::from(spans)
     }
@@ -461,7 +464,11 @@ impl Widget for ActivityPanel<'_> {
         let visible = self.data.visible_entries(max_lines);
 
         // Build lines from entries (newest at bottom)
-        let lines: Vec<Line> = visible.into_iter().rev().map(|e| self.format_entry_line(e)).collect();
+        let lines: Vec<Line> = visible
+            .into_iter()
+            .rev()
+            .map(|e| self.format_entry_line(e))
+            .collect();
 
         let paragraph = Paragraph::new(lines);
         paragraph.render(inner, buf);
@@ -483,8 +490,7 @@ impl<'a> ActivitySummaryCompact<'a> {
 impl Widget for ActivitySummaryCompact<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if !self.data.has_entries() {
-            let no_activity =
-                Paragraph::new("No activity").style(Style::default().fg(Color::Gray));
+            let no_activity = Paragraph::new("No activity").style(Style::default().fg(Color::Gray));
             no_activity.render(area, buf);
             return;
         }
@@ -559,7 +565,10 @@ mod tests {
         let mut data = ActivityLogData::new(3);
 
         for i in 1..=5 {
-            data.push(ActivityEntry::new(ActivityEventType::Info, format!("Entry {}", i)));
+            data.push(ActivityEntry::new(
+                ActivityEventType::Info,
+                format!("Entry {}", i),
+            ));
         }
 
         assert_eq!(data.len(), 3);
@@ -576,7 +585,10 @@ mod tests {
 
         // Add 10 entries
         for i in 1..=10 {
-            data.push(ActivityEntry::new(ActivityEventType::Info, format!("Entry {}", i)));
+            data.push(ActivityEntry::new(
+                ActivityEventType::Info,
+                format!("Entry {}", i),
+            ));
         }
 
         // Initially at bottom (scroll_offset = 0)
@@ -610,7 +622,10 @@ mod tests {
 
         // Add some entries
         for i in 1..=5 {
-            data.push(ActivityEntry::new(ActivityEventType::Info, format!("Entry {}", i)));
+            data.push(ActivityEntry::new(
+                ActivityEventType::Info,
+                format!("Entry {}", i),
+            ));
         }
 
         // Scroll up to pause auto-scroll
@@ -643,7 +658,10 @@ mod tests {
 
         // Add 10 entries
         for i in 1..=10 {
-            data.push(ActivityEntry::new(ActivityEventType::Info, format!("Entry {}", i)));
+            data.push(ActivityEntry::new(
+                ActivityEventType::Info,
+                format!("Entry {}", i),
+            ));
         }
 
         // At bottom (scroll_offset = 0), should show newest entries

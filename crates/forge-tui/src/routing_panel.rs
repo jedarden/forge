@@ -15,7 +15,7 @@ use ratatui::{
 };
 
 use forge_core::types::WorkerTier;
-use forge_worker::router::{RoutingDecision, RoutingReason, RouterStats};
+use forge_worker::router::{RouterStats, RoutingDecision, RoutingReason};
 
 /// Routing data for display in the TUI.
 #[derive(Debug, Clone, Default)]
@@ -74,11 +74,15 @@ impl RoutingData {
     pub fn calculate_savings(&mut self) {
         // Premium model cost multiplier (relative)
         const PREMIUM_COST: f64 = 1.0;
-        const STANDARD_COST: f64 = 0.2;  // ~20% of premium
-        const BUDGET_COST: f64 = 0.05;   // ~5% of premium
+        const STANDARD_COST: f64 = 0.2; // ~20% of premium
+        const BUDGET_COST: f64 = 0.05; // ~5% of premium
 
         let premium_count = self.by_tier.get(&WorkerTier::Premium).copied().unwrap_or(0) as f64;
-        let standard_count = self.by_tier.get(&WorkerTier::Standard).copied().unwrap_or(0) as f64;
+        let standard_count = self
+            .by_tier
+            .get(&WorkerTier::Standard)
+            .copied()
+            .unwrap_or(0) as f64;
         let budget_count = self.by_tier.get(&WorkerTier::Budget).copied().unwrap_or(0) as f64;
 
         // Cost if all went to premium
@@ -108,7 +112,11 @@ impl RoutingData {
         if self.total_decisions == 0 {
             return 0.0;
         }
-        let standard_count = self.by_tier.get(&WorkerTier::Standard).copied().unwrap_or(0);
+        let standard_count = self
+            .by_tier
+            .get(&WorkerTier::Standard)
+            .copied()
+            .unwrap_or(0);
         (standard_count as f64 / self.total_decisions as f64) * 100.0
     }
 
@@ -144,7 +152,12 @@ impl Widget for RoutingPanel<'_> {
             .border_style(Style::default().fg(Color::DarkGray))
             .title(Line::from(vec![
                 Span::styled("▸ ", Style::default().fg(Color::Cyan)),
-                Span::styled("Model Routing", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "Model Routing",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]))
             .title_style(Style::default().fg(Color::Cyan));
 
@@ -162,7 +175,7 @@ impl Widget for RoutingPanel<'_> {
             let empty = Paragraph::new(
                 "No routing decisions yet.\n\n\
                  Routing decisions appear when workers\n\
-                 are assigned tasks based on complexity."
+                 are assigned tasks based on complexity.",
             )
             .style(Style::default().fg(Color::DarkGray));
             empty.render(inner, buf);
@@ -173,9 +186,9 @@ impl Widget for RoutingPanel<'_> {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(6),   // Summary stats
-                Constraint::Length(8),   // Tier distribution
-                Constraint::Min(10),     // Recent decisions table
+                Constraint::Length(6), // Summary stats
+                Constraint::Length(8), // Tier distribution
+                Constraint::Min(10),   // Recent decisions table
             ])
             .split(inner);
 
@@ -197,13 +210,17 @@ impl RoutingPanel<'_> {
                 Span::styled("Total Decisions: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     format!("{}", self.data.total_decisions),
-                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("   "),
                 Span::styled("Est. Savings: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     format!("${:.2}", self.data.estimated_savings),
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(vec![
@@ -220,7 +237,10 @@ impl RoutingPanel<'_> {
                 ),
             ]),
             Line::from(vec![
-                Span::styled("Complexity Distribution: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    "Complexity Distribution: ",
+                    Style::default().fg(Color::DarkGray),
+                ),
                 Span::styled(
                     format!("{} simple", self.data.complexity_distribution.0),
                     Style::default().fg(Color::Green),
@@ -243,9 +263,24 @@ impl RoutingPanel<'_> {
     }
 
     fn render_tier_distribution(&self, area: Rect, buf: &mut Buffer) {
-        let premium = self.data.by_tier.get(&WorkerTier::Premium).copied().unwrap_or(0);
-        let standard = self.data.by_tier.get(&WorkerTier::Standard).copied().unwrap_or(0);
-        let budget = self.data.by_tier.get(&WorkerTier::Budget).copied().unwrap_or(0);
+        let premium = self
+            .data
+            .by_tier
+            .get(&WorkerTier::Premium)
+            .copied()
+            .unwrap_or(0);
+        let standard = self
+            .data
+            .by_tier
+            .get(&WorkerTier::Standard)
+            .copied()
+            .unwrap_or(0);
+        let budget = self
+            .data
+            .by_tier
+            .get(&WorkerTier::Budget)
+            .copied()
+            .unwrap_or(0);
         let total = self.data.total_decisions.max(1) as f64;
 
         let rows = vec![
@@ -294,7 +329,12 @@ impl RoutingPanel<'_> {
     fn render_recent_decisions(&self, area: Rect, buf: &mut Buffer) {
         let title = Line::from(vec![
             Span::styled("▸ ", Style::default().fg(Color::Cyan)),
-            Span::styled("Recent Routing Decisions", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Recent Routing Decisions",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]);
 
         let title_block = Block::default()
@@ -309,8 +349,8 @@ impl RoutingPanel<'_> {
         let decisions: Vec<_> = self.data.recent_decisions.iter().rev().take(10).collect();
 
         if decisions.is_empty() {
-            let empty = Paragraph::new("No recent decisions")
-                .style(Style::default().fg(Color::DarkGray));
+            let empty =
+                Paragraph::new("No recent decisions").style(Style::default().fg(Color::DarkGray));
             empty.render(inner, buf);
             return;
         }
@@ -409,10 +449,7 @@ fn render_bar(percentage: f64, width: usize) -> Span<'static> {
     let filled = filled.min(width);
     let empty = width - filled;
 
-    let bar = format!("{}{}",
-        "█".repeat(filled),
-        "░".repeat(empty),
-    );
+    let bar = format!("{}{}", "█".repeat(filled), "░".repeat(empty),);
 
     Span::styled(bar, Style::default().fg(Color::Cyan))
 }
