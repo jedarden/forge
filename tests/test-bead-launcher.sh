@@ -49,6 +49,25 @@ WS_STANDARD="$(mktemp -d "${TMP_DIR:-/tmp}/forge-beadref-ws3-${RUN_ID}.XXXX")"
 WS_EXAMPLE="$(mktemp -d "${TMP_DIR:-/tmp}/forge-beadref-ws4-${RUN_ID}.XXXX")"
 TEST_SESSION_DIR="$(mktemp -d "${TMP_DIR:-/tmp}/forge-beadref-sess-${RUN_ID}.XXXX")"
 
+# The bead CLI records a close reason for audit but never projects it back
+# out (`bead show --json` has no close_reason field), so the launcher's
+# close reason is verified by capturing the CLI's argv instead: a wrapper
+# stands in front of the real binary, logs each invocation on one
+# " | "-joined line, and execs it. BEAD_CLI is re-pointed at the wrapper so
+# the harness helpers and the launchers (both honor FORGE_BEAD_CLI/BEAD_CLI)
+# all route through it.
+REAL_BEAD_CLI="$(command -v "${FORGE_BEAD_CLI:-bead}")"
+BEAD_CALL_LOG="$TEST_SESSION_DIR/bead-cli-calls.log"
+BEAD_CLI_WRAPPER="$TEST_SESSION_DIR/bead-cli-wrapper.sh"
+cat > "$BEAD_CLI_WRAPPER" <<WRAPPER
+#!/usr/bin/env bash
+printf '%s | ' "\$@" >> '$BEAD_CALL_LOG'
+printf '\n' >> '$BEAD_CALL_LOG'
+exec '$REAL_BEAD_CLI' "\$@"
+WRAPPER
+chmod +x "$BEAD_CLI_WRAPPER"
+BEAD_CLI="$BEAD_CLI_WRAPPER"
+
 PASS=0
 FAIL=0
 
@@ -211,11 +230,13 @@ scenario_success_completion() {
         log_fail "bead closed while worker session was still alive"
     fi
 
-    if [ "$(bead_field "$WS_SUCCESS" "$bead" 'close_reason')" = "Completed by beadref-worker-1" ]; then
-        log_pass "close reason records the completing worker"
-    else
-        log_fail "close reason records the completing worker"
-    fi
+    # The close reason is not projected by `bead show --json`; read it from
+    # the captured close invocation instead.
+    close_reason="$(awk -F' \\| ' -v bead="$bead" \
+        '$1 == "close" && $2 == bead { for (i = 3; i < NF; i++) if ($i == "--reason") { print $(i + 1); break } }' \
+        "$BEAD_CALL_LOG" | tail -1)"
+    assert_eq "$close_reason" "Completed by beadref-worker-1" \
+        "close reason records the completing worker"
 }
 
 # ==============================================================================

@@ -68,6 +68,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/BEAD_LAUNCHER_PROTOCOL.md` §4.1.
 
 ### Fixed
+- The bead-launcher E2E suite asserted a `close_reason` field that the bead
+  CLI's `show --json` payload does not project, so the "close reason records
+  the completing worker" check could never pass; the close reason is now
+  verified from the captured `bead close` invocation instead (an
+  argv-capturing CLI wrapper stands in front of the real binary).
 - **Build now vendors OpenSSL** (`native-tls`/`tokio-native-tls` with the
   `vendored` feature): compiling the workspace no longer requires system
   OpenSSL headers (`libssl-dev`/`openssl-devel`), which are absent on
