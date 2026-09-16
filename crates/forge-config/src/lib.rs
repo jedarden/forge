@@ -4,6 +4,7 @@
 //! from `~/.forge/config.yaml`.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
 use thiserror::Error;
@@ -130,6 +131,10 @@ pub struct ForgeConfig {
     #[serde(default)]
     pub workers: WorkerConfig,
 
+    /// Worker pool configuration (warm spares per model tier, failover policy).
+    #[serde(default)]
+    pub worker_pool: WorkerPoolConfig,
+
     /// Notification configuration
     #[serde(default)]
     pub notifications: NotificationsConfig,
@@ -145,6 +150,7 @@ impl Default for ForgeConfig {
             cost_tracking: CostTrackingConfig::default(),
             auto_recovery: AutoRecoveryConfig::default(),
             workers: WorkerConfig::default(),
+            worker_pool: WorkerPoolConfig::default(),
             notifications: NotificationsConfig::default(),
         }
     }
@@ -318,6 +324,11 @@ impl ForgeConfig {
             .and_then(|v| serde_yaml::from_value(v.clone()).ok())
             .unwrap_or_default();
 
+        let worker_pool = yaml
+            .get("worker_pool")
+            .and_then(|v| serde_yaml::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
         let notifications = yaml
             .get("notifications")
             .and_then(|v| serde_yaml::from_value(v.clone()).ok())
@@ -333,6 +344,7 @@ impl ForgeConfig {
             cost_tracking,
             auto_recovery,
             workers,
+            worker_pool,
             notifications,
         })
     }
@@ -400,6 +412,49 @@ impl ForgeConfig {
         // Validate max workers
         if self.workers.max_workers == 0 {
             warnings.push("max_workers must be at least 1".to_string());
+        }
+
+        // Validate worker pool settings (only when enabled — a disabled pool
+        // with a bad policy string is inert and defaults are valid anyway).
+        if self.worker_pool.enabled {
+            if !WorkerPoolConfig::VALID_POLICIES
+                .contains(&self.worker_pool.recovery_policy.to_lowercase().as_str())
+            {
+                warnings.push(format!(
+                    "worker_pool.recovery_policy '{}' is invalid, valid policies: {:?}",
+                    self.worker_pool.recovery_policy,
+                    WorkerPoolConfig::VALID_POLICIES
+                ));
+            }
+
+            for name in self.worker_pool.tiers.keys() {
+                if !WorkerPoolConfig::VALID_TIERS.contains(&name.to_lowercase().as_str()) {
+                    warnings.push(format!(
+                        "worker_pool.tiers key '{}' is invalid, valid tiers: {:?}",
+                        name,
+                        WorkerPoolConfig::VALID_TIERS
+                    ));
+                }
+            }
+            for (name, tier) in &self.worker_pool.tiers {
+                if tier.size > WorkerPoolConfig::MAX_TIER_SIZE {
+                    warnings.push(format!(
+                        "worker_pool.tiers.{}.size {} exceeds the maximum of {}",
+                        name,
+                        tier.size,
+                        WorkerPoolConfig::MAX_TIER_SIZE
+                    ));
+                }
+            }
+            if self.worker_pool.backoff_base_secs == 0 {
+                warnings.push("worker_pool.backoff_base_secs must be at least 1".to_string());
+            }
+            if self.worker_pool.backoff_max_secs < self.worker_pool.backoff_base_secs {
+                warnings.push(format!(
+                    "worker_pool.backoff_max_secs ({}) must be >= backoff_base_secs ({})",
+                    self.worker_pool.backoff_max_secs, self.worker_pool.backoff_base_secs
+                ));
+            }
         }
 
         // Validate default model
@@ -487,6 +542,44 @@ impl ForgeConfig {
                 "Sanitizing max_workers to minimum 1"
             );
             config.workers.max_workers = 1;
+        }
+
+        // Sanitize worker pool settings
+        if !WorkerPoolConfig::VALID_POLICIES
+            .contains(&config.worker_pool.recovery_policy.to_lowercase().as_str())
+        {
+            tracing::warn!(
+                original = config.worker_pool.recovery_policy,
+                "Sanitizing invalid worker_pool.recovery_policy to 'alert'"
+            );
+            config.worker_pool.recovery_policy = "alert".to_string();
+        }
+
+        if config.worker_pool.backoff_base_secs == 0 {
+            config.worker_pool.backoff_base_secs = default_pool_backoff_base();
+        }
+        if config.worker_pool.backoff_max_secs < config.worker_pool.backoff_base_secs {
+            tracing::warn!(
+                original = config.worker_pool.backoff_max_secs,
+                base = config.worker_pool.backoff_base_secs,
+                "Sanitizing worker_pool.backoff_max_secs to match backoff_base_secs"
+            );
+            config.worker_pool.backoff_max_secs = config.worker_pool.backoff_base_secs;
+        }
+
+        // Drop invalid tier entries and clamp oversized tiers
+        config.worker_pool.tiers.retain(|name, _| {
+            WorkerPoolConfig::VALID_TIERS.contains(&name.to_lowercase().as_str())
+        });
+        for (name, tier) in &mut config.worker_pool.tiers {
+            if tier.size > WorkerPoolConfig::MAX_TIER_SIZE {
+                tracing::warn!(
+                    tier = name,
+                    original = tier.size,
+                    "Clamping worker pool tier size to maximum"
+                );
+                tier.size = WorkerPoolConfig::MAX_TIER_SIZE;
+            }
         }
 
         // Sanitize default model
@@ -655,6 +748,208 @@ fn default_max_workers() -> u64 {
 
 fn default_model() -> String {
     "sonnet".to_string()
+}
+
+/// Worker pool configuration.
+///
+/// The pool keeps a configurable number of ready ("warm spare") workers per
+/// model tier and recovers them automatically when health monitoring reports
+/// a member dead or unhealthy. Automation is opt-in: `enabled` defaults to
+/// `false` and the recovery policy defaults to `alert` (visibility only),
+/// consistent with ADR 0014.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct WorkerPoolConfig {
+    /// Enable the worker pool. Disabled pools maintain nothing.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Desired ready workers per model tier, keyed by tier name
+    /// ("premium", "standard", "budget"). Tiers absent from the map are not pooled.
+    #[serde(default)]
+    pub tiers: HashMap<String, PoolTierConfig>,
+
+    /// What the pool does when a member is detected dead or unhealthy:
+    /// "restart" (respawn in place), "replace" (promote a warm spare, then
+    /// refill), or "alert" (report only).
+    #[serde(default = "default_pool_recovery_policy")]
+    pub recovery_policy: String,
+
+    /// Maximum recovery attempts per pooled worker before it is retired.
+    #[serde(default = "default_pool_max_retries")]
+    pub max_retries: u32,
+
+    /// Base delay in seconds for exponential backoff between recovery
+    /// attempts (delay = base * 2^(attempt-1), capped by `backoff_max_secs`).
+    #[serde(default = "default_pool_backoff_base")]
+    pub backoff_base_secs: u64,
+
+    /// Upper bound in seconds for exponential backoff between recovery attempts.
+    #[serde(default = "default_pool_backoff_max")]
+    pub backoff_max_secs: u64,
+
+    /// Ready workers idle longer than this many seconds are torn down when
+    /// the tier holds more ready workers than its configured size.
+    #[serde(default = "default_pool_idle_timeout")]
+    pub idle_timeout_secs: u64,
+
+    /// How often the pool reconciles capacity and health (in seconds).
+    #[serde(default = "default_pool_reconcile_interval")]
+    pub reconcile_interval_secs: u64,
+}
+
+impl WorkerPoolConfig {
+    /// Recovery policies accepted by `recovery_policy`.
+    pub const VALID_POLICIES: [&'static str; 3] = ["restart", "replace", "alert"];
+
+    /// Tier names accepted as keys of `tiers`.
+    pub const VALID_TIERS: [&'static str; 3] = ["premium", "standard", "budget"];
+
+    /// Safety cap for a single tier's size.
+    pub const MAX_TIER_SIZE: usize = 64;
+}
+
+impl Default for WorkerPoolConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            tiers: HashMap::new(),
+            recovery_policy: default_pool_recovery_policy(),
+            max_retries: default_pool_max_retries(),
+            backoff_base_secs: default_pool_backoff_base(),
+            backoff_max_secs: default_pool_backoff_max(),
+            idle_timeout_secs: default_pool_idle_timeout(),
+            reconcile_interval_secs: default_pool_reconcile_interval(),
+        }
+    }
+}
+
+/// Per-tier worker pool settings.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+pub struct PoolTierConfig {
+    /// Number of ready workers to keep warm for this tier.
+    #[serde(default)]
+    pub size: usize,
+
+    /// Model to launch workers with. Defaults to the tier's stock model
+    /// (premium → opus, standard → sonnet, budget → haiku).
+    #[serde(default)]
+    pub model: Option<String>,
+
+    /// Workspace new pool workers are launched into. Defaults to the home directory.
+    #[serde(default)]
+    pub workspace: Option<PathBuf>,
+
+    /// Launcher script used to spawn pool workers.
+    /// Defaults to `~/.forge/launcher.sh`.
+    #[serde(default)]
+    pub launcher: Option<PathBuf>,
+}
+
+/// Stock model for a pool tier name.
+///
+/// Used when a tier entry does not override `model`: premium → opus,
+/// standard → sonnet, budget → haiku. Unknown tier names fall back to
+/// the standard stock model.
+pub fn stock_tier_model(tier: &str) -> &'static str {
+    match tier.to_lowercase().as_str() {
+        "premium" => "opus",
+        "budget" => "haiku",
+        _ => "sonnet",
+    }
+}
+
+/// Launch settings for one pooled tier, with all defaults resolved.
+///
+/// Produced by [`WorkerPoolConfig::resolve_tier`]; consumers (the worker
+/// pool) should not have to re-apply defaults themselves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedTierConfig {
+    /// Tier name ("premium", "standard", or "budget").
+    pub name: String,
+
+    /// Number of ready workers to keep warm (already clamped to
+    /// [`WorkerPoolConfig::MAX_TIER_SIZE`]).
+    pub size: usize,
+
+    /// Model to launch workers with.
+    pub model: String,
+
+    /// Workspace new pool workers are launched into.
+    pub workspace: PathBuf,
+
+    /// Launcher script used to spawn pool workers.
+    pub launcher: PathBuf,
+}
+
+impl WorkerPoolConfig {
+    /// Resolve the launch settings for a tier by name.
+    ///
+    /// Returns `None` when the tier is not configured or its size is zero
+    /// (zero-size tiers are not pooled). The returned size is clamped to
+    /// [`WorkerPoolConfig::MAX_TIER_SIZE`].
+    pub fn resolve_tier(&self, name: &str) -> Option<ResolvedTierConfig> {
+        let tier = self.tiers.get(name)?;
+        if tier.size == 0 {
+            return None;
+        }
+        Some(ResolvedTierConfig {
+            name: name.to_string(),
+            size: tier.size.min(Self::MAX_TIER_SIZE),
+            model: tier.resolved_model(name),
+            workspace: tier.resolved_workspace(),
+            launcher: tier.resolved_launcher(),
+        })
+    }
+}
+
+impl PoolTierConfig {
+    /// Model for this tier, falling back to the tier's stock model.
+    pub fn resolved_model(&self, tier_name: &str) -> String {
+        self.model
+            .clone()
+            .unwrap_or_else(|| stock_tier_model(tier_name).to_string())
+    }
+
+    /// Workspace for pool workers, falling back to the home directory.
+    pub fn resolved_workspace(&self) -> PathBuf {
+        self.workspace
+            .clone()
+            .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")))
+    }
+
+    /// Launcher script for pool workers, falling back to
+    /// `~/.forge/launcher.sh`.
+    pub fn resolved_launcher(&self) -> PathBuf {
+        self.launcher.clone().unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".forge/launcher.sh")
+        })
+    }
+}
+
+fn default_pool_recovery_policy() -> String {
+    "alert".to_string()
+}
+
+fn default_pool_max_retries() -> u32 {
+    3
+}
+
+fn default_pool_backoff_base() -> u64 {
+    5
+}
+
+fn default_pool_backoff_max() -> u64 {
+    300
+}
+
+fn default_pool_idle_timeout() -> u64 {
+    1800
+}
+
+fn default_pool_reconcile_interval() -> u64 {
+    30
 }
 
 /// Cost tracking configuration.
@@ -1002,5 +1297,235 @@ dashboard:
         assert!(config.notifications.bell_on_critical);
         assert!(!config.notifications.bell_on_warning);
         assert_eq!(config.notifications.bell_interval_secs, 30);
+    }
+
+    // ============================================================
+    // Worker pool configuration tests
+    // ============================================================
+
+    #[test]
+    fn test_worker_pool_defaults() {
+        let config = WorkerPoolConfig::default();
+        // Opt-in per ADR 0014: pool disabled and alert-only by default.
+        assert!(!config.enabled);
+        assert_eq!(config.recovery_policy, "alert");
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.backoff_base_secs, 5);
+        assert_eq!(config.backoff_max_secs, 300);
+        assert_eq!(config.idle_timeout_secs, 1800);
+        assert_eq!(config.reconcile_interval_secs, 30);
+        assert!(config.tiers.is_empty());
+    }
+
+    #[test]
+    fn test_worker_pool_section_missing_uses_defaults() {
+        let yaml = "dashboard:\n  max_fps: 30\n";
+        let config = ForgeConfig::parse(yaml).expect("Failed to parse config");
+        assert!(!config.worker_pool.enabled);
+        assert!(config.worker_pool.tiers.is_empty());
+    }
+
+    #[test]
+    fn test_parse_worker_pool_config() {
+        let yaml = r#"
+worker_pool:
+  enabled: true
+  recovery_policy: replace
+  max_retries: 5
+  backoff_base_secs: 10
+  backoff_max_secs: 600
+  idle_timeout_secs: 900
+  reconcile_interval_secs: 15
+  tiers:
+    premium:
+      size: 1
+      model: opus
+    standard:
+      size: 2
+    budget:
+      size: 0
+      workspace: /home/user/project
+      launcher: /home/user/.forge/launcher.sh
+"#;
+        let config = ForgeConfig::parse(yaml).expect("Failed to parse config");
+        let pool = &config.worker_pool;
+        assert!(pool.enabled);
+        assert_eq!(pool.recovery_policy, "replace");
+        assert_eq!(pool.max_retries, 5);
+        assert_eq!(pool.backoff_base_secs, 10);
+        assert_eq!(pool.backoff_max_secs, 600);
+        assert_eq!(pool.idle_timeout_secs, 900);
+        assert_eq!(pool.reconcile_interval_secs, 15);
+
+        assert_eq!(pool.tiers.len(), 3);
+        assert_eq!(pool.tiers["premium"].size, 1);
+        assert_eq!(pool.tiers["premium"].model.as_deref(), Some("opus"));
+        assert_eq!(pool.tiers["standard"].size, 2);
+        assert_eq!(pool.tiers["standard"].model, None);
+        assert_eq!(
+            pool.tiers["budget"].workspace,
+            Some("/home/user/project".into())
+        );
+        assert_eq!(
+            pool.tiers["budget"].launcher,
+            Some("/home/user/.forge/launcher.sh".into())
+        );
+    }
+
+    #[test]
+    fn test_validate_rejects_bad_pool_policy() {
+        let mut config = ForgeConfig::default();
+        config.worker_pool.enabled = true;
+        config.worker_pool.recovery_policy = "explode".to_string();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_bad_backoff_ordering() {
+        let mut config = ForgeConfig::default();
+        config.worker_pool.enabled = true;
+        config.worker_pool.backoff_base_secs = 10;
+        config.worker_pool.backoff_max_secs = 5;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_invalid_tier_key() {
+        let mut config = ForgeConfig::default();
+        config.worker_pool.enabled = true;
+        config
+            .worker_pool
+            .tiers
+            .insert("turbo".to_string(), PoolTierConfig::default());
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_ignores_pool_when_disabled() {
+        let mut config = ForgeConfig::default();
+        config.worker_pool.enabled = false;
+        config.worker_pool.recovery_policy = "explode".to_string();
+        config.worker_pool.backoff_base_secs = 10;
+        config.worker_pool.backoff_max_secs = 5;
+        // Disabled pool: policy/backoff misconfigurations are not fatal.
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_sanitize_fixes_pool_policy_and_backoff() {
+        let mut config = ForgeConfig::default();
+        config.worker_pool.enabled = true;
+        config.worker_pool.recovery_policy = "yolo".to_string();
+        config.worker_pool.backoff_base_secs = 0;
+        config.worker_pool.backoff_max_secs = 0;
+
+        let sanitized = config.sanitized();
+        assert_eq!(sanitized.worker_pool.recovery_policy, "alert");
+        assert_eq!(sanitized.worker_pool.backoff_base_secs, 5);
+        // backoff_max_secs (0) < base (5) → raised to base
+        assert_eq!(sanitized.worker_pool.backoff_max_secs, 5);
+    }
+
+    #[test]
+    fn test_sanitize_drops_invalid_tier_keys_and_clamps_size() {
+        let mut config = ForgeConfig::default();
+        config.worker_pool.enabled = true;
+        config.worker_pool.tiers.insert(
+            "turbo".to_string(),
+            PoolTierConfig {
+                size: 9_999,
+                ..Default::default()
+            },
+        );
+        config.worker_pool.tiers.insert(
+            "standard".to_string(),
+            PoolTierConfig {
+                size: 9_999,
+                ..Default::default()
+            },
+        );
+
+        let sanitized = config.sanitized();
+        assert!(!sanitized.worker_pool.tiers.contains_key("turbo"));
+        let standard = sanitized.worker_pool.tiers.get("standard").unwrap();
+        assert_eq!(standard.size, WorkerPoolConfig::MAX_TIER_SIZE);
+    }
+
+    #[test]
+    fn test_resolve_tier_applies_stock_defaults() {
+        let yaml = r#"
+worker_pool:
+  enabled: true
+  tiers:
+    premium:
+      size: 1
+    standard:
+      size: 2
+      model: glm
+    budget:
+      size: 0
+"#;
+        let config = ForgeConfig::parse(yaml).expect("Failed to parse config");
+
+        let premium = config.worker_pool.resolve_tier("premium").unwrap();
+        assert_eq!(premium.name, "premium");
+        assert_eq!(premium.size, 1);
+        assert_eq!(premium.model, "opus");
+        assert_eq!(
+            premium.launcher,
+            dirs::home_dir().unwrap().join(".forge/launcher.sh")
+        );
+
+        // Explicit model override wins over the stock model.
+        let standard = config.worker_pool.resolve_tier("standard").unwrap();
+        assert_eq!(standard.model, "glm");
+
+        // Zero-size tiers are not pooled.
+        assert!(config.worker_pool.resolve_tier("budget").is_none());
+        // Unconfigured tiers are not pooled either.
+        assert!(config.worker_pool.resolve_tier("turbo").is_none());
+    }
+
+    #[test]
+    fn test_resolve_tier_clamps_size_to_maximum() {
+        let mut config = WorkerPoolConfig::default();
+        config.tiers.insert(
+            "standard".to_string(),
+            PoolTierConfig {
+                size: WorkerPoolConfig::MAX_TIER_SIZE + 10,
+                ..Default::default()
+            },
+        );
+        let resolved = config.resolve_tier("standard").unwrap();
+        assert_eq!(resolved.size, WorkerPoolConfig::MAX_TIER_SIZE);
+    }
+
+    #[test]
+    fn test_stock_tier_model_mapping() {
+        assert_eq!(stock_tier_model("premium"), "opus");
+        assert_eq!(stock_tier_model("Premium"), "opus");
+        assert_eq!(stock_tier_model("standard"), "sonnet");
+        assert_eq!(stock_tier_model("budget"), "haiku");
+        assert_eq!(stock_tier_model("unknown"), "sonnet");
+    }
+
+    #[test]
+    fn test_worker_pool_round_trips_through_yaml() {
+        let mut config = ForgeConfig::default();
+        config.worker_pool.enabled = true;
+        config.worker_pool.recovery_policy = "restart".to_string();
+        config.worker_pool.tiers.insert(
+            "standard".to_string(),
+            PoolTierConfig {
+                size: 2,
+                model: Some("sonnet".to_string()),
+                workspace: Some("/tmp/ws".into()),
+                launcher: None,
+            },
+        );
+
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let parsed: ForgeConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(parsed.worker_pool, config.worker_pool);
     }
 }

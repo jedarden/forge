@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Worker Pool** (`forge_worker::pool`): maintains a configurable number of
+  ready ("warm spare") workers per model tier with automatic failover. When a
+  member is detected dead or unhealthy — by the pool's own liveness probe or
+  an external `WorkerPool::report_unhealthy` feed from the health monitor —
+  the configured `recovery_policy` decides the response: `restart` (respawn
+  in place, bounded by `max_retries` with exponential backoff), `replace`
+  (a fresh worker with a fresh retry budget takes the slot), or `alert`
+  (visibility only). Idle spares beyond a tier's configured size are torn
+  down oldest-first after `idle_timeout_secs`; `take_ready` hands warm
+  spares to consumers and the slot is refilled on the next reconcile.
+  Pool size and policy are configured under `worker_pool` in
+  `~/.forge/config.yaml` (`forge_config::WorkerPoolConfig`, with
+  `resolve_tier` for per-tier launch settings); `forge init` now emits a
+  commented example block. Opt-in per ADR 0014: the pool is disabled and
+  alert-only by default.
+
 ## [0.3.1] - 2026-09-16
 
 ### Added

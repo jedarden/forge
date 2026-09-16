@@ -125,6 +125,24 @@ routing:
     P4: budget
   subscription_first: true
   fallback_to_api: true
+
+# Worker pool: keep N ready ("warm spare") workers per model tier and
+# recover them automatically when one is detected dead or unhealthy.
+# Off by default; recovery_policy is one of restart | replace | alert.
+# worker_pool:
+#   enabled: true
+#   recovery_policy: replace   # restart | replace | alert
+#   max_retries: 3             # recovery attempts before a worker is retired
+#   backoff_base_secs: 5       # exponential backoff: base * 2^(attempt-1)
+#   backoff_max_secs: 300
+#   idle_timeout_secs: 1800    # tear down idle spares beyond tier size
+#   reconcile_interval_secs: 30
+#   tiers:
+#     standard:
+#       size: 1
+#       # model: sonnet                  # defaults to the tier's stock model
+#       # workspace: ~/myproject         # defaults to the home directory
+#       # launcher: ~/.forge/launcher.sh
 "#,
         version = version,
         binary_path = binary_path,
@@ -201,6 +219,24 @@ routing:
     P4: budget
   subscription_first: true
   fallback_to_api: true
+
+# Worker pool: keep N ready ("warm spare") workers per model tier and
+# recover them automatically when one is detected dead or unhealthy.
+# Off by default; recovery_policy is one of restart | replace | alert.
+# worker_pool:
+#   enabled: true
+#   recovery_policy: replace   # restart | replace | alert
+#   max_retries: 3             # recovery attempts before a worker is retired
+#   backoff_base_secs: 5       # exponential backoff: base * 2^(attempt-1)
+#   backoff_max_secs: 300
+#   idle_timeout_secs: 1800    # tear down idle spares beyond tier size
+#   reconcile_interval_secs: 30
+#   tiers:
+#     standard:
+#       size: 1
+#       # model: sonnet                  # defaults to the tier's stock model
+#       # workspace: ~/myproject         # defaults to the home directory
+#       # launcher: ~/.forge/launcher.sh
 "#,
         version = version,
         binary_path = binary_path,

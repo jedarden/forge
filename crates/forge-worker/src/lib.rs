@@ -146,6 +146,7 @@ pub mod launcher;
 mod lifecycle_tests;
 pub mod memory;
 pub mod pause;
+pub mod pool;
 pub mod response_time;
 pub mod router;
 pub mod scorer;
@@ -183,6 +184,10 @@ pub use memory::{MemoryConfig, MemoryMonitor, MemorySeverity, WorkerMemoryStats}
 pub use pause::{
     DEFAULT_PAUSE_CHECK_INTERVAL_SECS, Pausable, PauseConfig, PauseSignalHandler, is_any_paused,
     pause_all, resume_all,
+};
+pub use pool::{
+    LauncherPoolSpawner, PoolEvent, PoolRecoveryPolicy, PoolSpawner, PoolTierSummary, PoolWorker,
+    PoolWorkerState, ProbeOutcome, WorkerPool, backoff_delay_secs,
 };
 pub use response_time::{
     DEFAULT_FAILURE_THRESHOLD, DEFAULT_PING_INTERVAL_SECS, DEFAULT_PING_TIMEOUT_MS, PingResult,
