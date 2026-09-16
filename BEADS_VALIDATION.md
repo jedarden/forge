@@ -6,17 +6,17 @@ This document provides a comprehensive overview of all project beads (issues/tas
 
 ```bash
 # View all beads
-br list
+bead list
 
 # View ready beads (unblocked)
-br ready
+bead list --ready
 
 # Show bead details
-br show <bead-id>
+bead show <bead-id>
 
 # Update bead status
-br update <bead-id> --status in_progress
-br close <bead-id>
+bead update <bead-id> --status in_progress
+bead close <bead-id>
 
 # Run tests
 cd /home/coder/forge
@@ -231,11 +231,11 @@ time forge --version
 ```bash
 # Test string format
 echo '{"worker_id": "test", "status": "active", "current_task": "bd-123"}' > /tmp/test.json
-br show bd-123  # Should work
+bead show bd-123  # Should work
 
 # Test object format
 echo '{"worker_id": "test", "status": "active", "current_task": {"bead_id": "bd-456", "priority": 1}}' > /tmp/test.json
-br show bd-456  # Should work
+bead show bd-456  # Should work
 
 # Check no warnings in logs
 forge &
@@ -358,24 +358,24 @@ git push origin main
 
 ### For Bug Fixes
 
-1. Read bead details: `br show <bead-id>`
-2. Mark in progress: `br update <bead-id> --status in_progress`
+1. Read bead details: `bead show <bead-id>`
+2. Mark in progress: `bead update <bead-id> --status in_progress`
 3. Reproduce issue using validation steps
 4. Fix the bug
 5. Run relevant tests
 6. Verify all pass criteria met
-7. Close bead: `br close <bead-id>`
+7. Close bead: `bead close <bead-id>`
 
 ### For Features
 
-1. Read bead details: `br show <bead-id>`
-2. Check dependencies: `br show <bead-id> | grep depends`
-3. Mark in progress: `br update <bead-id> --status in_progress`
+1. Read bead details: `bead show <bead-id>`
+2. Check dependencies: `bead show <bead-id> | grep depends`
+3. Mark in progress: `bead update <bead-id> --status in_progress`
 4. Implement feature
 5. Write tests (if testing bead)
 6. Run validation steps
 7. Verify acceptance criteria
-8. Close bead: `br close <bead-id>`
+8. Close bead: `bead close <bead-id>`
 
 ### For Tests
 
@@ -403,11 +403,11 @@ git push origin main
 
 ```bash
 # Beads Management
-br list                          # List all beads
-br ready                         # Show ready beads
-br show <bead-id>                # Show details
-br update <bead-id> --status in_progress
-br close <bead-id>              # Mark complete
+bead list                          # List all beads
+bead list --ready                         # Show ready beads
+bead show <bead-id>                # Show details
+bead update <bead-id> --status in_progress
+bead close <bead-id>              # Mark complete
 
 # Testing
 ./test-forge-chat.sh            # Chat test
