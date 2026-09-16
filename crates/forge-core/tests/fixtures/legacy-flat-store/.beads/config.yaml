@@ -1,0 +1,4 @@
+# Legacy bead-forge (bf) store configuration. Repos migrated to bead-rs
+# carry config.json + checkpoint/ instead; this file marks the old layout.
+prefix: legacy
+version: 1

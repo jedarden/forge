@@ -1,0 +1,3 @@
+{"assignee":null,"dependencies":[],"description":"Old-format bead that predates the bead-rs migration.","id":"legacy-aaa1","issue_type":"task","labels":["legacy"],"priority":1,"status":"open","title":"Index the flat store"}
+{"dependencies":["legacy-aaa1"],"description":"Bare-string dependency edge, as bf wrote them.","id":"legacy-bbb2","issue_type":"task","labels":[],"priority":2,"status":"open","title":"Depend on the indexer"}
+{"assignee":"legacy-worker","dependencies":[],"description":"Assigned bead captured mid-migration.","id":"legacy-ccc3","issue_type":"task","labels":[],"priority":0,"status":"in_progress","title":"Still in flight during migration"}
