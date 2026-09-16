@@ -204,7 +204,6 @@ pub fn detect_cli_tools_with_diagnostics() -> Result<(Vec<CliToolDetection>, Pat
     Ok((tools, diagnostics))
 }
 
-
 /// Detect Claude Code CLI tool with diagnostic collection.
 fn detect_claude_code_with_diagnostics(
     diagnostics: &mut PathDiagnostics,

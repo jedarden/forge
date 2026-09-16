@@ -64,10 +64,7 @@ pub enum RejectionReason {
         missing_feature: String,
     },
     /// Missing required API key.
-    MissingApiKey {
-        path: PathBuf,
-        env_var: String,
-    },
+    MissingApiKey { path: PathBuf, env_var: String },
 }
 
 impl RejectionReason {
@@ -192,7 +189,11 @@ pub fn generate_guidance(diagnostics: Option<&PathDiagnostics>) -> String {
             writeln!(output, "   If npm not found (Fedora/RHEL):").unwrap();
             writeln!(output, "     sudo dnf install nodejs npm").unwrap();
             writeln!(output, "   If pip not found:").unwrap();
-            writeln!(output, "     sudo apt install python3-pip  # or: dnf install python3-pip").unwrap();
+            writeln!(
+                output,
+                "     sudo apt install python3-pip  # or: dnf install python3-pip"
+            )
+            .unwrap();
         }
         Platform::Windows => {
             writeln!(output, "   If npm not found:").unwrap();
@@ -201,7 +202,11 @@ pub fn generate_guidance(diagnostics: Option<&PathDiagnostics>) -> String {
                 "     Download Node.js from: https://nodejs.org/en/download/"
             )
             .unwrap();
-            writeln!(output, "     Or via winget: winget install OpenJS.NodeJS.LTS").unwrap();
+            writeln!(
+                output,
+                "     Or via winget: winget install OpenJS.NodeJS.LTS"
+            )
+            .unwrap();
             writeln!(output, "   If pip not found:").unwrap();
             writeln!(
                 output,
@@ -273,7 +278,11 @@ pub fn generate_compact_guidance() -> String {
     writeln!(output, "\n❌ No compatible CLI tools found!").unwrap();
     writeln!(output).unwrap();
     writeln!(output, "Quick install options:").unwrap();
-    writeln!(output, "  Claude Code: npm install -g @anthropic/claude-code").unwrap();
+    writeln!(
+        output,
+        "  Claude Code: npm install -g @anthropic/claude-code"
+    )
+    .unwrap();
     writeln!(output, "  OpenCode:    pip install opencode").unwrap();
     writeln!(output).unwrap();
     writeln!(
@@ -317,13 +326,30 @@ pub fn generate_not_ready_guidance(tools: &[ToolFixInfo]) -> String {
 
         if tool.missing_api_key {
             // Show MissingApiKey guidance
-            writeln!(output, "  ⚠️  {} ({})", display_name(&tool.name), version_display).unwrap();
+            writeln!(
+                output,
+                "  ⚠️  {} ({})",
+                display_name(&tool.name),
+                version_display
+            )
+            .unwrap();
             writeln!(output, "      Status: Missing API key").unwrap();
-            writeln!(output, "      Fix: {}", get_api_key_fix(&tool.name, tool.api_key_env_var.as_deref())).unwrap();
+            writeln!(
+                output,
+                "      Fix: {}",
+                get_api_key_fix(&tool.name, tool.api_key_env_var.as_deref())
+            )
+            .unwrap();
             writeln!(output).unwrap();
         } else if tool.incompatible_version {
             // Show IncompatibleVersion guidance
-            writeln!(output, "  ❌ {} ({})", display_name(&tool.name), version_display).unwrap();
+            writeln!(
+                output,
+                "  ❌ {} ({})",
+                display_name(&tool.name),
+                version_display
+            )
+            .unwrap();
             writeln!(output, "      Status: Incompatible version").unwrap();
             if let Some(ref feature) = tool.missing_feature {
                 writeln!(output, "      Missing: {}", feature).unwrap();
@@ -334,7 +360,11 @@ pub fn generate_not_ready_guidance(tools: &[ToolFixInfo]) -> String {
     }
 
     // Footer with next steps
-    writeln!(output, "❌ Cannot proceed. Please fix the issues above and run: forge init").unwrap();
+    writeln!(
+        output,
+        "❌ Cannot proceed. Please fix the issues above and run: forge init"
+    )
+    .unwrap();
     writeln!(output).unwrap();
 
     output
@@ -354,10 +384,12 @@ fn display_name(name: &str) -> &str {
 fn get_api_key_fix(tool_name: &str, env_var: Option<&str>) -> String {
     match tool_name {
         "claude-code" => {
-            "The Claude CLI handles authentication automatically.\n           Run: claude login".to_string()
+            "The Claude CLI handles authentication automatically.\n           Run: claude login"
+                .to_string()
         }
         "opencode" => {
-            "The OpenCode CLI handles authentication automatically.\n           Run: opencode login".to_string()
+            "The OpenCode CLI handles authentication automatically.\n           Run: opencode login"
+                .to_string()
         }
         "aider" => {
             let vars = env_var.unwrap_or("OPENAI_API_KEY or ANTHROPIC_API_KEY");
@@ -382,12 +414,8 @@ fn get_upgrade_fix(tool_name: &str) -> String {
         "claude-code" => {
             "Upgrade to latest:\n           npm update -g @anthropic-ai/claude-code".to_string()
         }
-        "opencode" => {
-            "Upgrade to latest:\n           pip install --upgrade opencode".to_string()
-        }
-        "aider" => {
-            "Upgrade to latest:\n           pip install --upgrade aider-chat".to_string()
-        }
+        "opencode" => "Upgrade to latest:\n           pip install --upgrade opencode".to_string(),
+        "aider" => "Upgrade to latest:\n           pip install --upgrade aider-chat".to_string(),
         _ => "Upgrade to the latest version".to_string(),
     }
 }

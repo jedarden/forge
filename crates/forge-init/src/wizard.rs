@@ -352,8 +352,11 @@ fn draw_wizard(f: &mut Frame, state: &mut WizardState) {
         .split(inner);
 
     // Title section
-    let title = Paragraph::new("Detected CLI Tools:")
-        .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD));
+    let title = Paragraph::new("Detected CLI Tools:").style(
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    );
     f.render_widget(title, chunks[0]);
 
     // Tools list
@@ -392,7 +395,10 @@ fn draw_tools_list(f: &mut Frame, state: &mut WizardState, area: Rect) {
                     format!("{} ", tool.name),
                     Style::default().add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(format!("(v{}) ", version), Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!("(v{}) ", version),
+                    Style::default().fg(Color::DarkGray),
+                ),
                 Span::styled(format!("- {}", path), Style::default().fg(Color::DarkGray)),
             ]);
 
@@ -419,12 +425,18 @@ fn draw_tools_list(f: &mut Frame, state: &mut WizardState, area: Rect) {
                 };
                 Line::from(vec![
                     Span::raw("     API Key: "),
-                    Span::styled(format!("{} {}", key_icon, key_msg), Style::default().fg(key_color)),
+                    Span::styled(
+                        format!("{} {}", key_icon, key_msg),
+                        Style::default().fg(key_color),
+                    ),
                 ])
             } else {
                 Line::from(vec![
                     Span::raw("     "),
-                    Span::styled("(CLI handles authentication)", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        "(CLI handles authentication)",
+                        Style::default().fg(Color::DarkGray),
+                    ),
                 ])
             };
 
@@ -440,8 +452,7 @@ fn draw_tools_list(f: &mut Frame, state: &mut WizardState, area: Rect) {
         })
         .collect();
 
-    let list_block = Block::default()
-        .borders(Borders::NONE);
+    let list_block = Block::default().borders(Borders::NONE);
 
     let list = List::new(items).block(list_block);
 

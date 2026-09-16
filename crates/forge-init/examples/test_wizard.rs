@@ -31,7 +31,11 @@ fn main() {
 
     match run_wizard(tools) {
         Ok(Some(tool)) => {
-            println!("\n✅ Selected: {} (v{})", tool.name, tool.version.as_deref().unwrap_or("unknown"));
+            println!(
+                "\n✅ Selected: {} (v{})",
+                tool.name,
+                tool.version.as_deref().unwrap_or("unknown")
+            );
             println!("   Path: {}", tool.binary_path.display());
             println!("   Status: {}", tool.status_message());
         }

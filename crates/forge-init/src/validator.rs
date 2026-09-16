@@ -317,10 +317,15 @@ pub fn validate_comprehensive(
 
     // Launchers are optional but recommended
     if !results.launcher_valid {
-        results.warnings.push("No launcher scripts configured".to_string());
+        results
+            .warnings
+            .push("No launcher scripts configured".to_string());
     }
 
-    info!("Comprehensive validation complete: passed={}", results.passed);
+    info!(
+        "Comprehensive validation complete: passed={}",
+        results.passed
+    );
     results
 }
 
@@ -363,7 +368,9 @@ fn validate_config_comprehensive(
                         .keys()
                         .filter_map(|k| k.as_str().map(String::from))
                         .collect();
-                    results.details.push(format!("Config sections: {}", sections.join(", ")));
+                    results
+                        .details
+                        .push(format!("Config sections: {}", sections.join(", ")));
                 }
             }
         }
@@ -403,7 +410,9 @@ fn validate_launchers_comprehensive(
             if let Err(e) = fs::create_dir_all(&launchers_dir) {
                 warn!("Failed to create launchers directory: {}", e);
             } else {
-                results.fixes_applied.push("Created launchers directory".to_string());
+                results
+                    .fixes_applied
+                    .push("Created launchers directory".to_string());
             }
         }
         return;
@@ -444,19 +453,24 @@ fn validate_launchers_comprehensive(
                         let mut new_perms = permissions.clone();
                         new_perms.set_mode(permissions.mode() | 0o755);
                         if let Err(e) = fs::set_permissions(&path, new_perms) {
-                            warn!("Failed to set executable permissions on {}: {}", path.display(), e);
+                            warn!(
+                                "Failed to set executable permissions on {}: {}",
+                                path.display(),
+                                e
+                            );
                         } else {
-                            results.fixes_applied.push(format!(
-                                "Set executable permissions on {}",
-                                name_str
-                            ));
+                            results
+                                .fixes_applied
+                                .push(format!("Set executable permissions on {}", name_str));
                         }
                     }
                 }
 
                 if verbose {
                     let mode = format!("{:o}", permissions.mode() & 0o777);
-                    results.details.push(format!("Launcher {} has mode {}", name_str, mode));
+                    results
+                        .details
+                        .push(format!("Launcher {} has mode {}", name_str, mode));
                 }
             }
         }
@@ -475,7 +489,9 @@ fn validate_launchers_comprehensive(
             non_executable.join(", ")
         );
         for name in &non_executable {
-            results.warnings.push(format!("Launcher not executable: {}", name));
+            results
+                .warnings
+                .push(format!("Launcher not executable: {}", name));
         }
     } else {
         results.launcher_valid = true;
@@ -506,7 +522,9 @@ fn validate_directories_comprehensive(
                 if let Err(e) = fs::create_dir_all(&dir_path) {
                     warn!("Failed to create directory {}: {}", dir_name, e);
                 } else {
-                    results.fixes_applied.push(format!("Created directory: {}", dir_name));
+                    results
+                        .fixes_applied
+                        .push(format!("Created directory: {}", dir_name));
                 }
             }
         } else if verbose {
@@ -515,7 +533,9 @@ fn validate_directories_comprehensive(
                 let permissions = metadata.permissions();
                 let is_writable = permissions.mode() & 0o200 != 0;
                 if !is_writable {
-                    results.warnings.push(format!("Directory {} is not writable", dir_name));
+                    results
+                        .warnings
+                        .push(format!("Directory {} is not writable", dir_name));
                 }
             }
         }
@@ -593,7 +613,9 @@ fn validate_backend_comprehensive(
                         {
                             let version = version.trim();
                             if !version.is_empty() {
-                                results.details.push(format!("Backend version: {}", version));
+                                results
+                                    .details
+                                    .push(format!("Backend version: {}", version));
                             }
                         }
                     }
@@ -769,7 +791,10 @@ echo "test launcher"
 
         // Test with skipped backend
         let results_skipped = validate_comprehensive(&forge_dir, false, false, true);
-        assert!(matches!(results_skipped.backend_status, BackendStatus::Skipped));
+        assert!(matches!(
+            results_skipped.backend_status,
+            BackendStatus::Skipped
+        ));
 
         // Test without skipping (but command might not exist)
         let results = validate_comprehensive(&forge_dir, false, false, false);
