@@ -212,7 +212,7 @@ async fn test_spawn_worker_tool_small_count_no_confirmation() {
     let result = registry.execute(&call, &context).await.unwrap();
     assert!(result.success);
     assert_eq!(result.data["count"].as_u64(), Some(1));
-    assert!(result.side_effects.len() >= 1);
+    assert!(!result.side_effects.is_empty());
 }
 
 #[tokio::test]
