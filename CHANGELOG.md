@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-09-16
+
+### Added
+- **Bead Scheduler** (`forge_worker::bead_scheduler`): allocates ready beads to
+  workers by priority, maintains the bead → worker mapping, and refuses
+  duplicate bead assignment (`ForgeError::BeadAlreadyAssigned`) so two workers
+  can never receive the same bead. Includes the bead-aware launch pipeline —
+  bead context fetch, protocol task prompt injection via
+  `FORGE_TASK_PROMPT`/`FORGE_BEAD_ID`, spawn with `--bead-ref=<bead-id>`, and
+  status updates (in-progress on launch, close on completion, reopen on
+  release) per `docs/BEAD_LAUNCHER_PROTOCOL.md`.
+- `forge_core::bead_store`: reads bead queues from both the bead-rs checkpoint
+  layout and the legacy flat `issues.jsonl` format.
+
+### Fixed
+- **Build now vendors OpenSSL** (`native-tls`/`tokio-native-tls` with the
+  `vendored` feature): compiling the workspace no longer requires system
+  OpenSSL headers (`libssl-dev`/`openssl-devel`), which are absent on
+  codinghome and in CI gate containers. TLS/WSS integration tests pass against
+  the statically linked build.
+
 ## [0.3.0] - 2026-05-04
 
 ### Production Release

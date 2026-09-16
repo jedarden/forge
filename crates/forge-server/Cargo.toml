@@ -13,10 +13,13 @@ forge-core = { path = "../forge-core" }
 forge-config = { path = "../forge-config" }
 
 # Async runtime
+# `vendored` builds OpenSSL from source (openssl-src): the workspace must
+# compile on hosts and CI containers without libssl-dev/openssl-devel
+# (codinghome and the NEEDLE default_rust gate both lack system headers).
 tokio = { workspace = true, features = ["full"] }
 tokio-tungstenite = { version = "0.26", features = ["connect", "native-tls"] }
-native-tls = "0.2"
-tokio-native-tls = "0.3"
+native-tls = { version = "0.2", features = ["vendored"] }
+tokio-native-tls = { version = "0.3", features = ["vendored"] }
 
 # Serialization
 serde = { workspace = true }
