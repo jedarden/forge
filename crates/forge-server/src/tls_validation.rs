@@ -428,9 +428,7 @@ pub fn validate_domain_match(
 /// Check if two domains match, supporting wildcards.
 fn domains_match(cert_domain: &str, server_domain: &str) -> bool {
     // Handle wildcard certificates
-    if cert_domain.starts_with("*.") {
-        let cert_base = &cert_domain[2..]; // Remove "*."
-
+    if let Some(cert_base) = cert_domain.strip_prefix("*.") {
         // If server domain starts with the cert base (after the first dot)
         if let Some(idx) = server_domain.find('.') {
             let server_base = &server_domain[idx + 1..];

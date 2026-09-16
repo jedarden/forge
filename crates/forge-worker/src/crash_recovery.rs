@@ -5,7 +5,7 @@
 //! ## Features
 //!
 //! 1. **Crash Detection**: Detects when worker processes die unexpectedly
-//! 2. **Assignee Clearing**: Automatically clears stale assignees from beads via br CLI
+//! 2. **Assignee Clearing**: Automatically clears stale assignees from beads via the `bead` CLI
 //! 3. **Status Updates**: Updates bead status from in_progress to open
 //! 4. **Crash Notifications**: Shows user-visible alerts about crashes
 //! 5. **Auto-Restart**: Optionally restarts workers with rate limiting
@@ -66,7 +66,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tracing::{debug, error, info, warn};
 
@@ -334,82 +334,68 @@ impl CrashRecoveryManager {
         )
     }
 
-    /// Clear bead assignee using br CLI.
+    /// Clear bead assignee using the `bead` CLI.
     ///
     /// Returns Ok(true) if assignee was cleared, Ok(false) if no assignee was set.
+    ///
+    /// The read comes from the bead store (no subprocess); the mutation goes
+    /// through `bead`, the sole write authority over the store. A claimed
+    /// (in_progress) bead is returned to open/unassigned with `bead release`;
+    /// an already-open bead just gets `--clear-assignee`.
     async fn clear_bead_assignee(&self, workspace: &PathBuf, bead_id: &str) -> Result<bool> {
         debug!("Clearing assignee for bead {} in {:?}", bead_id, workspace);
 
         // Check if bead exists and has an assignee
-        let has_assignee = self.check_bead_has_assignee(workspace, bead_id).await?;
-        if !has_assignee {
+        let Some(status) = self.check_bead_assignee_status(workspace, bead_id).await? else {
             return Ok(false);
-        }
+        };
 
-        // Clear the assignee: br update <bead-id> --assignee ""
-        let output = Command::new("br")
-            .arg("update")
-            .arg(bead_id)
-            .arg("--assignee")
-            .arg("")
+        let (command, args) = if status == "in_progress" {
+            ("bead release", vec![bead_id.to_string()])
+        } else {
+            (
+                "bead update",
+                vec![bead_id.to_string(), "--clear-assignee".to_string()],
+            )
+        };
+
+        let output = Command::new(command)
+            .args(&args)
             .current_dir(workspace)
             .output()
             .map_err(|e| forge_core::ForgeError::ToolExecution {
-                tool_name: "br".to_string(),
-                message: format!("Failed to execute br update {}: {}", bead_id, e),
+                tool_name: command.to_string(),
+                message: format!("Failed to execute {} {}: {}", command, bead_id, e),
             })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             error!("Failed to clear assignee for {}: {}", bead_id, stderr);
             return Err(forge_core::ForgeError::ToolExecution {
-                tool_name: "br".to_string(),
-                message: format!("br update failed for {}: {}", bead_id, stderr),
+                tool_name: command.to_string(),
+                message: format!("{} failed for {}: {}", command, bead_id, stderr),
             });
         }
-
-        // Also update status back to open if it was in_progress
-        let _ = Command::new("br")
-            .arg("update")
-            .arg(bead_id)
-            .arg("--status")
-            .arg("open")
-            .current_dir(workspace)
-            .output();
 
         Ok(true)
     }
 
-    /// Check if a bead has an assignee.
-    async fn check_bead_has_assignee(&self, workspace: &PathBuf, bead_id: &str) -> Result<bool> {
-        // Use br show to get bead details
-        let output = Command::new("br")
-            .arg("show")
-            .arg(bead_id)
-            .arg("--format=json")
-            .current_dir(workspace)
-            .output()
-            .map_err(|e| forge_core::ForgeError::ToolExecution {
-                tool_name: "br".to_string(),
-                message: format!("Failed to execute br show {}: {}", bead_id, e),
-            })?;
+    /// Check if a bead has an assignee, returning its status when it does.
+    ///
+    /// Reads the workspace's bead store directly (bead-rs checkpoint or the
+    /// legacy flat file); `None` means the bead does not exist or has no
+    /// assignee.
+    async fn check_bead_assignee_status(
+        &self,
+        workspace: &Path,
+        bead_id: &str,
+    ) -> Result<Option<String>> {
+        let beads = forge_core::bead_store::read_all_beads(workspace)?;
 
-        if !output.status.success() {
-            // Bead might not exist
-            return Ok(false);
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-
-        // Parse JSON and check for assignee field
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout)
-            && let Some(assignee) = json.get("assignee")
-            && let Some(assignee_str) = assignee.as_str()
-        {
-            return Ok(!assignee_str.is_empty());
-        }
-
-        Ok(false)
+        Ok(beads
+            .into_iter()
+            .find(|b| b.id == bead_id)
+            .and_then(|b| b.assignee.map(|_| b.status)))
     }
 
     /// Determine if worker should be auto-restarted after crash.

@@ -37,14 +37,20 @@ impl BeadAssignmentTracker {
         // Check if already assigned
         {
             let assignments = self.assignments.read().await;
-            if let Some(existing) = assignments.get(&bead_id) {
-                if existing.assigned_to.as_deref() == Some(&to_user) {
-                    return Ok(existing.clone());
-                }
+            if let Some(existing) = assignments
+                .get(&bead_id)
+                .filter(|existing| existing.assigned_to.as_deref() == Some(&to_user))
+            {
+                return Ok(existing.clone());
             }
         }
 
-        let assignment = BeadAssignment::assigned(&bead_id, &to_user, &by_user, forge_core::AssignmentPriority::Normal);
+        let assignment = BeadAssignment::assigned(
+            &bead_id,
+            &to_user,
+            &by_user,
+            forge_core::AssignmentPriority::Normal,
+        );
 
         // Add to assignments
         {
@@ -55,7 +61,8 @@ impl BeadAssignmentTracker {
         // Add to user_assignments
         {
             let mut user_assignments = self.user_assignments.write().await;
-            user_assignments.entry(to_user.clone())
+            user_assignments
+                .entry(to_user.clone())
                 .or_insert_with(Vec::new)
                 .push(bead_id.clone());
         }
@@ -102,7 +109,8 @@ impl BeadAssignmentTracker {
         };
 
         let assignments = self.assignments.read().await;
-        bead_ids.iter()
+        bead_ids
+            .iter()
             .filter_map(|id| assignments.get(id).cloned())
             .collect()
     }
@@ -127,17 +135,18 @@ impl BeadAssignmentTracker {
         // Verify current assignment
         {
             let assignments = self.assignments.read().await;
-            if let Some(existing) = assignments.get(&bead_id) {
-                if existing.assigned_to.as_deref() != Some(&from_user) {
-                    return Err(ForgeError::ConfigValidation {
-                        message: format!(
-                            "bead {} is assigned to {}, not {}",
-                            bead_id,
-                            existing.assigned_to.as_deref().unwrap_or(&"<unassigned>".to_string()),
-                            from_user
-                        )
-                    });
-                }
+            if let Some(existing) = assignments
+                .get(&bead_id)
+                .filter(|existing| existing.assigned_to.as_deref() != Some(&from_user))
+            {
+                return Err(ForgeError::ConfigValidation {
+                    message: format!(
+                        "bead {} is assigned to {}, not {}",
+                        bead_id,
+                        existing.assigned_to.as_deref().unwrap_or("<unassigned>"),
+                        from_user
+                    ),
+                });
             }
         }
 
@@ -151,7 +160,8 @@ impl BeadAssignmentTracker {
     /// Get count of assignments per user.
     pub async fn assignment_counts(&self) -> HashMap<String, usize> {
         let user_assignments = self.user_assignments.read().await;
-        user_assignments.iter()
+        user_assignments
+            .iter()
             .map(|(user, beads)| (user.clone(), beads.len()))
             .collect()
     }
@@ -224,7 +234,10 @@ mod tests {
         let tracker = BeadAssignmentTracker::new();
 
         tracker.assign("bead-1", "user-a", "admin").await.unwrap();
-        let new_assignment = tracker.reassign("bead-1", "user-a", "user-b", "admin").await.unwrap();
+        let new_assignment = tracker
+            .reassign("bead-1", "user-a", "user-b", "admin")
+            .await
+            .unwrap();
 
         assert_eq!(new_assignment.assigned_to, Some("user-b".to_string()));
 

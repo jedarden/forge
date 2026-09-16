@@ -3,30 +3,35 @@
 //! Provides a WebSocket server that clients can connect to for real-time
 //! state synchronization and collaborative features.
 
-use super::protocol::{ServerMessage, ClientMessage, ServerInfo, StateUpdate, WorkerState, BeadState, CostState};
-use super::session::SessionRegistry;
 use super::assignment::BeadAssignmentTracker;
 use super::auth::AuthProvider;
+use super::protocol::{
+    BeadState, ClientMessage, CostState, ServerInfo, ServerMessage, StateUpdate, WorkerState,
+};
+use super::session::SessionRegistry;
 use super::tls_validation::{self, TlsValidationResult};
 use crate::ServerError;
-use forge_core::{WorkerStatus, BeadStatus, Priority, audit::{AuditLogger, AuditEvent, EventType}};
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::fs::File;
-use std::io::BufReader;
-use tokio::sync::{broadcast, RwLock};
 use axum::{
+    Router,
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
         State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::IntoResponse,
     routing::get,
-    Router,
+};
+use chrono::Utc;
+use forge_core::{
+    BeadStatus, Priority, WorkerStatus,
+    audit::{AuditEvent, AuditLogger, EventType},
 };
 use futures_util::{SinkExt, StreamExt};
-use tracing::{debug, info, warn, error};
-use chrono::Utc;
+use std::fs::File;
+use std::io::BufReader;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::sync::{RwLock, broadcast};
+use tracing::{debug, error, info, warn};
 
 /// Configuration for the FORGE server.
 #[derive(Debug, Clone)]
@@ -78,8 +83,18 @@ impl TlsConfig {
     /// # Returns
     /// Ok(TlsConfig) if configuration is valid
     /// Err(ServerError) if validation fails
-    pub fn new(cert_path: String, key_path: String, verify: bool, min_version: String) -> Result<Self, ServerError> {
-        let config = Self { cert_path, key_path, verify, min_version };
+    pub fn new(
+        cert_path: String,
+        key_path: String,
+        verify: bool,
+        min_version: String,
+    ) -> Result<Self, ServerError> {
+        let config = Self {
+            cert_path,
+            key_path,
+            verify,
+            min_version,
+        };
         config.validate()?;
         Ok(config)
     }
@@ -142,10 +157,7 @@ struct CostSnapshot {
 
 impl ForgeServer {
     /// Create a new FORGE server.
-    pub fn new(
-        config: ServerConfig,
-        auth: Arc<dyn AuthProvider>,
-    ) -> Self {
+    pub fn new(config: ServerConfig, auth: Arc<dyn AuthProvider>) -> Self {
         let (tx, _) = broadcast::channel(1000);
 
         Self {
@@ -228,27 +240,35 @@ impl ForgeServer {
     /// Update worker states and broadcast to clients.
     pub async fn update_workers(&self, workers: Vec<WorkerState>) {
         self.update_state(|state| {
-            state.workers = workers.iter().map(|w| WorkerSnapshot {
-                worker_id: w.worker_id.clone(),
-                model: w.model.clone(),
-                status: w.status,
-                current_task: w.current_task.clone(),
-            }).collect();
-        }).await;
+            state.workers = workers
+                .iter()
+                .map(|w| WorkerSnapshot {
+                    worker_id: w.worker_id.clone(),
+                    model: w.model.clone(),
+                    status: w.status,
+                    current_task: w.current_task.clone(),
+                })
+                .collect();
+        })
+        .await;
 
         self.broadcast(ServerMessage::StateUpdate(StateUpdate {
             timestamp: Utc::now(),
             workers: workers.clone(),
             beads: {
                 let state = self.current_state.read().await;
-                state.beads.iter().map(|b| BeadState {
-                    bead_id: b.bead_id.clone(),
-                    title: b.title.clone(),
-                    status: b.status,
-                    priority: Priority::P2, // Default priority
-                    assigned_to: b.assigned_to.clone(),
-                    created_at: Utc::now(),
-                }).collect()
+                state
+                    .beads
+                    .iter()
+                    .map(|b| BeadState {
+                        bead_id: b.bead_id.clone(),
+                        title: b.title.clone(),
+                        status: b.status,
+                        priority: Priority::P2, // Default priority
+                        assigned_to: b.assigned_to.clone(),
+                        created_at: Utc::now(),
+                    })
+                    .collect()
             },
             costs: {
                 let state = self.current_state.read().await;
@@ -265,13 +285,17 @@ impl ForgeServer {
     /// Update bead states and broadcast to clients.
     pub async fn update_beads(&self, beads: Vec<BeadState>) {
         self.update_state(|state| {
-            state.beads = beads.iter().map(|b| BeadSnapshot {
-                bead_id: b.bead_id.clone(),
-                title: b.title.clone(),
-                status: b.status,
-                assigned_to: b.assigned_to.clone(),
-            }).collect();
-        }).await;
+            state.beads = beads
+                .iter()
+                .map(|b| BeadSnapshot {
+                    bead_id: b.bead_id.clone(),
+                    title: b.title.clone(),
+                    status: b.status,
+                    assigned_to: b.assigned_to.clone(),
+                })
+                .collect();
+        })
+        .await;
 
         // Broadcast individual bead changes
         for bead in &beads {
@@ -290,7 +314,8 @@ impl ForgeServer {
                 week_cost: costs.week_cost,
                 month_cost: costs.month_cost,
             };
-        }).await;
+        })
+        .await;
     }
 
     /// Broadcast full state update to all clients.
@@ -299,33 +324,44 @@ impl ForgeServer {
             let state = self.current_state.read().await;
             let all_sessions = self.session_registry.manager().all_sessions().await;
             (
-                state.workers.iter().map(|w| WorkerState {
-                    worker_id: w.worker_id.clone(),
-                    model: w.model.clone(),
-                    status: w.status,
-                    current_task: w.current_task.clone(),
-                    started_at: None,
-                }).collect::<Vec<_>>(),
-                state.beads.iter().map(|b| BeadState {
-                    bead_id: b.bead_id.clone(),
-                    title: b.title.clone(),
-                    status: b.status,
-                    priority: Priority::P2,
-                    assigned_to: b.assigned_to.clone(),
-                    created_at: Utc::now(),
-                }).collect::<Vec<_>>(),
+                state
+                    .workers
+                    .iter()
+                    .map(|w| WorkerState {
+                        worker_id: w.worker_id.clone(),
+                        model: w.model.clone(),
+                        status: w.status,
+                        current_task: w.current_task.clone(),
+                        started_at: None,
+                    })
+                    .collect::<Vec<_>>(),
+                state
+                    .beads
+                    .iter()
+                    .map(|b| BeadState {
+                        bead_id: b.bead_id.clone(),
+                        title: b.title.clone(),
+                        status: b.status,
+                        priority: Priority::P2,
+                        assigned_to: b.assigned_to.clone(),
+                        created_at: Utc::now(),
+                    })
+                    .collect::<Vec<_>>(),
                 CostState {
                     today_cost: state.costs.today_cost,
                     week_cost: state.costs.week_cost,
                     month_cost: state.costs.month_cost,
                 },
-                all_sessions.into_iter().map(|s| crate::protocol::SessionSummary {
-                    user_id: s.user_id.clone(),
-                    display_name: s.display_name.clone(),
-                    role: s.role,
-                    current_view: s.current_view.clone(),
-                    connected_at: s.connected_at,
-                }).collect::<Vec<_>>(),
+                all_sessions
+                    .into_iter()
+                    .map(|s| crate::protocol::SessionSummary {
+                        user_id: s.user_id.clone(),
+                        display_name: s.display_name.clone(),
+                        role: s.role,
+                        current_view: s.current_view.clone(),
+                        connected_at: s.connected_at,
+                    })
+                    .collect::<Vec<_>>(),
             )
         };
 
@@ -363,7 +399,8 @@ impl ForgeServer {
             .with_state(self.clone());
 
         let addr = format!("{}:{}", self.config.bind_address, self.config.port);
-        let addr_parsed = addr.parse::<std::net::SocketAddr>()
+        let addr_parsed = addr
+            .parse::<std::net::SocketAddr>()
             .map_err(|e| ServerError::ServerError(format!("Invalid address: {}", e)))?;
 
         // Check if TLS is configured
@@ -384,11 +421,13 @@ impl ForgeServer {
             tls_validation::log_tls_config_details(tls_config, &validation_result);
 
             // Load certificate and key
-            let cert_file = File::open(&tls_config.cert_path)
-                .map_err(|e| ServerError::CertificateLoadError(tls_config.cert_path.clone(), e.to_string()))?;
+            let cert_file = File::open(&tls_config.cert_path).map_err(|e| {
+                ServerError::CertificateLoadError(tls_config.cert_path.clone(), e.to_string())
+            })?;
 
-            let key_file = File::open(&tls_config.key_path)
-                .map_err(|e| ServerError::PrivateKeyLoadError(tls_config.key_path.clone(), e.to_string()))?;
+            let key_file = File::open(&tls_config.key_path).map_err(|e| {
+                ServerError::PrivateKeyLoadError(tls_config.key_path.clone(), e.to_string())
+            })?;
 
             let mut cert_reader = BufReader::new(cert_file);
             let mut key_reader = BufReader::new(key_file);
@@ -396,20 +435,26 @@ impl ForgeServer {
             // Parse certificate chain (handles multiple certs in chain)
             let certs = rustls_pemfile::certs(&mut cert_reader)
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| ServerError::CertificateLoadError(
-                    tls_config.cert_path.clone(),
-                    format!("Failed to parse certificate PEM: {}", e)
-                ))?;
+                .map_err(|e| {
+                    ServerError::CertificateLoadError(
+                        tls_config.cert_path.clone(),
+                        format!("Failed to parse certificate PEM: {}", e),
+                    )
+                })?;
 
             if certs.is_empty() {
                 let mut running = self.running.write().await;
                 *running = false;
                 return Err(ServerError::CertificateChainError(
-                    "No certificates found in certificate file".to_string()
+                    "No certificates found in certificate file".to_string(),
                 ));
             }
 
-            info!("Loaded {} certificate(s) from {}", certs.len(), tls_config.cert_path);
+            info!(
+                "Loaded {} certificate(s) from {}",
+                certs.len(),
+                tls_config.cert_path
+            );
 
             // Parse private key
             let key = match rustls_pemfile::private_key(&mut key_reader) {
@@ -419,7 +464,7 @@ impl ForgeServer {
                     *running = false;
                     return Err(ServerError::PrivateKeyLoadError(
                         tls_config.key_path.clone(),
-                        "No private key found in file".to_string()
+                        "No private key found in file".to_string(),
                     ));
                 }
                 Err(e) => {
@@ -427,12 +472,15 @@ impl ForgeServer {
                     *running = false;
                     return Err(ServerError::PrivateKeyLoadError(
                         tls_config.key_path.clone(),
-                        format!("Failed to parse private key PEM: {}", e)
+                        format!("Failed to parse private key PEM: {}", e),
                     ));
                 }
             };
 
-            info!("Successfully loaded private key from {}", tls_config.key_path);
+            info!(
+                "Successfully loaded private key from {}",
+                tls_config.key_path
+            );
 
             // Create TLS config with certificate chain support
             let config = match rustls::ServerConfig::builder()
@@ -443,7 +491,10 @@ impl ForgeServer {
                 Err(e) => {
                     let mut running = self.running.write().await;
                     *running = false;
-                    return Err(ServerError::TlsValidationFailed(format!("Failed to create TLS config: {}", e)));
+                    return Err(ServerError::TlsValidationFailed(format!(
+                        "Failed to create TLS config: {}",
+                        e
+                    )));
                 }
             };
 
@@ -467,7 +518,7 @@ impl ForgeServer {
 
             let listener = tokio::net::TcpListener::bind(&addr)
                 .await
-                .map_err(|e| ServerError::Io(e))?;
+                .map_err(ServerError::Io)?;
 
             axum::serve(listener, app)
                 .await
@@ -503,10 +554,15 @@ impl ForgeServer {
                         Message::Text(text) => {
                             if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
                                 match client_msg {
-                                    ClientMessage::Authenticate { user_id, credentials } => {
+                                    ClientMessage::Authenticate {
+                                        user_id,
+                                        credentials,
+                                    } => {
                                         match self.auth.authenticate(&user_id, &credentials).await {
                                             Ok(auth_result) => {
-                                                let session = self.session_registry.manager()
+                                                let session = self
+                                                    .session_registry
+                                                    .manager()
                                                     .create_session(
                                                         &user_id,
                                                         &auth_result.display_name,
@@ -519,22 +575,39 @@ impl ForgeServer {
                                                 let welcome = ServerMessage::Welcome {
                                                     session: session.clone(),
                                                     server_info: ServerInfo {
-                                                        server_version: env!("CARGO_PKG_VERSION").to_string(),
-                                                        connected_users: self.session_registry.manager().session_count().await,
+                                                        server_version: env!("CARGO_PKG_VERSION")
+                                                            .to_string(),
+                                                        connected_users: self
+                                                            .session_registry
+                                                            .manager()
+                                                            .session_count()
+                                                            .await,
                                                         active_workers: {
-                                                            let state = self.current_state.read().await;
+                                                            let state =
+                                                                self.current_state.read().await;
                                                             state.workers.len()
                                                         },
                                                         pending_beads: {
-                                                            let state = self.current_state.read().await;
-                                                            state.beads.iter().filter(|b| b.status == BeadStatus::Open).count()
+                                                            let state =
+                                                                self.current_state.read().await;
+                                                            state
+                                                                .beads
+                                                                .iter()
+                                                                .filter(|b| {
+                                                                    b.status == BeadStatus::Open
+                                                                })
+                                                                .count()
                                                         },
                                                     },
                                                 };
 
-                                                let _ = sender.send(Message::Text(
-                                                    serde_json::to_string(&welcome).unwrap().into()
-                                                )).await;
+                                                let _ = sender
+                                                    .send(Message::Text(
+                                                        serde_json::to_string(&welcome)
+                                                            .unwrap()
+                                                            .into(),
+                                                    ))
+                                                    .await;
 
                                                 // Broadcast user joined
                                                 self.broadcast(ServerMessage::UserJoined {
@@ -544,80 +617,125 @@ impl ForgeServer {
                                                 });
 
                                                 authenticated = true;
-                                                info!("User {} authenticated from {}", user_id, addr);
+                                                info!(
+                                                    "User {} authenticated from {}",
+                                                    user_id, addr
+                                                );
                                             }
                                             Err(e) => {
                                                 let error_msg = ServerMessage::Error {
-                                                    message: format!("Authentication failed: {}", e),
+                                                    message: format!(
+                                                        "Authentication failed: {}",
+                                                        e
+                                                    ),
                                                 };
-                                                let _ = sender.send(Message::Text(
-                                                    serde_json::to_string(&error_msg).unwrap().into()
-                                                )).await;
+                                                let _ = sender
+                                                    .send(Message::Text(
+                                                        serde_json::to_string(&error_msg)
+                                                            .unwrap()
+                                                            .into(),
+                                                    ))
+                                                    .await;
                                             }
                                         }
                                     }
                                     ClientMessage::Pong => {
                                         // Keep connection alive
                                         if let Some(ref sid) = session_id {
-                                            let _ = self.session_registry.manager().update_activity(sid).await;
+                                            let _ = self
+                                                .session_registry
+                                                .manager()
+                                                .update_activity(sid)
+                                                .await;
                                         }
                                         if authenticated {
                                             // Respond with ping to keep connection alive
-                                            let _ = sender.send(Message::Text(
-                                                serde_json::to_string(&ServerMessage::Ping).unwrap().into()
-                                            )).await;
+                                            let _ = sender
+                                                .send(Message::Text(
+                                                    serde_json::to_string(&ServerMessage::Ping)
+                                                        .unwrap()
+                                                        .into(),
+                                                ))
+                                                .await;
                                         }
                                     }
                                     ClientMessage::UpdateView { view } => {
                                         if let Some(ref sid) = session_id {
-                                            let _ = self.session_registry.manager().update_view(sid, &view).await;
+                                            let _ = self
+                                                .session_registry
+                                                .manager()
+                                                .update_view(sid, &view)
+                                                .await;
                                         }
                                     }
                                     ClientMessage::AssignBead { bead_id, to } => {
-                                        if let Some(ref sid) = session_id {
-                                            if let Some(session) = self.session_registry.manager().get_session(sid).await {
-                                                if session.role.can_assign_beads() {
-                                                    if let Ok(assignment) = self.assignment_tracker.assign(
-                                                        &bead_id, &to, &session.user_id
-                                                    ).await {
-                                                        // Log the bead assignment to audit log
-                                                        if let Some(ref logger) = self.audit_logger {
-                                                            let _ = logger.log(AuditEvent::new(
-                                                                EventType::UserAction,
-                                                                &session.user_id,
-                                                                "bead_assignment",
-                                                                &bead_id,
-                                                            )
-                                                            .with_new_value(format!("assigned_to={}", &to))
-                                                            .with_metadata(format!("assigned_by={}", &session.user_id)));
-                                                        }
-                                                        self.broadcast(ServerMessage::BeadAssigned {
-                                                            bead_id,
-                                                            assigned_to: assignment.assigned_to.unwrap_or_default(),
-                                                            assigned_by: assignment.assigned_by.unwrap_or_default(),
-                                                        });
-                                                    }
-                                                }
+                                        if let Some(ref sid) = session_id
+                                            && let Some(session) = self
+                                                .session_registry
+                                                .manager()
+                                                .get_session(sid)
+                                                .await
+                                            && session.role.can_assign_beads()
+                                            && let Ok(assignment) = self
+                                                .assignment_tracker
+                                                .assign(&bead_id, &to, &session.user_id)
+                                                .await
+                                        {
+                                            // Log the bead assignment to audit log
+                                            if let Some(ref logger) = self.audit_logger {
+                                                let _ = logger.log(
+                                                    AuditEvent::new(
+                                                        EventType::UserAction,
+                                                        &session.user_id,
+                                                        "bead_assignment",
+                                                        &bead_id,
+                                                    )
+                                                    .with_new_value(format!("assigned_to={}", to))
+                                                    .with_metadata(format!(
+                                                        "assigned_by={}",
+                                                        session.user_id
+                                                    )),
+                                                );
                                             }
+                                            self.broadcast(ServerMessage::BeadAssigned {
+                                                bead_id,
+                                                assigned_to: assignment
+                                                    .assigned_to
+                                                    .unwrap_or_default(),
+                                                assigned_by: assignment
+                                                    .assigned_by
+                                                    .unwrap_or_default(),
+                                            });
                                         }
                                     }
                                     ClientMessage::UnassignBead { bead_id } => {
-                                        if let Some(ref sid) = session_id {
-                                            if let Some(session) = self.session_registry.manager().get_session(sid).await {
-                                                if session.role.can_assign_beads() {
-                                                    if let Ok(Some(assignment)) = self.assignment_tracker.unassign(&bead_id).await {
-                                                        // Log the bead unassignment to audit log
-                                                        if let Some(ref logger) = self.audit_logger {
-                                                            let _ = logger.log(AuditEvent::new(
-                                                                EventType::UserAction,
-                                                                &session.user_id,
-                                                                "bead_unassignment",
-                                                                &bead_id,
-                                                            )
-                                                            .with_old_value(format!("was_assigned_to={}", &assignment.assigned_to.as_deref().unwrap_or("<none>"))));
-                                                        }
-                                                    }
-                                                }
+                                        if let Some(ref sid) = session_id
+                                            && let Some(session) = self
+                                                .session_registry
+                                                .manager()
+                                                .get_session(sid)
+                                                .await
+                                            && session.role.can_assign_beads()
+                                            && let Ok(Some(assignment)) =
+                                                self.assignment_tracker.unassign(&bead_id).await
+                                        {
+                                            // Log the bead unassignment to audit log
+                                            if let Some(ref logger) = self.audit_logger {
+                                                let _ = logger.log(
+                                                    AuditEvent::new(
+                                                        EventType::UserAction,
+                                                        &session.user_id,
+                                                        "bead_unassignment",
+                                                        &bead_id,
+                                                    )
+                                                    .with_old_value(format!(
+                                                        "was_assigned_to={}",
+                                                        assignment
+                                                            .assigned_to
+                                                            .as_deref()
+                                                            .unwrap_or("<none>")
+                                                    )),
+                                                );
                                             }
                                         }
                                     }
@@ -642,14 +760,14 @@ impl ForgeServer {
         }
 
         // Cleanup on disconnect
-        if let Some(sid) = session_id {
-            if let Some(session) = self.session_registry.manager().remove_session(&sid).await {
-                let user_id = session.user_id.clone();
-                self.broadcast(ServerMessage::UserLeft {
-                    user: user_id.clone(),
-                });
-                info!("User {} disconnected from {}", user_id, addr);
-            }
+        if let Some(sid) = session_id
+            && let Some(session) = self.session_registry.manager().remove_session(&sid).await
+        {
+            let user_id = session.user_id.clone();
+            self.broadcast(ServerMessage::UserLeft {
+                user: user_id.clone(),
+            });
+            info!("User {} disconnected from {}", user_id, addr);
         }
 
         Ok(())
@@ -672,10 +790,7 @@ impl Clone for ForgeServer {
 }
 
 /// WebSocket handler for Axum.
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(server): State<ForgeServer>,
-) -> impl IntoResponse {
+async fn ws_handler(ws: WebSocketUpgrade, State(server): State<ForgeServer>) -> impl IntoResponse {
     ws.on_upgrade(|socket| handle_socket(socket, server))
 }
 
@@ -705,13 +820,17 @@ pub async fn create_server(config: ServerConfig) -> ForgeServer {
 
     let auth = if oauth_config_path.exists() {
         tracing::info!("Loading OAuth configuration from {:?}", oauth_config_path);
-        Arc::new(OAuthAuthProvider::from_config_file(&oauth_config_path)
-            .unwrap_or_else(|e| {
+        Arc::new(
+            OAuthAuthProvider::from_config_file(&oauth_config_path).unwrap_or_else(|e| {
                 tracing::warn!("Failed to load OAuth config: {}, using defaults", e);
                 OAuthAuthProvider::with_defaults()
-            }))
+            }),
+        )
     } else {
-        tracing::warn!("OAuth config not found at {:?}, using defaults", oauth_config_path);
+        tracing::warn!(
+            "OAuth config not found at {:?}, using defaults",
+            oauth_config_path
+        );
         Arc::new(OAuthAuthProvider::with_defaults())
     };
 

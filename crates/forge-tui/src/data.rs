@@ -17,11 +17,12 @@ use crate::bead::BeadManager;
 use crate::cost_panel::{BudgetConfig, CostPanelData};
 use crate::log_watcher::{LogWatcher, LogWatcherConfig, LogWatcherEvent, RealtimeMetrics};
 use crate::metrics_panel::MetricsPanelData;
-use crate::perf_metrics::{get_memory_rss, PerfMetrics};
+use crate::perf_metrics::{PerfMetrics, get_memory_rss};
 use crate::routing_panel::RoutingData;
 use crate::status::{StatusWatcher, StatusWatcherConfig, WorkerCounts, WorkerStatusFile};
 use crate::subscription_panel::SubscriptionData;
 use forge_core::activity_monitor::{ActivityMonitor, ActivityState, WorkerActivity};
+use forge_core::types::Priority;
 use forge_core::types::WorkerStatus;
 use forge_cost::{CostDatabase, CostQuery, SubscriptionTracker};
 use forge_worker::complexity::{ComplexityScorer, TaskContext};
@@ -30,7 +31,6 @@ use forge_worker::health::{
     HealthCheckType, HealthLevel, HealthMonitor, HealthMonitorConfig, WorkerHealthStatus,
 };
 use forge_worker::router::{Router, TaskMetadata};
-use forge_core::types::Priority;
 
 /// Aggregated worker data for TUI display.
 #[derive(Debug, Default)]
@@ -112,7 +112,10 @@ impl WorkerData {
     ///
     /// This method is called when the TUI is connected to a FORGE server
     /// and receives authoritative worker state updates.
-    pub fn update_from_server(&mut self, server_workers: HashMap<String, crate::status::WorkerStatusFile>) {
+    pub fn update_from_server(
+        &mut self,
+        server_workers: HashMap<String, crate::status::WorkerStatusFile>,
+    ) {
         // Replace workers with server state (server is authoritative)
         self.workers = server_workers;
 
@@ -240,10 +243,7 @@ impl WorkerData {
                     c.total, c.active, c.idle, paused_count
                 )
             } else {
-                format!(
-                    "Total: {} ({} active, {} idle)",
-                    c.total, c.active, c.idle
-                )
+                format!("Total: {} ({} active, {} idle)", c.total, c.active, c.idle)
             };
             lines.push(total_line);
 
@@ -1195,9 +1195,9 @@ impl DataManager {
         }
 
         // Periodically poll activity monitoring (every 15 seconds)
-        let should_poll_activity = self
-            .last_activity_poll
-            .map_or(true, |t| t.elapsed().as_secs() >= ACTIVITY_POLL_INTERVAL_SECS);
+        let should_poll_activity = self.last_activity_poll.map_or(true, |t| {
+            t.elapsed().as_secs() >= ACTIVITY_POLL_INTERVAL_SECS
+        });
 
         if should_poll_activity {
             self.poll_activity_monitor();
@@ -1568,10 +1568,7 @@ impl DataManager {
         }
 
         if stuck_count > 0 {
-            tracing::info!(
-                "Activity check: {} stuck workers detected",
-                stuck_count
-            );
+            tracing::info!("Activity check: {} stuck workers detected", stuck_count);
             self.dirty = true;
         }
     }
@@ -1601,7 +1598,8 @@ impl DataManager {
         if let Ok(recent_calls) = db.get_api_calls_since(since) {
             for call in recent_calls {
                 // Find which subscription this model belongs to
-                if let Some(ref sub_name) = self.subscription_tracker
+                if let Some(ref sub_name) = self
+                    .subscription_tracker
                     .find_subscription_for_model(&call.model)
                 {
                     // Track total tokens used
@@ -1611,11 +1609,13 @@ impl DataManager {
                     if let Err(e) = db.increment_subscription_usage(sub_name, total_tokens) {
                         tracing::warn!(
                             "Failed to increment subscription usage for {}: {}",
-                            sub_name, e
+                            sub_name,
+                            e
                         );
                     } else {
                         // Update local tracker cache
-                        self.subscription_tracker.increment_usage(sub_name, total_tokens);
+                        self.subscription_tracker
+                            .increment_usage(sub_name, total_tokens);
 
                         // Also record detailed usage event
                         use forge_cost::SubscriptionUsageRecord;
@@ -2037,8 +2037,7 @@ impl DataManager {
         description: Option<&str>,
         labels: &[String],
     ) -> u32 {
-        let mut context = TaskContext::new(title)
-            .with_labels(labels.to_vec());
+        let mut context = TaskContext::new(title).with_labels(labels.to_vec());
 
         if let Some(desc) = description {
             context = context.with_description(desc);
@@ -2072,8 +2071,16 @@ impl DataManager {
                 // Update routing data for display
                 self.routing_data.total_decisions += 1;
                 *self.routing_data.by_tier.entry(decision.tier).or_insert(0) += 1;
-                *self.routing_data.by_model.entry(decision.model_id.clone()).or_insert(0) += 1;
-                *self.routing_data.by_reason.entry(decision.reason).or_insert(0) += 1;
+                *self
+                    .routing_data
+                    .by_model
+                    .entry(decision.model_id.clone())
+                    .or_insert(0) += 1;
+                *self
+                    .routing_data
+                    .by_reason
+                    .entry(decision.reason)
+                    .or_insert(0) += 1;
 
                 // Track recent decisions (keep last 20)
                 self.routing_data.recent_decisions.push(decision.clone());
@@ -2096,8 +2103,9 @@ impl DataManager {
 
                 // Calculate average complexity
                 let total = self.routing_data.total_decisions;
-                self.routing_data.avg_complexity =
-                    (self.routing_data.avg_complexity * (total - 1) as f64 + complexity_score as f64)
+                self.routing_data.avg_complexity = (self.routing_data.avg_complexity
+                    * (total - 1) as f64
+                    + complexity_score as f64)
                     / total as f64;
 
                 // Calculate savings
@@ -2120,7 +2128,11 @@ impl DataManager {
     }
 
     /// Get the recommended model tier for a task.
-    pub fn get_recommended_tier(&self, title: &str, labels: &[String]) -> forge_core::types::WorkerTier {
+    pub fn get_recommended_tier(
+        &self,
+        title: &str,
+        labels: &[String],
+    ) -> forge_core::types::WorkerTier {
         let complexity = self.score_task_complexity(title, None, labels);
         match complexity {
             0..=30 => forge_core::types::WorkerTier::Budget,
@@ -2187,8 +2199,8 @@ impl DataManager {
                 started_at: server_worker.started_at,
                 last_activity: None, // Could be derived from server state in future
                 current_task: server_worker.current_task,
-                tasks_completed: 0,    // Server doesn't track this
-                container_id: None,     // Server doesn't provide container ID
+                tasks_completed: 0, // Server doesn't track this
+                container_id: None, // Server doesn't provide container ID
             };
             worker_map.insert(server_worker.worker_id, worker_file);
         }
@@ -2203,14 +2215,17 @@ impl DataManager {
         // Update server session state for team collaboration
         // Convert SessionSummary to UserSession format
         use forge_core::UserSession;
-        self.server_sessions = sessions.into_iter().map(|summary| {
-            UserSession::new(
-                &format!("session-{}", summary.user_id),
-                &summary.user_id,
-                &summary.display_name,
-                summary.role,
-            )
-        }).collect();
+        self.server_sessions = sessions
+            .into_iter()
+            .map(|summary| {
+                UserSession::new(
+                    format!("session-{}", summary.user_id),
+                    &summary.user_id,
+                    &summary.display_name,
+                    summary.role,
+                )
+            })
+            .collect();
         self.last_sessions_update = Some(std::time::Instant::now());
 
         // Update cost data from server state

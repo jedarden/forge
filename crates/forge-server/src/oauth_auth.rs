@@ -55,12 +55,12 @@ impl OAuthConfig {
     pub fn validate(&self) -> Result<(), ServerError> {
         if self.client_id.is_empty() {
             return Err(ServerError::ServerError(
-                "OAuth client_id is required. Set it in your oauth.yaml config file.".to_string()
+                "OAuth client_id is required. Set it in your oauth.yaml config file.".to_string(),
             ));
         }
 
         // Validate that user_roles only contains valid roles
-        for (_username, role) in &self.user_roles {
+        for role in self.user_roles.values() {
             match role {
                 UserRole::Admin | UserRole::Operator | UserRole::Viewer => {
                     // Valid role
@@ -69,9 +69,14 @@ impl OAuthConfig {
         }
 
         // Check if there's at least one admin configured
-        let has_admin = self.user_roles.values().any(|role| matches!(role, UserRole::Admin));
+        let has_admin = self
+            .user_roles
+            .values()
+            .any(|role| matches!(role, UserRole::Admin));
         if !has_admin {
-            tracing::warn!("No Admin users configured in OAuth config. You may not have full access to all features.");
+            tracing::warn!(
+                "No Admin users configured in OAuth config. You may not have full access to all features."
+            );
         }
 
         Ok(())
@@ -169,13 +174,17 @@ impl OAuthAuthProvider {
         let contents = std::fs::read_to_string(path)
             .map_err(|e| ServerError::ServerError(format!("Failed to read OAuth config: {}", e)))?;
 
-        let config: OAuthConfig = serde_yaml::from_str(&contents)
-            .map_err(|e| ServerError::ServerError(format!("Failed to parse OAuth config: {}", e)))?;
+        let config: OAuthConfig = serde_yaml::from_str(&contents).map_err(|e| {
+            ServerError::ServerError(format!("Failed to parse OAuth config: {}", e))
+        })?;
 
         // Validate configuration
         config.validate()?;
 
-        info!("Loaded OAuth configuration for provider {:?}", config.provider);
+        info!(
+            "Loaded OAuth configuration for provider {:?}",
+            config.provider
+        );
         Ok(Self::new(config))
     }
 
@@ -184,11 +193,9 @@ impl OAuthAuthProvider {
         // Check cache first
         {
             let cache = self.token_cache.read().await;
-            if let Some(cached) = cache.get(token) {
-                if !cached.is_expired() {
-                    debug!("Token cache hit for user {}", cached.user_id);
-                    return Ok(cached.clone());
-                }
+            if let Some(cached) = cache.get(token).filter(|cached| !cached.is_expired()) {
+                debug!("Token cache hit for user {}", cached.user_id);
+                return Ok(cached.clone());
             }
         }
 
@@ -197,11 +204,15 @@ impl OAuthAuthProvider {
 
         // Map OAuth user to internal user
         let user_id = user_info.login.clone();
-        let display_name = self.config.display_names
+        let display_name = self
+            .config
+            .display_names
             .get(&user_id)
             .cloned()
             .unwrap_or_else(|| user_info.clone().name.unwrap_or_else(|| user_id.clone()));
-        let role = self.config.user_roles
+        let role = self
+            .config
+            .user_roles
             .get(&user_id)
             .copied()
             .unwrap_or(UserRole::Viewer); // Default to Viewer for unknown users
@@ -234,20 +245,25 @@ impl OAuthAuthProvider {
             .header("User-Agent", "FORGE-Server/0.3.0")
             .send()
             .await
-            .map_err(|e| ServerError::AuthenticationFailed(format!("HTTP request failed: {}", e)))?;
+            .map_err(|e| {
+                ServerError::AuthenticationFailed(format!("HTTP request failed: {}", e))
+            })?;
 
         if response.status().is_success() {
-            let user_info: OAuthUserInfo = response
-                .json()
-                .await
-                .map_err(|e| ServerError::AuthenticationFailed(format!("Failed to parse user info: {}", e)))?;
+            let user_info: OAuthUserInfo = response.json().await.map_err(|e| {
+                ServerError::AuthenticationFailed(format!("Failed to parse user info: {}", e))
+            })?;
             Ok(user_info)
         } else {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            Err(ServerError::AuthenticationFailed(
-                format!("Token validation failed: {} - {}", status, error_text)
-            ))
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            Err(ServerError::AuthenticationFailed(format!(
+                "Token validation failed: {} - {}",
+                status, error_text
+            )))
         }
     }
 
@@ -267,13 +283,18 @@ impl Default for OAuthAuthProvider {
 
 #[async_trait]
 impl AuthProvider for OAuthAuthProvider {
-    async fn authenticate(&self, _user_id: &str, credentials: &str) -> Result<AuthResult, ServerError> {
+    async fn authenticate(
+        &self,
+        _user_id: &str,
+        credentials: &str,
+    ) -> Result<AuthResult, ServerError> {
         // For OAuth, we expect:
         // - user_id: ignored (we get user_id from the token)
         // - credentials: OAuth access token
 
         // Clean up expired tokens periodically
-        if rand::random::<f32>() < 0.01 { // 1% chance on each auth call
+        if rand::random::<f32>() < 0.01 {
+            // 1% chance on each auth call
             self.cleanup_expired_tokens().await;
         }
 
@@ -322,7 +343,7 @@ mod tests {
         let url = OAuthProvider::GitHub.auth_url(
             "test_client_id",
             "http://localhost:8080/callback",
-            "test_state"
+            "test_state",
         );
 
         assert!(url.contains("github.com"));

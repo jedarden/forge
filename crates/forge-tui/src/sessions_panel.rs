@@ -65,7 +65,7 @@ impl SessionsPanel {
         }
 
         let session = UserSession::new(
-            &format!("session-{}", user_id),
+            format!("session-{}", user_id),
             &user_id,
             &display_name,
             role,

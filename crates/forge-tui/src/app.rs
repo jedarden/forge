@@ -492,7 +492,7 @@ fn get_error_guidance(error_message: &str) -> Option<String> {
     }
 
     // Connection timeout
-    if error_lower.contains("timeout") {
+    if error_lower.contains("timeout") || error_lower.contains("timed out") {
         return Some("⏱️  Request timed out. The server may be slow or unreachable. Click 'r' to retry or check status.".to_string());
     }
 
@@ -1970,7 +1970,7 @@ impl App {
                 }
                 Err(e) => {
                     info!("❌ Error response: {}", e);
-                    let error_msg = format!("Error: {}", e);
+                    let error_msg = e.friendly_message();
                     let guidance = get_error_guidance(&error_msg);
 
                     // Check if this is a network error that's retryable
@@ -2091,14 +2091,17 @@ impl App {
 
                 let exchange = ChatExchange {
                     user_query: query,
-                    assistant_response: format!("Error: {}", err),
+                    assistant_response: err.clone(),
                     timestamp,
                     is_error: true,
                     tool_calls: vec![],
                     side_effects: vec![],
                     confirmation: None,
                     metadata: ResponseMetadata::default(),
-                    error_guidance: Some("Streaming error occurred. Try again.".to_string()),
+                    error_guidance: Some(
+                        get_error_guidance(err)
+                            .unwrap_or_else(|| "Streaming error occurred. Try again.".to_string()),
+                    ),
                 };
                 self.persist_chat_exchange(&exchange);
                 self.chat_history.push(exchange);
@@ -2373,10 +2376,7 @@ impl App {
             rt.block_on(async {
                 // Check rate limit
                 if let Err(e) = backend_clone.check_and_record_rate_limit().await {
-                    let _ = chunk_tx.send(StreamingChatChunk::error(format!(
-                        "Rate limit error: {}",
-                        e
-                    )));
+                    let _ = chunk_tx.send(StreamingChatChunk::error(e.friendly_message()));
                     return;
                 }
 
@@ -4225,16 +4225,14 @@ impl App {
                     self.mark_dirty();
                 }
             }
-            KeyCode::Enter => {
+            KeyCode::Enter if !alerts.is_empty() => {
                 // Enter in overlay mode also acknowledges the alert
-                if !alerts.is_empty() {
-                    let idx = self.selected_alert_index.min(alerts.len() - 1);
-                    let alert_id = alerts[idx].id;
-                    let alert_title = alerts[idx].title.clone();
-                    self.data_manager.alert_manager.acknowledge(alert_id);
-                    self.status_message = Some(format!("Alert acknowledged: {}", alert_title));
-                    self.mark_dirty();
-                }
+                let idx = self.selected_alert_index.min(alerts.len() - 1);
+                let alert_id = alerts[idx].id;
+                let alert_title = alerts[idx].title.clone();
+                self.data_manager.alert_manager.acknowledge(alert_id);
+                self.status_message = Some(format!("Alert acknowledged: {}", alert_title));
+                self.mark_dirty();
             }
             _ => {}
         }
@@ -4775,8 +4773,7 @@ impl App {
         );
 
         // Create tokio runtime for async WebSocket client
-        let rt = Runtime::new()
-            .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+        let rt = Runtime::new().map_err(|e| Box::new(std::io::Error::other(e)))?;
 
         // Create channels for communication with the background client task
         let (request_tx, request_rx) = mpsc::channel::<ServerClientRequest>();
@@ -8232,7 +8229,7 @@ mod tests {
         app.switch_view(View::Tasks);
         let buffer = render_app(&mut app, 100, 30);
 
-        // Task queue should show priority markers or queue status (or br CLI unavailable message)
+        // Task queue should show priority markers or queue status (or no-store message)
         assert!(
             buffer_contains(&buffer, "P0")
                 || buffer_contains(&buffer, "P1")
@@ -8240,8 +8237,8 @@ mod tests {
                 || buffer_contains(&buffer, "Total Open")
                 || buffer_contains(&buffer, "No tasks")
                 || buffer_contains(&buffer, "Task")
-                || buffer_contains(&buffer, "br CLI"),
-            "Task Queue should display priority indicators, queue status, or br CLI message"
+                || buffer_contains(&buffer, "bead store"),
+            "Task Queue should display priority indicators, queue status, or no-store message"
         );
     }
 

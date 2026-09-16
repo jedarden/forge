@@ -143,7 +143,6 @@ fn normalize_query(query: &str) -> String {
     query
         .trim()
         .trim_end_matches(['?', '!', '.'])
-        .trim()
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")

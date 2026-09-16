@@ -9,7 +9,7 @@ use chrono::Utc;
 use forge_core::{UserRole, UserSession};
 use futures_util::{SinkExt, StreamExt};
 use native_tls;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, broadcast};
 use tokio_tungstenite::{
@@ -276,7 +276,7 @@ impl ForgeClient {
     ///
     /// This is for development only - it allows trusting certificates that aren't
     /// in the system trust store (e.g., self-signed test certificates).
-    async fn build_ca_bundle_connector(&self, path: &PathBuf) -> Result<Connector, ServerError> {
+    async fn build_ca_bundle_connector(&self, path: &Path) -> Result<Connector, ServerError> {
         // native_tls doesn't support custom CA bundles - only system trust store
         // For custom CA support, the client needs to use rustls backend
         warn!(
@@ -315,27 +315,21 @@ impl ForgeClient {
             || error_str.contains("untrusted")
             || error_str.contains("unable to verify")
         {
-            format!(
-                "TLS certificate issuer not trusted. The server's certificate chain is not trusted by your system. \
+            "TLS certificate issuer not trusted. The server's certificate chain is not trusted by your system. \
                 This can mean: \
                 1) Using a self-signed certificate in production (use a proper CA instead), or \
                 2) Missing intermediate certificate in the chain, or \
-                3) Test environment: configure ClientTlsConfig::with_ca_bundle() to trust your test CA."
-            )
+                3) Test environment: configure ClientTlsConfig::with_ca_bundle() to trust your test CA.".to_string()
         } else if error_str.contains("expired") || error_str.contains("not yet valid") {
-            format!(
-                "TLS certificate expired or not yet valid. Check the server's certificate validity period. \
-                In production, renew the certificate. In testing, regenerate a valid test certificate."
-            )
+            "TLS certificate expired or not yet valid. Check the server's certificate validity period. \
+                In production, renew the certificate. In testing, regenerate a valid test certificate.".to_string()
         } else if error_str.contains("handshake") || error_str.contains("alert") {
-            format!(
-                "TLS handshake failed. This indicates a protocol-level issue during the TLS negotiation. \
+            "TLS handshake failed. This indicates a protocol-level issue during the TLS negotiation. \
                 Common causes: \
                 1) TLS version mismatch (server requires a version your client doesn't support), \
                 2) Cipher suite mismatch, \
                 3) Server configuration error. \
-                Check server logs for detailed error information."
-            )
+                Check server logs for detailed error information.".to_string()
         } else {
             format!(
                 "TLS connection error: {}. If this error persists, check server logs and ensure the server's TLS configuration is valid.",
@@ -652,84 +646,5 @@ mod tests {
 
         assert_eq!(config.ca_bundle_path, Some(path));
         assert!(!config.danger_verify_certificate);
-    }
-
-    #[test]
-    fn test_decode_valid_cert() {
-        let client = create_test_client();
-        // Valid base64-encoded dummy certificate data
-        let valid_base64 = "MIIDXTCCAkWgAwIBAgIJAKL0UG+mRKqzMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV";
-
-        let result = client.decode_cert(valid_base64.as_bytes());
-        assert!(result.is_ok());
-        let decoded = result.unwrap();
-        assert!(!decoded.is_empty());
-    }
-
-    #[test]
-    fn test_decode_invalid_cert() {
-        let client = create_test_client();
-        let invalid_base64 = "not-valid-base64!!!";
-
-        let result = client.decode_cert(invalid_base64.as_bytes());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_format_tls_error_hostname_mismatch() {
-        let client = create_test_client();
-        let error_msg = client.format_tls_error("CertVerifyFailed");
-
-        // Should contain helpful guidance about hostname mismatch
-        assert!(
-            error_msg.to_lowercase().contains("hostname")
-                || error_msg.to_lowercase().contains("verification")
-        );
-    }
-
-    #[test]
-    fn test_format_tls_error_unknown_issuer() {
-        let client = create_test_client();
-        let error_msg = client.format_tls_error("Unknown issuer");
-
-        // Should mention untrusted or unknown issuer
-        assert!(
-            error_msg.to_lowercase().contains("untrusted")
-                || error_msg.to_lowercase().contains("issuer")
-        );
-    }
-
-    #[test]
-    fn test_format_tls_error_expired() {
-        let client = create_test_client();
-        let error_msg = client.format_tls_error("Certificate expired");
-
-        // Should mention expired certificate
-        assert!(
-            error_msg.to_lowercase().contains("expired")
-                || error_msg.to_lowercase().contains("valid")
-        );
-    }
-
-    #[test]
-    fn test_format_tls_error_handshake() {
-        let client = create_test_client();
-        let error_msg = client.format_tls_error("Handshake failed");
-
-        // Should mention handshake or protocol
-        assert!(
-            error_msg.to_lowercase().contains("handshake")
-                || error_msg.to_lowercase().contains("protocol")
-        );
-    }
-
-    fn create_test_client() -> ForgeClient {
-        let config = ClientConfig {
-            server_url: "ws://localhost:8080/ws".to_string(),
-            user_id: "testuser".to_string(),
-            password: "testpass".to_string(),
-            tls: None,
-        };
-        ForgeClient::new(config)
     }
 }

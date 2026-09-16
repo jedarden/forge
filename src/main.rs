@@ -28,8 +28,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use forge_core::{LogGuard, StatusWriter, init_logging};
 use forge_init::{detection, generator, guidance, validator, wizard};
-use forge_tui::{App, ForgeConfig};
 use forge_server::{ServerConfig, create_server};
+use forge_tui::{App, ForgeConfig};
 use tracing::{error, info};
 
 /// FORGE Agent Orchestration Dashboard
@@ -282,7 +282,10 @@ fn main() -> ExitCode {
     {
         match forge_core::check_and_perform_self_install() {
             Ok(Some(install_path)) => {
-                eprintln!("✅ Update installed successfully to: {}", install_path.display());
+                eprintln!(
+                    "✅ Update installed successfully to: {}",
+                    install_path.display()
+                );
                 eprintln!("🚀 Restarting FORGE with new version...\n");
                 info!("Self-install completed to {:?}", install_path);
                 // Continue with normal startup
@@ -341,7 +344,11 @@ fn main() -> ExitCode {
                 key_path,
                 verbose,
             } => {
-                return handle_validate_tls_command(cert_path.as_deref(), key_path.as_deref(), *verbose);
+                return handle_validate_tls_command(
+                    cert_path.as_deref(),
+                    key_path.as_deref(),
+                    *verbose,
+                );
             }
             _ => {
                 // Other commands fall through to TUI startup
@@ -579,24 +586,29 @@ fn run_onboarding(
                     .iter()
                     .filter(|t| !t.is_ready())
                     .map(|t| {
-                        let (missing_api_key, incompatible_version, missing_feature) = match t.status {
-                            detection::ToolStatus::MissingApiKey => (true, false, None),
-                            detection::ToolStatus::IncompatibleVersion => {
-                                // Extract missing feature from diagnostics
-                                let feature = diagnostics
-                                    .rejections
-                                    .iter()
-                                    .find(|r| r.tool_name == t.name || r.tool_name == t.name.replace("-code", ""))
-                                    .and_then(|r| match &r.reason {
-                                        guidance::RejectionReason::IncompatibleVersion { missing_feature, .. } => {
-                                            Some(missing_feature.clone())
-                                        }
-                                        _ => None,
-                                    });
-                                (false, true, feature)
-                            }
-                            _ => (false, false, None),
-                        };
+                        let (missing_api_key, incompatible_version, missing_feature) =
+                            match t.status {
+                                detection::ToolStatus::MissingApiKey => (true, false, None),
+                                detection::ToolStatus::IncompatibleVersion => {
+                                    // Extract missing feature from diagnostics
+                                    let feature = diagnostics
+                                        .rejections
+                                        .iter()
+                                        .find(|r| {
+                                            r.tool_name == t.name
+                                                || r.tool_name == t.name.replace("-code", "")
+                                        })
+                                        .and_then(|r| match &r.reason {
+                                            guidance::RejectionReason::IncompatibleVersion {
+                                                missing_feature,
+                                                ..
+                                            } => Some(missing_feature.clone()),
+                                            _ => None,
+                                        });
+                                    (false, true, feature)
+                                }
+                                _ => (false, false, None),
+                            };
                         guidance::ToolFixInfo {
                             name: t.name.clone(),
                             version: t.version.clone(),
@@ -619,11 +631,7 @@ fn run_onboarding(
         match wizard::run_wizard(tools.clone()) {
             Ok(Some(tool)) => {
                 // User selected a tool
-                eprintln!(
-                    "\n✨ Using: {} ({})",
-                    tool.name,
-                    tool.binary_path.display()
-                );
+                eprintln!("\n✨ Using: {} ({})", tool.name, tool.binary_path.display());
                 tool
             }
             Ok(None) => {
@@ -685,10 +693,7 @@ fn run_onboarding(
         eprintln!("   Launcher: {}", launcher_path.display());
     }
 
-    info!(
-        "Onboarding complete: using {} backend",
-        selected_tool.name
-    );
+    info!("Onboarding complete: using {} backend", selected_tool.name);
     Ok(())
 }
 
@@ -707,7 +712,12 @@ fn normalize_backend_name(name: &str) -> String {
 }
 
 /// Handle the `forge init` command.
-fn handle_init_command(non_interactive: bool, force: bool, reconfigure: bool, detect_tools: bool) -> ExitCode {
+fn handle_init_command(
+    non_interactive: bool,
+    force: bool,
+    reconfigure: bool,
+    detect_tools: bool,
+) -> ExitCode {
     info!(
         "Handling init command (non_interactive={}, force={}, reconfigure={}, detect_tools={})",
         non_interactive, force, reconfigure, detect_tools
@@ -752,10 +762,7 @@ fn handle_init_command(non_interactive: bool, force: bool, reconfigure: bool, de
             eprintln!("Use --reconfigure to backup and re-run setup");
             return ExitCode::from(1);
         } else {
-            eprintln!(
-                "Configuration already exists at {}",
-                config_path.display()
-            );
+            eprintln!("Configuration already exists at {}", config_path.display());
             eprintln!("Use --force to overwrite existing configuration");
             eprintln!("Use --reconfigure to backup and re-run setup");
             return ExitCode::SUCCESS;
@@ -793,7 +800,10 @@ fn handle_init_command(non_interactive: bool, force: bool, reconfigure: bool, de
 ///
 /// Creates a timestamped backup to preserve user's previous settings.
 /// Keeps logs, costs database, and status files intact.
-fn backup_config(forge_dir: &std::path::Path, config_path: &std::path::Path) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+fn backup_config(
+    forge_dir: &std::path::Path,
+    config_path: &std::path::Path,
+) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
     let backup_path = forge_dir.join(format!("config.yaml.backup.{}", timestamp));
 
@@ -810,16 +820,22 @@ fn backup_config(forge_dir: &std::path::Path, config_path: &std::path::Path) -> 
             if path.is_file() {
                 // Check if the file contains any comments that suggest custom modifications
                 if let Ok(content) = std::fs::read_to_string(&path)
-                    && (content.contains("# CUSTOM:") || content.contains("# USER:") || content.contains("# Modified by")) {
-                        eprintln!("⚠️  Warning: {} may contain custom modifications", path.display());
-                        // Backup the launcher script too
-                        let launcher_backup = forge_dir.join(format!(
-                            "launchers/{}.backup.{}",
-                            entry.file_name().to_string_lossy(),
-                            timestamp
-                        ));
-                        let _ = std::fs::copy(&path, &launcher_backup);
-                    }
+                    && (content.contains("# CUSTOM:")
+                        || content.contains("# USER:")
+                        || content.contains("# Modified by"))
+                {
+                    eprintln!(
+                        "⚠️  Warning: {} may contain custom modifications",
+                        path.display()
+                    );
+                    // Backup the launcher script too
+                    let launcher_backup = forge_dir.join(format!(
+                        "launchers/{}.backup.{}",
+                        entry.file_name().to_string_lossy(),
+                        timestamp
+                    ));
+                    let _ = std::fs::copy(&path, &launcher_backup);
+                }
             }
         }
     }
@@ -850,17 +866,27 @@ fn handle_detect_tools_command() -> ExitCode {
                         detection::ToolStatus::NotExecutable => "❌",
                     };
 
-                    eprintln!("  {} {} ({})", status_icon, tool.name, tool.status_message());
+                    eprintln!(
+                        "  {} {} ({})",
+                        status_icon,
+                        tool.name,
+                        tool.status_message()
+                    );
                     eprintln!("      Path: {}", tool.binary_path.display());
                     if let Some(version) = &tool.version {
                         eprintln!("      Version: {}", version);
                     }
-                    eprintln!("      Headless: {} | Skip-Perms: {}",
+                    eprintln!(
+                        "      Headless: {} | Skip-Perms: {}",
                         if tool.headless_support { "yes" } else { "no" },
                         if tool.skip_permissions { "yes" } else { "no" }
                     );
                     if tool.api_key_required {
-                        let key_status = if tool.api_key_detected { "✅ found" } else { "❌ missing" };
+                        let key_status = if tool.api_key_detected {
+                            "✅ found"
+                        } else {
+                            "❌ missing"
+                        };
                         if let Some(env_var) = &tool.api_key_env_var {
                             eprintln!("      API Key: {} ({})", key_status, env_var);
                         } else {
@@ -880,11 +906,21 @@ fn handle_detect_tools_command() -> ExitCode {
                             eprintln!("  • {} - not found in PATH", rejection.tool_name);
                         }
                         guidance::RejectionReason::MissingApiKey { env_var, .. } => {
-                            eprintln!("  • {} - missing API key ({})", rejection.tool_name, env_var);
+                            eprintln!(
+                                "  • {} - missing API key ({})",
+                                rejection.tool_name, env_var
+                            );
                         }
-                        guidance::RejectionReason::IncompatibleVersion { version, missing_feature, .. } => {
+                        guidance::RejectionReason::IncompatibleVersion {
+                            version,
+                            missing_feature,
+                            ..
+                        } => {
                             let ver = version.as_deref().unwrap_or("unknown");
-                            eprintln!("  • {} {} - incompatible: {}", rejection.tool_name, ver, missing_feature);
+                            eprintln!(
+                                "  • {} {} - incompatible: {}",
+                                rejection.tool_name, ver, missing_feature
+                            );
                         }
                         guidance::RejectionReason::NotExecutable(_) => {
                             eprintln!("  • {} - not executable", rejection.tool_name);
@@ -927,7 +963,9 @@ fn validate_config() -> Result<(), String> {
             eprintln!("❌ Configuration Error");
             eprintln!();
 
-            let path_str = e.path().map(|p| p.display().to_string())
+            let path_str = e
+                .path()
+                .map(|p| p.display().to_string())
                 .unwrap_or_else(|| "~/.forge/config.yaml".to_string());
 
             if let (Some(line), Some(col)) = (e.line_number(), e.column_number()) {
@@ -949,7 +987,9 @@ fn validate_config() -> Result<(), String> {
             io::stdout().flush().map_err(|e| e.to_string())?;
 
             let mut choice = String::new();
-            io::stdin().read_line(&mut choice).map_err(|e| e.to_string())?;
+            io::stdin()
+                .read_line(&mut choice)
+                .map_err(|e| e.to_string())?;
 
             match choice.trim() {
                 "1" => {
@@ -967,12 +1007,8 @@ fn validate_config() -> Result<(), String> {
                     eprintln!();
                     Ok(())
                 }
-                "3" | "" => {
-                    Err("Exiting. Please fix the config file and try again.".to_string())
-                }
-                _ => {
-                    Err("Invalid choice. Exiting.".to_string())
-                }
+                "3" | "" => Err("Exiting. Please fix the config file and try again.".to_string()),
+                _ => Err("Invalid choice. Exiting.".to_string()),
             }
         }
     }
@@ -1098,7 +1134,12 @@ fn handle_worker_action(action: &WorkerAction) -> ExitCode {
 }
 
 /// Handle the `forge validate` command.
-fn handle_validate_command(verbose: bool, fix: bool, skip_backend_test: bool, json: bool) -> ExitCode {
+fn handle_validate_command(
+    verbose: bool,
+    fix: bool,
+    skip_backend_test: bool,
+    json: bool,
+) -> ExitCode {
     info!(
         "Handling validate command (verbose={}, fix={}, skip_backend_test={}, json={})",
         verbose, fix, skip_backend_test, json
@@ -1228,7 +1269,10 @@ fn print_validation_results(results: &validator::ComprehensiveValidationResults,
 fn handle_generate_cert_command(domain: &str, days: u32) -> ExitCode {
     use forge_server::cert_gen;
 
-    info!("Generating self-signed certificate for domain: {} (days: {})", domain, days);
+    info!(
+        "Generating self-signed certificate for domain: {} (days: {})",
+        domain, days
+    );
 
     eprintln!("🔐 Generating self-signed TLS certificate");
     eprintln!("   Domain: {}", domain);
@@ -1236,7 +1280,8 @@ fn handle_generate_cert_command(domain: &str, days: u32) -> ExitCode {
     eprintln!();
 
     // Generate the certificate
-    let (cert_pem, key_pem) = match cert_gen::generate_self_signed_cert_with_validity(domain, days) {
+    let (cert_pem, key_pem) = match cert_gen::generate_self_signed_cert_with_validity(domain, days)
+    {
         Ok(result) => result,
         Err(e) => {
             eprintln!("❌ Failed to generate certificate: {}", e);
@@ -1298,7 +1343,7 @@ fn handle_validate_tls_command(
     let tls_config = forge_server::TlsConfig {
         cert_path: cert_path.to_string_lossy().to_string(),
         key_path: key_path.to_string_lossy().to_string(),
-        verify: true, // Default to true for validation
+        verify: true,                       // Default to true for validation
         min_version: "TLSv1.2".to_string(), // Default to TLSv1.2
     };
 
@@ -1331,7 +1376,10 @@ fn handle_validate_tls_command(
                 if days < 0 {
                     eprintln!("⚠️  Certificate EXPIRED {} days ago", days.abs());
                 } else if days < 30 {
-                    eprintln!("⚠️  Certificate expires in {} days (< 30 day warning)", days);
+                    eprintln!(
+                        "⚠️  Certificate expires in {} days (< 30 day warning)",
+                        days
+                    );
                 } else {
                     eprintln!("✅ Certificate validity: {} days remaining", days);
                 }
@@ -1385,6 +1433,7 @@ fn handle_validate_tls_command(
 }
 
 /// Run FORGE in server mode for multi-user collaboration.
+#[allow(clippy::too_many_arguments)]
 fn run_server_mode(
     bind_address: String,
     port: u16,
@@ -1395,8 +1444,8 @@ fn run_server_mode(
     tls_min_version: String,
     server_config_path: Option<std::path::PathBuf>,
 ) -> ExitCode {
-    use forge_tui::{ClientConfig, App};
     use forge_server::server_config::{load_server_yaml_config, merge_config_with_cli_overrides};
+    use forge_tui::{App, ClientConfig};
 
     info!("Starting FORGE in server mode");
     eprintln!("🚀 FORGE Server Mode");
@@ -1474,7 +1523,7 @@ fn run_server_mode(
             }
         };
 
-        let _ = rt.block_on(async move {
+        rt.block_on(async move {
             let server = create_server(config).await;
             eprintln!("✅ Server initialized with default auth");
             eprintln!("   Default users:");
@@ -1484,7 +1533,10 @@ fn run_server_mode(
             eprintln!();
 
             let protocol = if tls_enabled { "wss" } else { "ws" };
-            eprintln!("   Connect clients to: {}://{}:{}/ws", protocol, server_bind_address, server_port);
+            eprintln!(
+                "   Connect clients to: {}://{}:{}/ws",
+                protocol, server_bind_address, server_port
+            );
             eprintln!();
             eprintln!("🔗 Starting local TUI client...");
             eprintln!();
@@ -1529,9 +1581,12 @@ fn run_server_mode(
 
 /// Run FORGE in client mode, connecting to a remote FORGE server.
 fn run_client_mode(server_url: String, user: String, password: String) -> ExitCode {
-    use forge_tui::{ClientConfig, App};
+    use forge_tui::{App, ClientConfig};
 
-    info!("Starting FORGE in client mode, connecting to {}", server_url);
+    info!(
+        "Starting FORGE in client mode, connecting to {}",
+        server_url
+    );
     eprintln!("🔗 FORGE Client Mode");
     eprintln!("   Connecting to: {}", server_url);
     eprintln!("   User: {}", user);
@@ -1588,14 +1643,8 @@ mod cli_tests {
 
     #[test]
     fn parses_generate_cert_flag_with_custom_validity() {
-        let cli = Cli::try_parse_from([
-            "forge",
-            "--generate-cert",
-            "example.test",
-            "--days",
-            "30",
-        ])
-        .expect("generate-cert flag with --days should parse");
+        let cli = Cli::try_parse_from(["forge", "--generate-cert", "example.test", "--days", "30"])
+            .expect("generate-cert flag with --days should parse");
 
         assert_eq!(cli.generate_cert.as_deref(), Some("example.test"));
         assert_eq!(cli.days, Some(30));
