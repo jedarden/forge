@@ -340,7 +340,7 @@ async fn test_state_broadcast() {
         let client_config = ClientConfig {
             server_url: "ws://127.0.0.1:8082/ws".to_string(),
             user_id: format!("user{}", i),
-            password: "testpass".to_string(),
+            password: get_test_token("viewer"),
             tls: None,
         };
 
@@ -671,7 +671,7 @@ async fn test_comprehensive_state_update_broadcast() {
         let config = ClientConfig {
             server_url: "ws://127.0.0.1:8094/ws".to_string(),
             user_id: format!("viewer{}", i),
-            password: "testpass".to_string(),
+            password: get_test_token("viewer"),
             tls: None,
         };
 
@@ -804,7 +804,7 @@ async fn test_user_join_leave_broadcast() {
     let client1_config = ClientConfig {
         server_url: "ws://127.0.0.1:8084/ws".to_string(),
         user_id: "user1".to_string(),
-        password: "testpass".to_string(),
+        password: get_test_token("viewer"),
         tls: None,
     };
 
@@ -826,7 +826,7 @@ async fn test_user_join_leave_broadcast() {
     let client2_config = ClientConfig {
         server_url: "ws://127.0.0.1:8084/ws".to_string(),
         user_id: "user2".to_string(),
-        password: "testpass".to_string(),
+        password: get_test_token("viewer"),
         tls: None,
     };
 
@@ -1240,7 +1240,7 @@ async fn test_multiple_concurrent_connections() {
         let client_config = ClientConfig {
             server_url: "ws://127.0.0.1:8090/ws".to_string(),
             user_id: format!("user{}", i),
-            password: "testpass".to_string(),
+            password: get_test_token("viewer"),
             tls: None,
         };
 
@@ -1477,6 +1477,11 @@ async fn test_concurrent_client_operations() {
 
     // Verify all clients received worker update
     for (i, tracked) in clients.iter().enumerate() {
+        assert!(
+            tracked.tracker().wait_for_message_count(5, 2000).await,
+            "Client {} should receive the worker state update",
+            i
+        );
         let state = tracked.client().get_state().await;
         assert!(
             state.state_update.is_some(),

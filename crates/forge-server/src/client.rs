@@ -201,6 +201,10 @@ impl ForgeClient {
         }
 
         warn!("Disconnected from server");
+        // Drop the sender so callers cannot enqueue messages after the
+        // connection loop has ended. This also lets the writer task observe
+        // the closed broadcast channel and exit.
+        *self.write_tx.lock().await = None;
         Ok(())
     }
 

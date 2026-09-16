@@ -178,6 +178,7 @@ impl Default for SessionManager {
 }
 
 /// Session registry for tracking session metadata across the server.
+#[derive(Clone)]
 pub struct SessionRegistry {
     manager: SessionManager,
     connected_at: std::time::Instant,

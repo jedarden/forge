@@ -117,6 +117,8 @@ pub struct ForgeServer {
     session_registry: SessionRegistry,
     assignment_tracker: BeadAssignmentTracker,
     state_broadcast: broadcast::Sender<ServerMessage>,
+    /// Shutdown signal shared by the listener and all active connections.
+    shutdown: broadcast::Sender<()>,
     current_state: Arc<RwLock<ServerStateSnapshot>>,
     /// Whether this server is running
     running: Arc<RwLock<bool>>,
@@ -159,6 +161,7 @@ impl ForgeServer {
     /// Create a new FORGE server.
     pub fn new(config: ServerConfig, auth: Arc<dyn AuthProvider>) -> Self {
         let (tx, _) = broadcast::channel(1000);
+        let (shutdown, _) = broadcast::channel(1);
 
         Self {
             config,
@@ -166,6 +169,7 @@ impl ForgeServer {
             session_registry: SessionRegistry::new(),
             assignment_tracker: BeadAssignmentTracker::new(),
             state_broadcast: tx,
+            shutdown,
             current_state: Arc::new(RwLock::new(ServerStateSnapshot {
                 workers: Vec::new(),
                 beads: Vec::new(),
@@ -187,6 +191,7 @@ impl ForgeServer {
         audit_logger: Arc<AuditLogger>,
     ) -> Self {
         let (tx, _) = broadcast::channel(1000);
+        let (shutdown, _) = broadcast::channel(1);
 
         Self {
             config,
@@ -194,6 +199,7 @@ impl ForgeServer {
             session_registry: SessionRegistry::new(),
             assignment_tracker: BeadAssignmentTracker::new(),
             state_broadcast: tx,
+            shutdown,
             current_state: Arc::new(RwLock::new(ServerStateSnapshot {
                 workers: Vec::new(),
                 beads: Vec::new(),
@@ -304,6 +310,12 @@ impl ForgeServer {
                 status: bead.status,
             });
         }
+
+        // Keep clients' full state snapshots in sync with the individual
+        // change notifications above. Consumers that only track
+        // StateUpdate (including ForgeClient's cached snapshot) otherwise
+        // never observe the updated bead collection.
+        self.broadcast_full_state().await;
     }
 
     /// Update cost state and broadcast to clients.
@@ -383,6 +395,7 @@ impl ForgeServer {
     pub async fn stop(&self) {
         let mut running = self.running.write().await;
         *running = false;
+        let _ = self.shutdown.send(());
     }
 
     /// Start the server.
@@ -520,9 +533,13 @@ impl ForgeServer {
                 .await
                 .map_err(ServerError::Io)?;
 
-            axum::serve(listener, app)
-                .await
-                .map_err(|e| ServerError::ServerError(e.to_string()))?;
+            let mut shutdown_rx = self.shutdown.subscribe();
+            tokio::select! {
+                result = axum::serve(listener, app) => {
+                    result.map_err(|e| ServerError::ServerError(e.to_string()))?;
+                }
+                _ = shutdown_rx.recv() => {}
+            }
         }
 
         // Clear running flag on shutdown
@@ -542,13 +559,17 @@ impl ForgeServer {
     ) -> Result<(), ServerError> {
         let (mut sender, mut receiver) = socket.split();
         let mut session_id: Option<String> = None;
-        let _rx = self.subscribe();
+        let mut rx = self.subscribe();
+        let mut shutdown_rx = self.shutdown.subscribe();
 
         // Send initial welcome after auth
         let mut authenticated = false;
 
-        while let Some(result) = receiver.next().await {
-            match result {
+        loop {
+            tokio::select! {
+                result = receiver.next() => {
+                    let Some(result) = result else { break; };
+                    match result {
                 Ok(msg) => {
                     match msg {
                         Message::Text(text) => {
@@ -737,6 +758,25 @@ impl ForgeServer {
                                                     )),
                                                 );
                                             }
+                                            self.broadcast(ServerMessage::BeadChanged {
+                                                bead_id,
+                                                status: BeadStatus::Open,
+                                            });
+                                        }
+                                    }
+                                    ClientMessage::ChatMessage { message } => {
+                                        if let Some(ref sid) = session_id
+                                            && let Some(session) = self
+                                                .session_registry
+                                                .manager()
+                                                .get_session(sid)
+                                                .await
+                                        {
+                                            self.broadcast(ServerMessage::ChatMessage {
+                                                from: session.user_id,
+                                                message,
+                                                timestamp: Utc::now(),
+                                            });
                                         }
                                     }
                                     _ => {
@@ -756,6 +796,23 @@ impl ForgeServer {
                     warn!("WebSocket error from {}: {}", addr, e);
                     break;
                 }
+            }
+                }
+                result = rx.recv(), if authenticated => {
+                    match result {
+                        Ok(message) => {
+                            let json = serde_json::to_string(&message)?;
+                            if sender.send(Message::Text(json.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            warn!("Client {} lagged by {} broadcast messages", addr, skipped);
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                _ = shutdown_rx.recv() => break,
             }
         }
 
@@ -779,9 +836,10 @@ impl Clone for ForgeServer {
         Self {
             config: self.config.clone(),
             auth: Arc::clone(&self.auth),
-            session_registry: SessionRegistry::new(),
+            session_registry: self.session_registry.clone(),
             assignment_tracker: self.assignment_tracker.clone(),
             state_broadcast: self.state_broadcast.clone(),
+            shutdown: self.shutdown.clone(),
             current_state: Arc::clone(&self.current_state),
             running: Arc::clone(&self.running),
             audit_logger: self.audit_logger.clone(),
