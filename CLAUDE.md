@@ -168,10 +168,17 @@ Two consequences of that design:
   dual-tag convention (`forge-v0.x.y` alongside `v0.x.y`) is retired. The tag
   must live on Forgejo anyway — every mirror sync prunes refs that exist only
   on GitHub.
-- A release ships on the **first push to `main` after a version bump**. Later
-  pushes with the same version are skipped (the workflow exits early if that
-  version is already published), and runs are serialized by a `forge-ci`
-  mutex, so repeated pushes queue instead of colliding.
+- A release ships on the **first push to `main` after a version bump**. Runs
+  are serialized by a `forge-ci` mutex, so repeated pushes queue instead of
+  colliding.
+- **Known wart — stale versions fail the run.** The skip-if-already-published
+  check runs *after* the tag-push step. Pushing new commits while `Cargo.toml`
+  still carries an already-released version makes that tag push fail (the
+  remote tag sits at an older commit, and tag refs never fast-forward), so the
+  run fails at the tag step. Only a re-push of the exact release commit is
+  skipped cleanly. Bump the version as part of the change set when you can; a
+  failed `forge-ci` run on a docs-only or post-release push usually means this
+  collision, not a broken build.
 
 **Prerequisites** (before pushing the version-bump commit):
 - All tests passing, `cargo clippy` clean (forge-ci re-runs the full DoD remotely)
