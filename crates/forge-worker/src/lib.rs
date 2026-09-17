@@ -172,9 +172,9 @@ pub use bead_claim::{
 };
 pub use bead_queue::{BeadAllocation, BeadQueueManager, BeadQueueReader, QueuedBead};
 pub use bead_scheduler::{
-    BeadScheduler, BeadStatusAction, BeadStatusBackend, BeadStatusUpdate, CompletionRecord,
-    FORGE_BEAD_ID_ENV, FORGE_TASK_PROMPT_ENV, SpawnFn, SpawnFuture, WorkerBeadAssignment,
-    build_bead_prompt, priority_label,
+    AssignmentFeed, BeadScheduler, BeadStatusAction, BeadStatusBackend, BeadStatusUpdate,
+    CompletionRecord, FORGE_BEAD_ID_ENV, FORGE_TASK_PROMPT_ENV, SpawnFn, SpawnFuture,
+    WorkerBeadAssignment, build_bead_prompt, priority_label,
 };
 pub use complexity::{
     CalibrationError, CalibrationReport, CalibrationResult, ComplexityCalibrationEvent,

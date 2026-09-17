@@ -678,6 +678,9 @@ impl App {
             forge_config.notifications.visual_flash_on_critical,
         );
 
+        // Configure the worker pool from config (no-op while disabled)
+        data_manager.configure_worker_pool(&forge_config.worker_pool);
+
         // Initialize history manager and load previous history
         let history_manager = forge_chat::HistoryManager::new().ok();
 

@@ -65,7 +65,7 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::process::Command;
 use tracing::{debug, info, warn};
@@ -223,7 +223,7 @@ impl std::fmt::Display for BeadStatusAction {
 }
 
 /// A live bead → worker assignment (the bead-level lock).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerBeadAssignment {
     /// Assigned bead
     pub bead_id: BeadId,
@@ -239,6 +239,56 @@ pub struct WorkerBeadAssignment {
     pub workspace: PathBuf,
     /// When the assignment was made
     pub assigned_at: DateTime<Utc>,
+}
+
+/// Shared, thread-safe view of the scheduler's live assignments.
+///
+/// The scheduler publishes a snapshot of its bead → worker mapping here
+/// after every change, so a consumer in another thread — the TUI bead
+/// panel — can read the live [`BeadScheduler::assignments`] state without
+/// owning (or locking) the scheduler itself. Cloning the handle hands
+/// each consumer the same underlying state; the snapshot is ordered by
+/// priority, then bead ID, so displays are stable across refreshes.
+#[derive(Debug, Clone, Default)]
+pub struct AssignmentFeed {
+    assignments: Arc<Mutex<Vec<WorkerBeadAssignment>>>,
+}
+
+impl AssignmentFeed {
+    /// Create an empty feed.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The current assignments, cloned.
+    pub fn current(&self) -> Vec<WorkerBeadAssignment> {
+        self.lock().clone()
+    }
+
+    /// Number of live assignments.
+    pub fn len(&self) -> usize {
+        self.lock().len()
+    }
+
+    /// Whether no assignment is live.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Lock the shared snapshot, ignoring a poisoned lock: the snapshot
+    /// is derived state (rebuilt from the scheduler's mapping on every
+    /// change), so a panicked holder cannot corrupt it.
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<WorkerBeadAssignment>> {
+        self.assignments
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Replace the published snapshot. Scheduler-internal: only
+    /// [`BeadScheduler`] writes, every consumer reads.
+    fn publish(&self, assignments: Vec<WorkerBeadAssignment>) {
+        *self.lock() = assignments;
+    }
 }
 
 /// Record of a completed bead assignment.
@@ -265,6 +315,9 @@ pub struct BeadScheduler {
     readers: Vec<BeadQueueReader>,
     /// Authoritative bead → worker mapping (the bead-level lock)
     assignments: HashMap<BeadId, WorkerBeadAssignment>,
+    /// Shared snapshot of `assignments` for cross-thread consumers
+    /// (see [`BeadScheduler::assignments_feed`])
+    assignments_feed: AssignmentFeed,
     /// Completed assignments, in completion order
     completions: Vec<CompletionRecord>,
     /// Every status update applied by this scheduler, in order
@@ -283,6 +336,7 @@ impl BeadScheduler {
         Self {
             readers: Vec::new(),
             assignments: HashMap::new(),
+            assignments_feed: AssignmentFeed::new(),
             completions: Vec::new(),
             status_updates: Vec::new(),
             status_backend: BeadStatusBackend::default(),
@@ -303,6 +357,7 @@ impl BeadScheduler {
         Self {
             readers: Vec::new(),
             assignments: HashMap::new(),
+            assignments_feed: AssignmentFeed::new(),
             completions: Vec::new(),
             status_updates: Vec::new(),
             status_backend: BeadStatusBackend::default(),
@@ -405,6 +460,18 @@ impl BeadScheduler {
     /// All live assignments (the bead → worker mapping).
     pub fn assignments(&self) -> impl Iterator<Item = &WorkerBeadAssignment> {
         self.assignments.values()
+    }
+
+    /// A shared handle to the live assignment state, for consumers outside
+    /// the scheduler (the TUI bead panel).
+    ///
+    /// The scheduler publishes a fresh snapshot to the feed after every
+    /// assignment change — assign, launch, release, completion, rollback —
+    /// so polling [`AssignmentFeed::current`] always observes the same
+    /// state [`BeadScheduler::assignments`] would return, without holding
+    /// the scheduler.
+    pub fn assignments_feed(&self) -> AssignmentFeed {
+        self.assignments_feed.clone()
     }
 
     /// Completed assignments, in completion order.
@@ -833,6 +900,7 @@ impl BeadScheduler {
             assigned_at: Utc::now(),
         };
         self.assignments.insert(bead.id.clone(), record);
+        self.publish_assignments();
 
         Ok((request, bead, reader_idx))
     }
@@ -855,6 +923,20 @@ impl BeadScheduler {
                 reader.unassign_bead(bead_id);
             }
         }
+        self.publish_assignments();
+    }
+
+    /// Publish the current mapping to the shared feed, deterministically
+    /// ordered (priority, then bead ID) so consumers see stable output
+    /// across refreshes.
+    fn publish_assignments(&self) {
+        let mut snapshot: Vec<WorkerBeadAssignment> = self.assignments.values().cloned().collect();
+        snapshot.sort_by(|a, b| {
+            a.bead_priority
+                .cmp(&b.bead_priority)
+                .then_with(|| a.bead_id.cmp(&b.bead_id))
+        });
+        self.assignments_feed.publish(snapshot);
     }
 
     /// Apply a status update through the configured backend and record it.
@@ -1420,6 +1502,43 @@ mod tests {
         let result = scheduler.assign_bead("no-such-bead", "worker-a", launch_config(&dir));
         assert!(matches!(result, Err(ForgeError::BeadNotFound { .. })));
         assert!(scheduler.assignments().next().is_none());
+    }
+
+    /// The shared feed mirrors the scheduler's live assignment state
+    /// through the full lifecycle — assign, release, completion — with a
+    /// deterministic order. This is the state the TUI bead panel renders.
+    #[tokio::test]
+    async fn test_assignment_feed_tracks_live_state() {
+        let dir = create_multi_priority_workspace();
+        let mut scheduler = scheduler_for(&dir);
+        let feed = scheduler.assignments_feed();
+        assert!(feed.is_empty());
+
+        scheduler
+            .assign_bead("p-high", "worker-a", launch_config(&dir))
+            .unwrap();
+        scheduler
+            .assign_bead("p-low", "worker-b", launch_config(&dir))
+            .unwrap();
+
+        // Priority order first, so consumers see stable output.
+        let current = feed.current();
+        let ids: Vec<&str> = current.iter().map(|a| a.bead_id.as_str()).collect();
+        assert_eq!(ids, ["p-high", "p-low"]);
+        assert_eq!(current[0].worker_id, "worker-a");
+        assert_eq!(current[0].bead_title, "High priority bug");
+
+        // Every clone of the handle observes the same state.
+        assert_eq!(scheduler.assignments_feed().len(), 2);
+
+        scheduler.release("p-high").await.unwrap();
+        let current = feed.current();
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].bead_id, "p-low");
+        assert_eq!(current[0].worker_id, "worker-b");
+
+        scheduler.record_completion("worker-b").await.unwrap();
+        assert!(feed.is_empty());
     }
 
     #[test]

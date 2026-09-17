@@ -39,6 +39,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commented example block. Opt-in per ADR 0014: the pool is disabled and
   alert-only by default.
 
+### Fixed
+- **Chat streaming rate limiting**: the streaming path's
+  `ChatBackend::check_and_record_rate_limit` now checks and records as one
+  atomic step (via `RateLimiter::check_and_record`), so concurrent requests
+  can no longer all pass the check before any of them records. The direct
+  `process_command` path is unchanged: it checks on entry and records only
+  after a successful provider response, so failed commands do not consume
+  window capacity. Covered by backend wiring tests in `forge-chat`.
+
 ## [0.3.1] - 2026-09-16
 
 ### Added

@@ -21,6 +21,7 @@ use crate::perf_metrics::{PerfMetrics, get_memory_rss};
 use crate::routing_panel::RoutingData;
 use crate::status::{StatusWatcher, StatusWatcherConfig, WorkerCounts, WorkerStatusFile};
 use crate::subscription_panel::SubscriptionData;
+use forge_config::WorkerPoolConfig;
 use forge_core::activity_monitor::{ActivityMonitor, ActivityState, WorkerActivity};
 use forge_core::types::Priority;
 use forge_core::types::WorkerStatus;
@@ -30,6 +31,7 @@ use forge_worker::discovery::DiscoveryResult;
 use forge_worker::health::{
     HealthCheckType, HealthLevel, HealthMonitor, HealthMonitorConfig, WorkerHealthStatus,
 };
+use forge_worker::pool::{LauncherPoolSpawner, PoolEvent, PoolRecoveryPolicy, WorkerPool};
 use forge_worker::router::{Router, TaskMetadata};
 
 /// Aggregated worker data for TUI display.
@@ -566,6 +568,44 @@ fn truncate_string(s: &str, max_len: usize) -> String {
     }
 }
 
+/// Describe a pool config's tiers for activity-log messages
+/// (`"standard×2"`, `"budget×1, standard×3"`; sorted by tier name).
+fn pool_tier_description(config: &WorkerPoolConfig) -> String {
+    let mut tiers: Vec<String> = config
+        .tiers
+        .iter()
+        .filter(|(_, tier)| tier.size > 0)
+        .map(|(name, tier)| format!("{}×{}", name, tier.size))
+        .collect();
+    tiers.sort();
+    if tiers.is_empty() {
+        "no tiers".to_string()
+    } else {
+        tiers.join(", ")
+    }
+}
+
+/// Whether a pool config change can be applied to the live pool without a
+/// rebuild: only tier sizes (and tier removals via size 0) may differ. Any
+/// policy, retry, backoff, cadence, or per-tier definition change requires a
+/// rebuild, as does adding a tier the live pool does not track.
+fn pool_hot_resize_applicable(old: &WorkerPoolConfig, new: &WorkerPoolConfig) -> bool {
+    old.recovery_policy == new.recovery_policy
+        && old.max_retries == new.max_retries
+        && old.backoff_base_secs == new.backoff_base_secs
+        && old.backoff_max_secs == new.backoff_max_secs
+        && old.idle_timeout_secs == new.idle_timeout_secs
+        && old.reconcile_interval_secs == new.reconcile_interval_secs
+        && old.tiers.len() == new.tiers.len()
+        && old.tiers.iter().all(|(name, old_tier)| {
+            new.tiers.get(name).is_some_and(|t| {
+                t.model == old_tier.model
+                    && t.workspace == old_tier.workspace
+                    && t.launcher == old_tier.launcher
+            })
+        })
+}
+
 /// Interval for tmux discovery polling (5 seconds).
 const TMUX_DISCOVERY_INTERVAL_SECS: u64 = 5;
 
@@ -586,6 +626,11 @@ const HEALTH_POLL_INTERVAL_SECS: u64 = 30;
 
 /// Interval for activity monitoring (15 seconds).
 const ACTIVITY_POLL_INTERVAL_SECS: u64 = 15;
+
+/// Upper bound on a single blocking worker-pool reconcile pass. The pass
+/// normally finishes in milliseconds (tmux session probes and spawns); the
+/// timeout only guards against a hung tmux command stalling the UI loop.
+const POOL_RECONCILE_TIMEOUT_SECS: u64 = 60;
 
 /// Data manager that handles the StatusWatcher, BeadManager, CostDatabase, LogWatcher, HealthMonitor, AlertManager, ActivityMonitor, and provides formatted data.
 pub struct DataManager {
@@ -663,6 +708,13 @@ pub struct DataManager {
     server_sessions: Vec<forge_core::UserSession>,
     /// Last sessions update timestamp
     last_sessions_update: Option<std::time::Instant>,
+    /// Worker pool maintaining warm spare workers per model tier
+    /// (present only when `worker_pool.enabled` in config).
+    worker_pool: Option<WorkerPool<LauncherPoolSpawner>>,
+    /// Configuration the current pool was built from, for hot-reload diffs.
+    worker_pool_config: WorkerPoolConfig,
+    /// Last worker pool reconcile time
+    last_pool_poll: Option<std::time::Instant>,
 }
 
 impl DataManager {
@@ -822,6 +874,9 @@ impl DataManager {
             server_beads: Vec::new(),
             server_sessions: Vec::new(),
             last_sessions_update: None,
+            worker_pool: None,
+            worker_pool_config: WorkerPoolConfig::default(),
+            last_pool_poll: None,
         };
 
         // Skip initial poll_updates during initialization - it blocks for too long
@@ -949,6 +1004,9 @@ impl DataManager {
             server_beads: Vec::new(),
             server_sessions: Vec::new(),
             last_sessions_update: None,
+            worker_pool: None,
+            worker_pool_config: WorkerPoolConfig::default(),
+            last_pool_poll: None,
         }
     }
 
@@ -1202,6 +1260,12 @@ impl DataManager {
         if should_poll_activity {
             self.poll_activity_monitor();
             self.last_activity_poll = Some(std::time::Instant::now());
+        }
+
+        // Reconcile the worker pool on its configured cadence (no-op when
+        // no pool is configured)
+        if self.worker_pool.is_some() {
+            self.poll_worker_pool();
         }
 
         // Periodically poll routing data (every 5 seconds)
@@ -1571,6 +1635,289 @@ impl DataManager {
             tracing::info!("Activity check: {} stuck workers detected", stuck_count);
             self.dirty = true;
         }
+    }
+
+    // ========== Worker Pool ==========
+
+    /// Reconcile the worker pool, if one is configured.
+    ///
+    /// Runs one pool pass on the pool's configured cadence: probes members,
+    /// applies the recovery policy to dead/unhealthy workers, tears down
+    /// idle spares, and refills handed-out slots. Pool events become
+    /// activity entries and alerts so failover is visible without attaching
+    /// to the pooled tmux sessions.
+    fn poll_worker_pool(&mut self) {
+        let Some(ref runtime) = self.runtime else {
+            return;
+        };
+        let interval = self
+            .worker_pool
+            .as_ref()
+            .map(|p| p.reconcile_interval())
+            .unwrap_or_default();
+        if self.last_pool_poll.is_some_and(|t| t.elapsed() < interval) {
+            return;
+        }
+        self.last_pool_poll = Some(std::time::Instant::now());
+
+        let Some(ref mut pool) = self.worker_pool else {
+            return;
+        };
+        let result = runtime.block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(POOL_RECONCILE_TIMEOUT_SECS),
+                pool.reconcile(chrono::Utc::now()),
+            )
+            .await
+        });
+
+        match result {
+            Ok(Ok(events)) => self.record_pool_events(events),
+            Ok(Err(e)) => {
+                tracing::warn!(error = %e, "Worker pool reconcile failed");
+                self.activity_data.push(
+                    ActivityEntry::new(
+                        ActivityEventType::Error,
+                        format!("Worker pool reconcile failed: {}", e),
+                    )
+                    .with_source("worker-pool"),
+                );
+                self.dirty = true;
+            }
+            Err(_) => {
+                tracing::warn!("Worker pool reconcile timed out; continuing on next tick");
+            }
+        }
+    }
+
+    /// Translate pool reconcile events into activity entries and alerts.
+    fn record_pool_events(&mut self, events: Vec<PoolEvent>) {
+        let had_events = !events.is_empty();
+        for event in events {
+            let (event_type, source, message) = match &event {
+                PoolEvent::Spawned { tier, worker_id } => (
+                    ActivityEventType::WorkerSpawn,
+                    worker_id.as_str(),
+                    format!("Pooled worker spawned for {} tier", tier),
+                ),
+                PoolEvent::Ready { tier, worker_id } => (
+                    ActivityEventType::Info,
+                    worker_id.as_str(),
+                    format!("Pooled worker ready ({} tier)", tier),
+                ),
+                PoolEvent::Restarted {
+                    tier,
+                    worker_id,
+                    attempt,
+                } => (
+                    ActivityEventType::WorkerTransition,
+                    worker_id.as_str(),
+                    format!(
+                        "Pooled worker restarted ({} tier, attempt {})",
+                        tier, attempt
+                    ),
+                ),
+                PoolEvent::Replaced {
+                    tier,
+                    retired_id,
+                    new_id,
+                } => (
+                    ActivityEventType::WorkerSpawn,
+                    new_id.as_str(),
+                    format!(
+                        "Pooled worker replaced {} in {} tier (failover)",
+                        retired_id, tier
+                    ),
+                ),
+                PoolEvent::Retired {
+                    tier,
+                    worker_id,
+                    reason,
+                } => (
+                    ActivityEventType::Warning,
+                    worker_id.as_str(),
+                    format!("Pooled worker retired from {} tier: {}", tier, reason),
+                ),
+                PoolEvent::TeardownIdle { tier, worker_id } => (
+                    ActivityEventType::WorkerStop,
+                    worker_id.as_str(),
+                    format!("Idle pooled spare torn down ({} tier)", tier),
+                ),
+                PoolEvent::Alerted {
+                    tier,
+                    worker_id,
+                    message,
+                } => (
+                    ActivityEventType::Warning,
+                    worker_id.as_deref().unwrap_or("worker-pool"),
+                    format!("{} tier pool alert: {}", tier, message),
+                ),
+                PoolEvent::SpawnFailed {
+                    tier,
+                    worker_id,
+                    attempt,
+                    error,
+                } => (
+                    ActivityEventType::Error,
+                    worker_id.as_str(),
+                    format!(
+                        "Pooled worker spawn failed ({} tier, attempt {}): {}",
+                        tier, attempt, error
+                    ),
+                ),
+            };
+            self.activity_data
+                .push(ActivityEntry::new(event_type, message).with_source(source));
+
+            // Surface failover and capacity events as alerts so they are
+            // counted and notified like worker-health alerts.
+            match &event {
+                PoolEvent::Alerted {
+                    tier,
+                    worker_id,
+                    message,
+                } => {
+                    self.alert_manager.raise(
+                        AlertType::WorkerUnresponsive,
+                        worker_id
+                            .clone()
+                            .unwrap_or_else(|| format!("pool-{}", tier)),
+                        Some(message.clone()),
+                    );
+                    self.alert_notifier.notify(AlertSeverity::Warning);
+                }
+                PoolEvent::Retired {
+                    tier, worker_id, ..
+                } => {
+                    self.alert_manager.raise(
+                        AlertType::RecoveryExhausted,
+                        worker_id.clone(),
+                        Some(format!("pooled worker retired from {} tier", tier)),
+                    );
+                    self.alert_notifier.notify(AlertSeverity::Critical);
+                }
+                PoolEvent::Spawned { tier, worker_id } => {
+                    self.alert_manager.raise(
+                        AlertType::WorkerSpawned,
+                        worker_id.clone(),
+                        Some(format!("pooled spare provisioned for {} tier", tier)),
+                    );
+                }
+                _ => {}
+            }
+        }
+        if had_events {
+            self.dirty = true;
+        }
+    }
+
+    /// Apply worker-pool config: create the pool when first enabled, tear
+    /// it down when disabled, and apply hot-reload changes.
+    ///
+    /// Tier-size changes apply live via [`WorkerPool::set_tier_size`]; any
+    /// other change (policy, retries, backoff, per-tier model/workspace/
+    /// launcher, newly added or removed tiers) rebuilds the pool, stopping
+    /// its members so no tmux sessions are orphaned.
+    pub fn configure_worker_pool(&mut self, config: &WorkerPoolConfig) {
+        if !config.enabled {
+            if let Some(mut pool) = self.worker_pool.take() {
+                if let Some(ref runtime) = self.runtime {
+                    let _ = runtime.block_on(async {
+                        tokio::time::timeout(
+                            std::time::Duration::from_secs(POOL_RECONCILE_TIMEOUT_SECS),
+                            pool.shutdown(),
+                        )
+                        .await
+                    });
+                }
+                self.add_activity(
+                    ActivityEventType::WorkerStop,
+                    Some("worker-pool"),
+                    "Worker pool disabled; pooled workers stopped",
+                );
+            }
+            self.worker_pool_config = config.clone();
+            self.last_pool_poll = None;
+            return;
+        }
+
+        match self.worker_pool.as_mut() {
+            None => {
+                let tiers = pool_tier_description(config);
+                self.worker_pool =
+                    Some(WorkerPool::new(config.clone(), LauncherPoolSpawner::new()));
+                self.worker_pool_config = config.clone();
+                self.last_pool_poll = None; // first reconcile on the next tick
+                self.add_activity(
+                    ActivityEventType::Info,
+                    Some("worker-pool"),
+                    format!(
+                        "Worker pool enabled ({}); recovery_policy={}",
+                        tiers, config.recovery_policy
+                    ),
+                );
+            }
+            Some(pool) => {
+                if *config == self.worker_pool_config {
+                    return;
+                }
+                if pool_hot_resize_applicable(&self.worker_pool_config, config) {
+                    for (name, tier) in &config.tiers {
+                        pool.set_tier_size(name, tier.size);
+                    }
+                    self.add_activity(
+                        ActivityEventType::Info,
+                        Some("worker-pool"),
+                        format!(
+                            "Worker pool tier sizes updated ({})",
+                            pool_tier_description(config)
+                        ),
+                    );
+                } else {
+                    if let Some(ref runtime) = self.runtime {
+                        let _ = runtime.block_on(async {
+                            tokio::time::timeout(
+                                std::time::Duration::from_secs(POOL_RECONCILE_TIMEOUT_SECS),
+                                pool.shutdown(),
+                            )
+                            .await
+                        });
+                    }
+                    self.worker_pool =
+                        Some(WorkerPool::new(config.clone(), LauncherPoolSpawner::new()));
+                    self.last_pool_poll = None;
+                    self.add_activity(
+                        ActivityEventType::Info,
+                        Some("worker-pool"),
+                        format!(
+                            "Worker pool rebuilt for config change ({}); recovery_policy={}",
+                            pool_tier_description(config),
+                            config.recovery_policy
+                        ),
+                    );
+                }
+                self.worker_pool_config = config.clone();
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// Whether a worker pool is configured and enabled.
+    pub fn worker_pool_enabled(&self) -> bool {
+        self.worker_pool.as_ref().is_some_and(|p| p.is_enabled())
+    }
+
+    /// The configured pool's recovery policy (`None` without a pool).
+    pub fn worker_pool_policy(&self) -> Option<PoolRecoveryPolicy> {
+        self.worker_pool.as_ref().map(|p| p.policy())
+    }
+
+    /// Per-tier pool capacity summaries (empty without a pool).
+    pub fn worker_pool_summaries(&self) -> Vec<forge_worker::pool::PoolTierSummary> {
+        self.worker_pool
+            .as_ref()
+            .map(|p| p.summaries())
+            .unwrap_or_default()
     }
 
     /// Poll subscription tracker for updates.

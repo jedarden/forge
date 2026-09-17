@@ -463,11 +463,16 @@ impl ChatBackend {
 
     /// Check and record rate limit for streaming requests.
     ///
-    /// Call this before starting a streaming request to ensure rate limits are respected.
+    /// Call this before starting a streaming request to ensure rate limits are
+    /// respected. The check and the record are one atomic step, so concurrent
+    /// requests cannot slip through between them.
+    ///
+    /// This is deliberately unlike [`ChatBackend::process_command`], which
+    /// checks on entry but records only after a successful provider response
+    /// so failed commands do not consume window capacity — a streaming request
+    /// has no such post-flight step to hook, so it records up front.
     pub async fn check_and_record_rate_limit(&self) -> Result<()> {
-        self.rate_limiter.check().await?;
-        self.rate_limiter.record().await;
-        Ok(())
+        self.rate_limiter.check_and_record().await
     }
 
     /// Confirm an action that requires confirmation.
@@ -754,5 +759,91 @@ mod tests {
         assert_eq!(entries[0].confirmation, ConfirmationOutcome::Required);
         // The tool never ran, so there is no result to record
         assert!(entries[0].result.is_none());
+    }
+
+    // --- Rate limit wiring (process_command and the streaming path) ---
+
+    /// Build a backend around the given mock provider with a per-minute
+    /// limit of `max_per_minute` and a throwaway audit log. The temp dir is
+    /// returned so the audit log outlives the backend.
+    async fn rate_limit_backend(
+        provider: crate::provider::MockProvider,
+        max_per_minute: u32,
+    ) -> (ChatBackend, tempfile::TempDir) {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config = ChatConfig::default()
+            .with_audit_log(temp_dir.path().join("chat-audit.jsonl"))
+            .with_rate_limit(max_per_minute);
+        let backend = ChatBackend::with_provider(config, Box::new(provider))
+            .await
+            .unwrap();
+        (backend, temp_dir)
+    }
+
+    #[tokio::test]
+    async fn test_process_command_enforces_per_minute_limit() {
+        use crate::provider::MockProvider;
+
+        let (backend, _temp) = rate_limit_backend(MockProvider::new(), 2).await;
+
+        // The first two commands go through and are recorded
+        assert!(backend.process_command("one").await.unwrap().success);
+        assert!(backend.process_command("two").await.unwrap().success);
+
+        // The third is throttled with the limit and a wait in the error
+        match backend.process_command("three").await {
+            Err(ChatError::RateLimitExceeded(limit, wait)) => {
+                assert_eq!(limit, 2);
+                assert!(wait >= 1);
+            }
+            other => panic!(
+                "Expected RateLimitExceeded, got {:?}",
+                other.map(|r| r.success)
+            ),
+        }
+
+        // The rejected command consumed no window capacity
+        let usage = backend.rate_limit_usage().await;
+        assert_eq!(usage.commands_last_minute, 2);
+    }
+
+    #[tokio::test]
+    async fn test_provider_failure_does_not_consume_rate_limit_capacity() {
+        use crate::provider::MockProvider;
+
+        // The provider errors on the first call, then recovers
+        let mock = MockProvider::new();
+        mock.clear_responses().await;
+        mock.add_error("provider exploded".to_string()).await;
+        mock.add_response("recovered".to_string()).await;
+        let (backend, _temp) = rate_limit_backend(mock, 1).await;
+
+        // The failure surfaces as an error response, not a throttle...
+        let response = backend.process_command("explode").await.unwrap();
+        assert!(!response.success);
+
+        // ...so the single per-minute slot is still available
+        assert!(backend.process_command("retry").await.unwrap().success);
+
+        // Only the successful retry was recorded
+        let usage = backend.rate_limit_usage().await;
+        assert_eq!(usage.commands_last_minute, 1);
+    }
+
+    #[tokio::test]
+    async fn test_check_and_record_rate_limit_gates_streaming_path() {
+        use crate::provider::MockProvider;
+
+        let (backend, _temp) = rate_limit_backend(MockProvider::new(), 1).await;
+
+        // The streaming entry point checks and records as one step
+        assert!(backend.check_and_record_rate_limit().await.is_ok());
+
+        // The next request is throttled...
+        assert!(backend.check_and_record_rate_limit().await.is_err());
+
+        // ...without consuming capacity
+        let usage = backend.rate_limit_usage().await;
+        assert_eq!(usage.commands_last_minute, 1);
     }
 }

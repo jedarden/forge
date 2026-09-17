@@ -11,7 +11,8 @@ pub struct ChatConfig {
     #[serde(default)]
     pub provider: ProviderConfig,
 
-    /// Rate limit configuration
+    /// Rate limit configuration (sliding windows; a limit of 0 disables
+    /// that window — see [`RateLimitConfig`])
     #[serde(default)]
     pub rate_limit: RateLimitConfig,
 
@@ -432,12 +433,16 @@ impl std::str::FromStr for ProviderType {
 }
 
 /// Rate limiting configuration.
+///
+/// Both limits are enforced as sliding windows (see
+/// [`crate::rate_limit::RateLimiter`]); setting a limit to `0` disables that
+/// window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RateLimitConfig {
-    /// Maximum commands per minute
+    /// Maximum commands per minute (0 disables the per-minute limit)
     pub max_per_minute: u32,
 
-    /// Maximum commands per hour
+    /// Maximum commands per hour (0 disables the per-hour limit)
     pub max_per_hour: u32,
 }
 

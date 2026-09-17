@@ -400,6 +400,8 @@ Uses a sliding window algorithm with two windows:
 - **Per-minute window**: Default 10 commands
 - **Per-hour window**: Default 100 commands
 
+Setting a limit to `0` disables that window (no check, no bookkeeping).
+
 ```rust
 pub struct RateLimiter {
     config: RateLimitConfig,
@@ -408,10 +410,21 @@ pub struct RateLimiter {
 }
 ```
 
+`ChatBackend::process_command` checks the limit on entry and records the
+command only after a successful provider response, so provider failures do not
+consume window capacity. `ChatBackend::check_and_record_rate_limit` (used by
+the streaming path) checks and records as one atomic step, so concurrent
+requests cannot all pass the check before any of them records.
+
 **Error returned when exceeded:**
 ```rust
 ChatError::RateLimitExceeded(limit: u32, wait_secs: u64)
 ```
+
+The chat panel renders this through `ChatError::friendly_message()` (e.g.
+"Too many requests (10/min). Please wait 42 seconds.") in both the direct and
+streaming paths, with `suggested_action()` shown on the status line. The
+error is flagged retryable, so the panel also offers the usual `r` retry.
 
 ## Audit Logging
 
@@ -668,6 +681,12 @@ The crate includes comprehensive tests:
 - **Unit tests**: Each module has inline tests
 - **Integration tests**: `tests/integration_tests.rs`, `tests/provider_integration_tests.rs`
 - **Mock server tests**: Uses `wiremock` for HTTP API testing
+- **Rate limit tests**: window edge cases against injected timestamps in
+  `rate_limit.rs` (exact-boundary retention, sliding expiry, wait
+  estimation, hour-window interaction, `0`-disables), plus backend wiring
+  tests in `backend.rs` (per-minute enforcement of `process_command`,
+  provider failures leaving window capacity intact, and the streaming
+  path's atomic check-and-record)
 
 Run tests:
 ```bash

@@ -25,6 +25,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use forge_worker::bead_scheduler::{AssignmentFeed, WorkerBeadAssignment};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::debug;
@@ -156,13 +157,7 @@ impl Bead {
 
     /// Get the priority indicator for display.
     pub fn priority_indicator(&self) -> &'static str {
-        match self.priority {
-            0 => "🔴",
-            1 => "🟠",
-            2 => "🟡",
-            3 => "🔵",
-            _ => "⚪",
-        }
+        priority_indicator(self.priority)
     }
 
     /// Check if this bead matches a search query (case-insensitive substring match).
@@ -367,6 +362,15 @@ pub struct BeadManager {
     /// Cached bead data per workspace
     cache: HashMap<PathBuf, WorkspaceBeads>,
 
+    /// Live scheduler assignments (bead dispatch), when a feed is
+    /// registered. `None` while dispatch is disabled or not wired — the
+    /// panels then render exactly as before.
+    assignment_feed: Option<AssignmentFeed>,
+
+    /// Assignments cached from the last feed refresh, for change detection
+    /// and rendering
+    assignments: Vec<WorkerBeadAssignment>,
+
     /// Last poll timestamp
     last_poll: Option<Instant>,
 
@@ -395,6 +399,8 @@ impl BeadManager {
         Self {
             workspaces: Vec::new(),
             cache: HashMap::new(),
+            assignment_feed: None,
+            assignments: Vec::new(),
             last_poll: None,
             poll_interval: Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS),
             store_available: None,
@@ -464,24 +470,67 @@ impl BeadManager {
         available
     }
 
+    /// Register the live scheduler assignment feed (bead dispatch).
+    ///
+    /// The feed is the shared handle from
+    /// [`forge_worker::bead_scheduler::BeadScheduler::assignments_feed`];
+    /// the manager refreshes it on every poll and renders each live
+    /// bead → worker assignment alongside the queue state. A manager
+    /// without a feed — opt-in dispatch disabled or not wired — keeps
+    /// rendering the queue exactly as before.
+    pub fn set_assignment_feed(&mut self, feed: AssignmentFeed) {
+        self.assignment_feed = Some(feed);
+        self.refresh_assignments();
+    }
+
+    /// Whether a live scheduler assignment feed is registered.
+    pub fn has_assignment_feed(&self) -> bool {
+        self.assignment_feed.is_some()
+    }
+
+    /// The assignments cached from the last feed refresh, in the
+    /// scheduler's published order (priority, then bead ID).
+    pub fn assignments(&self) -> &[WorkerBeadAssignment] {
+        &self.assignments
+    }
+
+    /// Read the live feed into the cache. Returns `true` when the
+    /// assignment set changed and the panel should redraw.
+    fn refresh_assignments(&mut self) -> bool {
+        let Some(feed) = &self.assignment_feed else {
+            return false;
+        };
+        let current = feed.current();
+        if current == self.assignments {
+            return false;
+        }
+        self.assignments = current;
+        true
+    }
+
     /// Poll for bead updates if the polling interval has elapsed.
     /// Returns true if any bead data changed.
     pub fn poll_updates(&mut self) -> bool {
+        // Refresh live scheduler assignments (bead dispatch) on every call:
+        // the shared read is cheap, and dispatched assignments identify
+        // running workers even when the bead store below is unavailable.
+        let assignments_changed = self.refresh_assignments();
+
         // Check if it's time to poll
         if let Some(last_poll) = self.last_poll {
             if last_poll.elapsed() < self.poll_interval {
-                return false;
+                return assignments_changed;
             }
         }
 
         // Don't poll if no workspace has a bead store
         if !self.is_bead_store_available() {
-            return false;
+            return assignments_changed;
         }
 
         self.last_poll = Some(Instant::now());
 
-        let mut changed = false;
+        let mut changed = assignments_changed;
 
         // Poll each workspace
         for workspace in self.workspaces.clone() {
@@ -730,6 +779,24 @@ impl BeadManager {
         lines.push(data.format_summary());
         lines.push(String::new());
 
+        // Live scheduler assignments (bead dispatch): bead → worker pairs.
+        // Shown only when present, so an idle or disabled dispatcher keeps
+        // the compact summary unchanged.
+        if !self.assignments.is_empty() {
+            lines.push(format!("Assigned: {}", self.assignments.len()));
+            for assignment in self.assignments.iter().take(3) {
+                lines.push(format!(
+                    "  ◆ {} → {}",
+                    truncate_str(&assignment.bead_id, 14),
+                    truncate_str(&assignment.worker_id, 20)
+                ));
+            }
+            if self.assignments.len() > 3 {
+                lines.push(format!("  ... and {} more", self.assignments.len() - 3));
+            }
+            lines.push(String::new());
+        }
+
         // Show top ready beads
         if !data.ready.is_empty() {
             lines.push("Ready:".to_string());
@@ -817,25 +884,15 @@ impl BeadManager {
         priority_filter: Option<u8>,
         search_query: &str,
     ) -> String {
-        if !self.has_bead_store() {
-            return "No bead store found.\n\n\
-                    Install bead-rs to enable the task queue:\n\
-                    https://git.ardenone.com/jedarden/bead-rs\n\n\
-                    Documentation: docs/BEAD_LAUNCHER_PROTOCOL.md"
-                .to_string();
-        }
-
-        if self.workspaces.is_empty() {
-            return "No workspaces configured.\n\n\
-                    To monitor workspaces, either:\n\
-                    1. Set FORGE_WORKSPACES=/path/to/workspace1:/path/to/workspace2\n\
-                    2. Run forge from a directory with a .beads/ folder\n\n\
-                    Workspaces are initialized with: bead init"
-                .to_string();
-        }
-
-        if !self.is_loaded() {
-            return "Loading bead data...".to_string();
+        if let Some(message) = self.queue_unavailable_message() {
+            let mut lines = vec![message];
+            // Live scheduler assignments render even while the queue cannot:
+            // they identify running workers independently of the store read.
+            if self.assignment_feed.is_some() {
+                lines.push(String::new());
+                self.push_assignment_section(&mut lines, None, "");
+            }
+            return lines.join("\n");
         }
 
         let data = self.get_filtered_aggregated_data_with_search(priority_filter, search_query);
@@ -860,6 +917,13 @@ impl BeadManager {
         lines.push(format!("{}{}", data.format_summary(), filter_text));
         lines.push("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".to_string());
         lines.push(String::new());
+
+        // Live scheduler assignments (bead dispatch): the bead → worker
+        // mapping, refreshed from the scheduler's shared feed on every poll.
+        if self.assignment_feed.is_some() {
+            self.push_assignment_section(&mut lines, priority_filter, search_query);
+            lines.push(String::new());
+        }
 
         // In-progress section
         if !data.in_progress.is_empty() {
@@ -981,6 +1045,113 @@ impl BeadManager {
 
         lines.join("\n")
     }
+
+    /// Why the full queue cannot render its body, as a replacement message:
+    /// no readable bead store, no workspaces configured, or the first load
+    /// still pending. `None` when the queue body should render.
+    fn queue_unavailable_message(&self) -> Option<String> {
+        if !self.has_bead_store() {
+            return Some(
+                "No bead store found.\n\n\
+                 Install bead-rs to enable the task queue:\n\
+                 https://git.ardenone.com/jedarden/bead-rs\n\n\
+                 Documentation: docs/BEAD_LAUNCHER_PROTOCOL.md"
+                    .to_string(),
+            );
+        }
+
+        if self.workspaces.is_empty() {
+            return Some(
+                "No workspaces configured.\n\n\
+                 To monitor workspaces, either:\n\
+                 1. Set FORGE_WORKSPACES=/path/to/workspace1:/path/to/workspace2\n\
+                 2. Run forge from a directory with a .beads/ folder\n\n\
+                 Workspaces are initialized with: bead init"
+                    .to_string(),
+            );
+        }
+
+        if !self.is_loaded() {
+            return Some("Loading bead data...".to_string());
+        }
+
+        None
+    }
+
+    /// Append the scheduler-assignment section: one row per live
+    /// bead → worker mapping, in the scheduler's published order.
+    ///
+    /// Honors the same priority filter and search query as the queue
+    /// sections around it; renders a clean empty marker when nothing is
+    /// assigned (or nothing matches the active filter).
+    fn push_assignment_section(
+        &self,
+        lines: &mut Vec<String>,
+        priority_filter: Option<u8>,
+        search_query: &str,
+    ) {
+        lines.push("◆ ASSIGNED (scheduler dispatch)".to_string());
+        lines.push("─────────────────────────────────────────────────────".to_string());
+
+        if self.assignments.is_empty() {
+            lines.push("  No active assignments".to_string());
+            return;
+        }
+
+        let matching: Vec<&WorkerBeadAssignment> = self
+            .assignments
+            .iter()
+            .filter(|a| priority_filter.map_or(true, |p| a.bead_priority == p))
+            .filter(|a| assignment_matches_search(a, search_query))
+            .collect();
+
+        if matching.is_empty() {
+            lines.push("  No assignments match the current filter".to_string());
+            return;
+        }
+
+        for assignment in matching {
+            let priority = format!("P{}", assignment.bead_priority);
+            lines.push(format!(
+                "{} {:8} {} | {} → {}",
+                priority_indicator(assignment.bead_priority),
+                assignment.bead_id,
+                priority,
+                truncate_str(&assignment.bead_title, 20),
+                truncate_str(&assignment.worker_id, 25)
+            ));
+        }
+    }
+}
+
+/// Case-insensitive substring match for a scheduler assignment against
+/// the task search query (bead ID, title, worker, session).
+fn assignment_matches_search(assignment: &WorkerBeadAssignment, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+
+    let query_lower = query.to_lowercase();
+    [
+        assignment.bead_id.as_str(),
+        assignment.bead_title.as_str(),
+        assignment.worker_id.as_str(),
+        assignment.session_name.as_str(),
+    ]
+    .iter()
+    .any(|field| field.to_lowercase().contains(&query_lower))
+}
+
+/// Priority indicator for display, shared by queue rows and scheduler
+/// assignment rows.
+fn priority_indicator(priority: u8) -> &'static str {
+    match priority {
+        0 => "🔴",
+        1 => "🟠",
+        2 => "🟡",
+        3 => "🔵",
+        _ => "⚪",
+    }
 }
 
 /// Convert a store bead into the display-oriented [`Bead`], computing the
@@ -1051,6 +1222,10 @@ mod tests {
     use super::*;
 
     use std::fs;
+    use std::sync::Arc;
+
+    use forge_worker::bead_scheduler::{BeadScheduler, BeadStatusBackend};
+    use forge_worker::{LaunchConfig, WorkerLauncher};
 
     #[test]
     fn test_bead_status_checks() {
@@ -1268,5 +1443,190 @@ mod tests {
         assert_eq!(data.in_progress.len(), 1);
         assert_eq!(data.blocked.len(), 1);
         assert_eq!(data.total_open, 3);
+    }
+
+    // ============================================================
+    // Scheduler assignments (bead dispatch) in the queue panels
+    // ============================================================
+
+    /// A dry-run scheduler over the bead-rs fixture workspace, driving the
+    /// shared assignment feed exactly as the dispatch loop would.
+    fn fixture_scheduler(dir: &tempfile::TempDir) -> BeadScheduler {
+        let mut scheduler = BeadScheduler::new(Arc::new(WorkerLauncher::new()))
+            .with_status_backend(BeadStatusBackend::DryRun);
+        scheduler.add_workspace(dir.path()).unwrap();
+        scheduler
+    }
+
+    fn fixture_launch_config(dir: &tempfile::TempDir) -> LaunchConfig {
+        LaunchConfig::new(
+            "/path/to/launcher.sh",
+            "test-session",
+            dir.path().to_path_buf(),
+            "sonnet",
+        )
+    }
+
+    /// The full queue view renders each live scheduler assignment with
+    /// both identities: the bead and the worker holding it.
+    #[test]
+    fn test_full_queue_renders_scheduler_assignments() {
+        let dir = create_bead_rs_workspace();
+        let mut scheduler = fixture_scheduler(&dir);
+
+        let mut manager = BeadManager::new();
+        manager.add_workspace(dir.path().to_path_buf());
+        manager.poll_updates();
+        manager.set_assignment_feed(scheduler.assignments_feed());
+
+        scheduler
+            .assign_bead(
+                "tui-ready",
+                "dispatch-0-tui-ready",
+                fixture_launch_config(&dir),
+            )
+            .unwrap();
+        assert!(
+            manager.poll_updates(),
+            "an assignment change must mark the panel dirty"
+        );
+
+        let output = manager.format_task_queue_full();
+        assert!(output.contains("ASSIGNED"), "section header missing");
+        assert!(output.contains("tui-ready"), "bead identity missing");
+        assert!(
+            output.contains("dispatch-0-tui-ready"),
+            "worker identity missing"
+        );
+        // The queue body renders alongside the assignments.
+        assert!(output.contains("READY"));
+    }
+
+    /// A registered feed with no live assignments renders its empty state
+    /// cleanly, without disturbing the queue sections around it.
+    #[test]
+    fn test_full_queue_empty_assignments_render_cleanly() {
+        let dir = create_bead_rs_workspace();
+
+        let mut manager = BeadManager::new();
+        manager.add_workspace(dir.path().to_path_buf());
+        manager.poll_updates();
+        manager.set_assignment_feed(fixture_scheduler(&dir).assignments_feed());
+        manager.poll_updates();
+
+        let output = manager.format_task_queue_full();
+        assert!(output.contains("ASSIGNED"));
+        assert!(output.contains("No active assignments"));
+        // The queue sections are intact around the empty section.
+        assert!(output.contains("Ready: 1"));
+        assert!(output.contains("READY"));
+    }
+
+    /// Without a registered feed (opt-in dispatch disabled or not wired),
+    /// the panels render exactly as before: no assignment section at all.
+    #[test]
+    fn test_no_assignment_feed_preserves_queue_output() {
+        let dir = create_bead_rs_workspace();
+
+        let mut disabled = BeadManager::new();
+        disabled.add_workspace(dir.path().to_path_buf());
+        disabled.poll_updates();
+        assert!(!disabled.has_assignment_feed());
+
+        let output = disabled.format_task_queue_full();
+        assert!(!output.contains("ASSIGNED"));
+        assert!(!output.contains("No active assignments"));
+        assert!(!disabled.format_task_queue_summary().contains("Assigned:"));
+        // And polling never reports assignment-driven changes.
+        assert!(!disabled.poll_updates());
+    }
+
+    /// The compact overview summary lists assignments when present and
+    /// stays unchanged when the assignment set is empty.
+    #[test]
+    fn test_summary_renders_assignments_when_present() {
+        let dir = create_bead_rs_workspace();
+        let mut scheduler = fixture_scheduler(&dir);
+
+        let mut manager = BeadManager::new();
+        manager.add_workspace(dir.path().to_path_buf());
+        manager.poll_updates();
+        manager.set_assignment_feed(scheduler.assignments_feed());
+
+        // Empty assignment set: the compact summary stays unchanged.
+        manager.poll_updates();
+        assert!(!manager.format_task_queue_summary().contains("Assigned:"));
+
+        scheduler
+            .assign_bead(
+                "tui-ready",
+                "dispatch-0-tui-ready",
+                fixture_launch_config(&dir),
+            )
+            .unwrap();
+        manager.poll_updates();
+
+        let summary = manager.format_task_queue_summary();
+        assert!(summary.contains("Assigned: 1"));
+        assert!(summary.contains("tui-ready → dispatch-0-tui-ready"));
+    }
+
+    /// The panel tracks the live feed: an unchanged assignment set polls
+    /// clean, a scheduler change surfaces on the next poll.
+    #[test]
+    fn test_poll_reports_assignment_changes_only_on_change() {
+        let dir = create_bead_rs_workspace();
+        let mut scheduler = fixture_scheduler(&dir);
+
+        let mut manager = BeadManager::new();
+        manager.add_workspace(dir.path().to_path_buf());
+        manager.set_assignment_feed(scheduler.assignments_feed());
+        manager.poll_updates(); // load the queue and the (empty) assignments
+
+        // No change on the feed: nothing new to report.
+        assert!(!manager.poll_updates());
+
+        scheduler
+            .assign_bead(
+                "tui-ready",
+                "dispatch-0-tui-ready",
+                fixture_launch_config(&dir),
+            )
+            .unwrap();
+        assert!(manager.poll_updates());
+        assert_eq!(manager.assignments().len(), 1);
+        assert_eq!(manager.assignments()[0].bead_id, "tui-ready");
+        assert_eq!(manager.assignments()[0].worker_id, "dispatch-0-tui-ready");
+    }
+
+    /// Assignments honor the same search query as the queue sections.
+    #[test]
+    fn test_assignment_search_filters_rows() {
+        let dir = create_bead_rs_workspace();
+        let mut scheduler = fixture_scheduler(&dir);
+
+        let mut manager = BeadManager::new();
+        manager.add_workspace(dir.path().to_path_buf());
+        manager.poll_updates();
+        manager.set_assignment_feed(scheduler.assignments_feed());
+
+        scheduler
+            .assign_bead(
+                "tui-ready",
+                "dispatch-0-tui-ready",
+                fixture_launch_config(&dir),
+            )
+            .unwrap();
+        manager.poll_updates();
+
+        // Match on the worker identity...
+        let output = manager.format_task_queue_full_filtered_with_search(None, "dispatch-0");
+        assert!(output.contains("tui-ready"));
+        // ...on the bead identity...
+        let output = manager.format_task_queue_full_filtered_with_search(None, "tui-ready");
+        assert!(output.contains("dispatch-0-tui-ready"));
+        // ...and a non-matching query falls back to the filtered marker.
+        let output = manager.format_task_queue_full_filtered_with_search(None, "no-such-worker");
+        assert!(output.contains("No assignments match the current filter"));
     }
 }
