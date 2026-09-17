@@ -131,8 +131,12 @@ mod tests {
 
         // Verify the header is rendered
         assert!(
-            buffer_contains(&buffer, "FORGE v0.3.0"),
-            "Application should render FORGE v0.3.0 header"
+            buffer_contains(&buffer, concat!("FORGE v", env!("CARGO_PKG_VERSION"))),
+            concat!(
+                "Application should render FORGE v",
+                env!("CARGO_PKG_VERSION"),
+                " header"
+            )
         );
 
         // Verify the overview panels are rendered
@@ -358,6 +362,7 @@ mod tests {
             View::Alerts,
             View::Routing,
             View::Chat,
+            View::Sessions,
             View::Overview, // Wraps around
         ];
 
@@ -625,7 +630,7 @@ mod tests {
 
         // App should still be functional
         assert!(!app.should_quit());
-        assert_eq!(app.current_view(), View::Chat); // Last view in ALL array
+        assert_eq!(app.current_view(), View::Sessions); // Last view in ALL array
     }
 
     #[test]
@@ -721,7 +726,10 @@ mod tests {
         // 1. Verify initial state
         assert_eq!(app.current_view(), View::Overview);
         let buffer = render_app(&mut app, 120, 40);
-        assert!(buffer_contains(&buffer, "FORGE v0.3.0"));
+        assert!(buffer_contains(
+            &buffer,
+            concat!("FORGE v", env!("CARGO_PKG_VERSION"))
+        ));
 
         // 2. Navigate through views
         app.switch_view(View::Workers);
@@ -2238,18 +2246,27 @@ mod tests {
 
         // Narrow mode
         let narrow = render_app(&mut app, 80, 30);
-        assert!(buffer_contains(&narrow, "FORGE v0.3.0"));
+        assert!(buffer_contains(
+            &narrow,
+            concat!("FORGE v", env!("CARGO_PKG_VERSION"))
+        ));
         assert!(buffer_contains(&narrow, "Worker Pool"));
 
         // Wide mode
         let wide = render_app(&mut app, 150, 40);
-        assert!(buffer_contains(&wide, "FORGE v0.3.0"));
+        assert!(buffer_contains(
+            &wide,
+            concat!("FORGE v", env!("CARGO_PKG_VERSION"))
+        ));
         assert!(buffer_contains(&wide, "Worker Pool"));
         assert!(buffer_contains(&wide, "Subscriptions"));
 
         // Ultra-wide mode
         let ultrawide = render_app(&mut app, 220, 50);
-        assert!(buffer_contains(&ultrawide, "FORGE v0.3.0"));
+        assert!(buffer_contains(
+            &ultrawide,
+            concat!("FORGE v", env!("CARGO_PKG_VERSION"))
+        ));
         assert!(buffer_contains(&ultrawide, "Cost Breakdown"));
         assert!(buffer_contains(&ultrawide, "Quick Actions"));
     }
@@ -2630,7 +2647,10 @@ mod tests {
         // App should still be functional
         assert!(!app.should_quit());
         let buffer = render_app(&mut app, 120, 40);
-        assert!(buffer_contains(&buffer, "FORGE v0.3.0"));
+        assert!(buffer_contains(
+            &buffer,
+            concat!("FORGE v", env!("CARGO_PKG_VERSION"))
+        ));
     }
 
     #[test]
@@ -2644,7 +2664,10 @@ mod tests {
 
         // App should still render without panic
         let buffer = render_app(&mut app, 120, 40);
-        assert!(buffer_contains(&buffer, "FORGE v0.3.0"));
+        assert!(buffer_contains(
+            &buffer,
+            concat!("FORGE v", env!("CARGO_PKG_VERSION"))
+        ));
 
         // Go back to top
         app.handle_app_event(AppEvent::GoToTop);
@@ -3314,7 +3337,10 @@ mod tests {
         // Ultra-wide: 200x50
         let buffer = render_app(&mut app, 200, 50);
 
-        assert!(buffer_contains(&buffer, "FORGE v0.3.0"));
+        assert!(buffer_contains(
+            &buffer,
+            concat!("FORGE v", env!("CARGO_PKG_VERSION"))
+        ));
         assert!(buffer_contains(&buffer, "Worker Pool"));
     }
 
@@ -3325,7 +3351,10 @@ mod tests {
         // Wide: 150x35
         let buffer = render_app(&mut app, 150, 35);
 
-        assert!(buffer_contains(&buffer, "FORGE v0.3.0"));
+        assert!(buffer_contains(
+            &buffer,
+            concat!("FORGE v", env!("CARGO_PKG_VERSION"))
+        ));
         assert!(buffer_contains(&buffer, "Worker Pool"));
     }
 
@@ -3361,7 +3390,10 @@ mod tests {
 
         // Should handle gracefully
         assert_eq!(buffer.area.width, 400);
-        assert!(buffer_contains(&buffer, "FORGE v0.3.0"));
+        assert!(buffer_contains(
+            &buffer,
+            concat!("FORGE v", env!("CARGO_PKG_VERSION"))
+        ));
     }
 
     #[test]
@@ -3421,10 +3453,11 @@ mod tests {
         assert_eq!(View::Subscriptions.next(), View::Alerts);
         assert_eq!(View::Alerts.next(), View::Routing);
         assert_eq!(View::Routing.next(), View::Chat);
-        assert_eq!(View::Chat.next(), View::Overview); // Wrap around
+        assert_eq!(View::Chat.next(), View::Sessions);
+        assert_eq!(View::Sessions.next(), View::Overview); // Wrap around
 
         // Backward cycling
-        assert_eq!(View::Overview.prev(), View::Chat);
+        assert_eq!(View::Overview.prev(), View::Sessions);
         assert_eq!(View::Workers.prev(), View::Overview);
         assert_eq!(View::Chat.prev(), View::Routing);
         assert_eq!(View::Routing.prev(), View::Alerts);

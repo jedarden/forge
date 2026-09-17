@@ -8844,7 +8844,10 @@ mod tests {
             let buffer = render_app(&mut app, 199, height);
             assert_eq!(buffer.area.height, height);
             // Should render something without panic
-            assert!(buffer_contains(&buffer, "FORGE v0.3.0"));
+            assert!(buffer_contains(
+                &buffer,
+                concat!("FORGE v", env!("CARGO_PKG_VERSION"))
+            ));
         }
     }
 
