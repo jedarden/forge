@@ -70,3 +70,5 @@ config.local.yaml
 .beads/*.temp
 .beads/*.journal
 .br_recovery/
+.marathon/
+core.[0-9]*
